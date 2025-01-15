@@ -1,5 +1,7 @@
 use crate::msgid::MsgId;
 use crate::{OperatorId, ValidatorIndex};
+use std::fmt::Debug;
+use std::hash::Hash;
 use tree_hash::{PackedEncoding, TreeHash, TreeHashType};
 use tree_hash_derive::TreeHash;
 use types::typenum::U13;
@@ -7,13 +9,11 @@ use types::{
     AggregateAndProof, BeaconBlock, BlindedBeaconBlock, Checkpoint, CommitteeIndex, EthSpec,
     Hash256, PublicKeyBytes, Signature, Slot, SyncCommitteeContribution, VariableList,
 };
-use std::fmt::Debug;
-use std::hash::Hash;
 // todo - dear reader, this mainly serves as plain translation of the types found in the go code
 // there are a lot of byte[] there, and that got confusing, below should be more readable.
 // it needs some work to actually serialize to the same stuff on wire, and I feel like we can name
 // the fields better
-//
+
 pub trait Data: Debug + Clone {
     type Hash: Debug + Clone + Eq + Hash;
 
