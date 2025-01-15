@@ -5619,6 +5619,7 @@ version = "0.1.0"
 dependencies = [
  "derive_more 1.0.0",
  "indexmap",
+ "ssv_types",
  "tracing",
  "tracing-subscriber",
 ]
@@ -6866,7 +6867,6 @@ dependencies = [
  "base64 0.22.1",
  "derive_more 1.0.0",
  "openssl",
- "qbft",
  "rusqlite",
  "tree_hash",
  "tree_hash_derive",
