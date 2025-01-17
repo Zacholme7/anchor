@@ -25,6 +25,12 @@ mod msg_container;
 mod qbft_types;
 mod validation;
 
+struct ConsensusRecord<D> {
+    round: Round,
+    data: D,
+    prepare_messages: Vec<WrappedQbftMessage>,
+}
+
 #[cfg(test)]
 mod tests;
 
@@ -71,6 +77,9 @@ where
     last_prepared_round: Option<Round>,
     last_prepared_value: Option<D::Hash>,
 
+    /// Past prepare consensus that we have reached
+    past_consensus: HashMap<Round, ConsensusRecord<D>>,
+
     // Network sender
     send_message: S,
 }
@@ -107,6 +116,8 @@ where
             proposal_accepted_for_current_round: None,
             last_prepared_round: None,
             last_prepared_value: None,
+
+            past_consensus: HashMap::new(),
 
             send_message,
         };
@@ -183,11 +194,23 @@ where
             return false;
         }
 
-        // Verify full data integrity
-        // TODO!(). Compare the roots of the instance data and the message data
-
         // Success! Message is well formed
         true
+    }
+
+    // Helper method to record consensus when we see it
+    fn record_consensus(
+        &mut self,
+        round: Round,
+        data: D,
+        prepare_messages: Vec<WrappedQbftMessage>,
+    ) {
+        let record = ConsensusRecord {
+            round,
+            data,
+            prepare_messages,
+        };
+        self.past_consensus.insert(round, record);
     }
 
     /// Justify the round change quorum
@@ -197,31 +220,41 @@ where
     /// If there is no past consensus data in the round change quorum or we disagree with quorum set
     /// this function will return None, and we obtain the data as if we were beginning this
     /// instance.
-    fn justify_round_change_quorum(&self) -> Option<&D> {
-        /*
-        // If we have messages for the current round
-        if let Some(new_round_messages) = self.round_change_messages.get(&self.current_round) {
-            // If we have a quorum
-            if new_round_messages.len() >= self.config.quorum_size() {
-                // Find the maximum round,value pair
-                let max_consensus_data = new_round_messages
-                    .values()
-                    .max_by_key(|maybe_past_consensus_data| {
-                        maybe_past_consensus_data
-                            .as_ref()
-                            .map(|consensus_data| consensus_data.round)
-                            .unwrap_or_default()
-                    })?
-                    .as_ref()?;
+    fn justify_round_change_quorum(&self) -> Option<D> {
+        // Get all round change messages for the current round
+        let round_change_messages = self
+            .round_change_container
+            .get_messages_for_round(self.current_round);
 
-                // We a maximum, check to make sure we have seen quorum on this
-                let past_data = self.past_consensus.get(&max_consensus_data.round)?;
-                if past_data == &max_consensus_data.data {
-                    return Some(past_data);
-                }
+        // If we don't have enough messages for quorum, we can't justify anything
+        if round_change_messages.len() < self.config.quorum_size() {
+            return None;
+        }
+
+        // Find the highest round that any node claims reached preparation
+        let highest_prepared = round_change_messages
+            .iter()
+            .filter(|msg| msg.qbft_message.data_round != 0) // Only consider messages with prepared data
+            .max_by_key(|msg| msg.qbft_message.data_round);
+
+        // If we found a message with prepared data
+        if let Some(highest_msg) = highest_prepared {
+            // Get the prepared data from the message
+            let prepared_data = highest_msg.signed_message.full_data.as_ref()?;
+            let prepared_round = Round::from(highest_msg.qbft_message.data_round);
+
+            // Verify we have also seen this consensus
+            if let Some(our_record) = self.past_consensus.get(&prepared_round) {
+                // Verify the data matches what we saw
+                //todo!() figure out this compare
+                //if prepared_data == our_record.data {
+                // We agree with the prepared data - use it
+                //   return Some(our_record.data.clone());
+                //}
             }
         }
-        */
+
+        // No consensus found or we disagree - use initial data
         None
     }
 
@@ -239,15 +272,9 @@ where
 
             // Check justification of round change quorum. If there is a justification, we will use
             // that data. Otherwise, use the initial state data
-            let data = if let Some(validated_data) = self.justify_round_change_quorum() {
-                debug!(
-                    old_data = ?validated_data,
-                    "Using consensus data from a previous round");
-                validated_data
-            } else {
-                debug!("Using initialised data");
-                &self.start_data
-            };
+            let data = self
+                .justify_round_change_quorum()
+                .unwrap_or_else(|| self.start_data.clone());
 
             // Send the initial proposal
             self.send_proposal(data.clone());
@@ -312,6 +339,29 @@ where
             return;
         }
 
+        // Round change justification validation for rounds after the first
+        if round > Round::default() {
+            //self.validate_round_change_justification();
+        }
+
+        // Validate the prepare justifications if they exist
+        if !wrapped_msg.qbft_message.prepare_justification.is_empty() {
+            //self.validate_prepare_justification(wrapped_msg)?;
+        }
+
+        // Extract and validate the proposed data
+        let Some(data) = wrapped_msg.signed_message.full_data.clone() else {
+            warn!(from = ?operator_id, "No data was proposed");
+            return;
+        };
+
+        // Verify data hash matches the root
+        let data_hash = data.hash();
+        if data_hash != wrapped_msg.qbft_message.root {
+            warn!(from = ?operator_id, "Data roots do not match");
+            return;
+        }
+
         debug!(from = ?operator_id, "PROPOSE received");
 
         // Store the received propse message
@@ -322,40 +372,15 @@ where
             warn!(from = ?operator_id, "PROPOSE message is a duplicate")
         }
 
-        // Extract and store the proposed data
-        // todo!() add back in the justified check
-        if let Some(data) = wrapped_msg.signed_message.full_data {
-            /*
-            let hash = data.hash();
-            self.data.insert(hash, data);
+        // Store the data
+        //self.data.insert(data_hash, data);
 
-            // Accept the proposal and move to prepare phase
-            self.proposal_accepted_for_current_round = Some(wrapped_msg);
-            self.state = InstanceState::Prepare;
+        // Update state
+        self.proposal_accepted_for_current_round = Some(wrapped_msg);
+        self.state = InstanceState::Prepare;
 
-            // Send prepare message
-            self.send_prepare(hash);
-            */
-        }
-
-        /*
-                // Check if we have seen anything justified
-                if let Some(justified_data) = self.justify_round_change_quorum() {
-                    if *justified_data != hash {
-                        // The data doesn't match the justified value we expect. Drop the message
-                        warn!(
-                            from = ?operator_id,
-                            "PROPOSE message isn't justified"
-                        );
-                        // return
-                    }
-                    // todo!() anything else here?
-                }
-        */
-
-        // Insert the data and send off a prepare signaling that we are okay with this data
-        // self.data.insert(hash.clone(), data);
-        // self.send_prepare(hash);
+        // Create and send prepare message
+        self.send_prepare(data_hash);
     }
 
     /// We have received a prepare message
@@ -383,6 +408,18 @@ where
 
         // Check if we have reached quorum, if so send the commit message
         if let Some(hash) = self.prepare_container.has_quorum(round) {
+            // Record this prepare consensus. Fetch the data, all of its prepare messages, and then
+            // record the consensus for them
+            let data = self.data.get(&hash).expect("Data must exist");
+            let prepares_for_data: Vec<WrappedQbftMessage> = self
+                .prepare_container
+                .get_messages_for_value(round, hash)
+                .into_iter()
+                .cloned()
+                .collect();
+            self.record_consensus(round, data.clone(), prepares_for_data);
+
+            // if we are in the correct state, also send the commit
             if matches!(self.state, InstanceState::Prepare) {
                 self.send_commit(hash);
             }

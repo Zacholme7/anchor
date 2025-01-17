@@ -31,7 +31,7 @@ pub struct SignedSsvMessage {
 }
 
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct UnsignedSsvMessage {
     pub ssv_message: SsvMessage,
     pub full_data: Option<FullData>,
@@ -137,7 +137,7 @@ pub struct PartialSignatureMessage {
     pub full_data: Option<FullData>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum FullData {
     ValidatorConsensusData(ValidatorConsensusData),
     BeaconVote(BeaconVote),
@@ -154,10 +154,10 @@ impl Data for FullData {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SszBytes(pub Vec<u8>);
 
-#[derive(Clone, Debug, TreeHash)]
+#[derive(Clone, Debug, TreeHash ,PartialEq)]
 pub struct ValidatorConsensusData {
     pub duty: ValidatorDuty,
     pub version: DataVersion,
@@ -191,7 +191,7 @@ impl TreeHash for SszBytes {
     }
 }
 
-#[derive(Clone, Debug, TreeHash)]
+#[derive(Clone, Debug, TreeHash, PartialEq)]
 pub struct ValidatorDuty {
     pub r#type: BeaconRole,
     pub pub_key: PublicKeyBytes,
@@ -204,7 +204,7 @@ pub struct ValidatorDuty {
     pub validator_sync_committee_indices: VariableList<u64, U13>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BeaconRole(u64);
 
 pub const BEACON_ROLE_ATTESTER: BeaconRole = BeaconRole(0);
@@ -234,7 +234,7 @@ impl TreeHash for BeaconRole {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DataVersion(u64);
 
 pub const DATA_VERSION_UNKNOWN: DataVersion = DataVersion(0);

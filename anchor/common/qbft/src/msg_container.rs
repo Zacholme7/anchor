@@ -70,6 +70,19 @@ impl<M: Clone + Data<Hash = Hash256>> MessageContainer<M> {
         self.messages.get(&round).map(|msgs| msgs.len()).unwrap_or(0)
     }
 
+      // Gets all messages for a specific round
+    pub fn get_messages_for_round(&self, round: Round) -> Vec<&M> {
+        // If we have messages for this round in our container, return them all
+        // If not, return an empty vector
+        self.messages
+            .get(&round)
+            .map(|round_messages| {
+                // Convert the values of the HashMap into a Vec
+                round_messages.values().collect()
+            })
+            .unwrap_or_default()
+    }
+
     pub fn get_messages_for_value(&self, round: Round, value: Hash256) -> Vec<&M> {
         self.messages
             .get(&round)
