@@ -1,8 +1,10 @@
 //! A collection of types used by the QBFT modules
 use crate::validation::ValidatedData;
-use crate::Data;
 use derive_more::{Deref, From};
 use indexmap::IndexSet;
+use ssv_types::message::{Data, QbftMessage, SignedSsvMessage, UnsignedSsvMessage};
+use ssv_types::OperatorId;
+use types::Hash256;
 use std::cmp::Eq;
 use std::fmt::Debug;
 use std::hash::Hash;
@@ -40,9 +42,41 @@ impl LeaderFunction for DefaultLeaderFunction {
     }
 }
 
+// Wrapped qbft message is a wrapper around both a signed ssv message, and the underlying qbft
+// message.
+#[derive(Debug, Clone)]
+pub struct WrappedQbftMessage {
+    pub signed_message: SignedSsvMessage,
+    pub qbft_message: QbftMessage,
+}
+
+
+impl WrappedQbftMessage {
+    // Validate that the message is well formed
+    pub fn validate(&self) -> bool{
+        self.signed_message.validate() && self.qbft_message.validate()
+    }
+}
+
+impl Data for WrappedQbftMessage {
+    type Hash = Hash256;
+
+    fn hash(&self) -> Self::Hash {
+        self.qbft_message.root
+    }
+
+}
+
 /// This represents an individual round, these change on regular time intervals
 #[derive(Clone, Copy, Debug, Deref, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Round(NonZeroUsize);
+
+impl From<u64> for Round {
+    fn from(round: u64) -> Round {
+        todo!()
+    }
+}
+
 
 impl Default for Round {
     fn default() -> Self {
@@ -64,8 +98,8 @@ impl Round {
 }
 
 /// The operator that is participating in the consensus instance.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, From, Deref)]
-pub struct OperatorId(usize);
+//#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, From, Deref)]
+//pub struct OperatorId(u64);
 
 /// The instance height behaves like an "ID" for the QBFT instance. It is used to uniquely identify
 /// different instances, that have the same operator id.
@@ -90,15 +124,15 @@ pub enum InstanceState {
 /// Generic Data trait to allow for future implementations of the QBFT module
 // Messages that can be received from the message_in channel
 #[derive(Debug, Clone)]
-pub enum Message<D: Data> {
+pub enum Message {
     /// A PROPOSE message to be sent on the network.
-    Propose(OperatorId, ConsensusData<D>),
+    Propose(OperatorId, UnsignedSsvMessage),
     /// A PREPARE message to be sent on the network.
-    Prepare(OperatorId, ConsensusData<D::Hash>),
+    Prepare(OperatorId, UnsignedSsvMessage),
     /// A commit message to be sent on the network.
-    Commit(OperatorId, ConsensusData<D::Hash>),
+    Commit(OperatorId, UnsignedSsvMessage),
     /// Round change message received from network
-    RoundChange(OperatorId, Round, Option<ConsensusData<D::Hash>>),
+    RoundChange(OperatorId, UnsignedSsvMessage),
 }
 
 /// Type definitions for the allowable messages

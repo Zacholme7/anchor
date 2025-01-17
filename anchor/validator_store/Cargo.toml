@@ -18,6 +18,7 @@ signature_collector = { workspace = true }
 slashing_protection = { workspace = true }
 slot_clock = { workspace = true }
 ssv_types = { workspace = true }
+ethereum_ssz = { workspace = true }
 task_executor = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
 tracing = { workspace = true }

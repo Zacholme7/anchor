@@ -9,6 +9,7 @@ derive_more = { workspace = true }
 indexmap = { workspace = true }
 ssv_types = { workspace = true }
 tracing = { workspace = true }
+types = { workspace = true }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }

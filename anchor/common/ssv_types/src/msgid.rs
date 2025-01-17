@@ -30,7 +30,7 @@ pub enum Executor {
 }
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-pub struct MsgId([u8; 56]);
+pub struct MsgId(pub [u8; 56]); // pub for testing
 
 impl MsgId {
     pub fn new(domain: &Domain, role: Role, duty_executor: &Executor) -> Self {

@@ -657,6 +657,7 @@ dependencies = [
  "beacon_node_fallback",
  "dashmap",
  "eth2",
+ "ethereum_ssz",
  "futures",
  "parking_lot",
  "qbft",
@@ -5622,6 +5623,7 @@ dependencies = [
  "ssv_types",
  "tracing",
  "tracing-subscriber",
+ "types",
 ]
 
 [[package]]
@@ -6866,6 +6868,8 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "derive_more 1.0.0",
+ "ethereum_ssz",
+ "ethereum_ssz_derive",
  "openssl",
  "rusqlite",
  "tree_hash",

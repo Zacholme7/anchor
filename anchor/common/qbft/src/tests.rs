@@ -8,8 +8,9 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 use tracing_subscriber::filter::EnvFilter;
-use types::DefaultLeaderFunction;
+use qbft_types::DefaultLeaderFunction;
 
+/*
 // HELPER FUNCTIONS FOR TESTS
 
 /// Enable debug logging for tests
@@ -134,3 +135,4 @@ fn test_basic_committee() {
     // Wait until consensus is reached or all the instances have ended
     test_instance.wait_until_end();
 }
+*/

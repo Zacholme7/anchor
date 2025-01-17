@@ -1,5 +1,4 @@
 pub mod sync_committee_service;
-
 use dashmap::DashMap;
 use futures::future::join_all;
 use parking_lot::Mutex;
@@ -11,6 +10,7 @@ use safe_arith::{ArithError, SafeArith};
 use signature_collector::{CollectionError, SignatureCollectorManager, SignatureRequest};
 use slashing_protection::{NotSafe, Safe, SlashingDatabase};
 use slot_clock::SlotClock;
+use ssv_types::message::SszBytes;
 use ssv_types::message::{
     BeaconVote, Contribution, DataSsz, ValidatorConsensusData, ValidatorDuty,
     BEACON_ROLE_AGGREGATOR, BEACON_ROLE_PROPOSER, BEACON_ROLE_SYNC_COMMITTEE_CONTRIBUTION,
@@ -18,7 +18,9 @@ use ssv_types::message::{
     DATA_VERSION_PHASE0, DATA_VERSION_UNKNOWN,
 };
 use ssv_types::{Cluster, OperatorId, ValidatorMetadata};
+use ssz::Encode;
 use std::fmt::Debug;
+use std::marker::PhantomData;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 use types::attestation::Attestation;
@@ -63,18 +65,19 @@ struct InitializedCluster {
 pub struct AnchorValidatorStore<T: SlotClock + 'static, E: EthSpec> {
     clusters: DashMap<PublicKeyBytes, InitializedCluster>,
     signature_collector: Arc<SignatureCollectorManager>,
-    qbft_manager: Arc<QbftManager<T, E>>,
+    qbft_manager: Arc<QbftManager<T>>,
     slashing_protection: SlashingDatabase,
     slashing_protection_last_prune: Mutex<Epoch>,
     spec: Arc<ChainSpec>,
     genesis_validators_root: Hash256,
     operator_id: OperatorId,
+    _eth_spec: PhantomData<E>,
 }
 
 impl<T: SlotClock, E: EthSpec> AnchorValidatorStore<T, E> {
     pub fn new(
         signature_collector: Arc<SignatureCollectorManager>,
-        qbft_manager: Arc<QbftManager<T, E>>,
+        qbft_manager: Arc<QbftManager<T>>,
         slashing_protection: SlashingDatabase,
         spec: Arc<ChainSpec>,
         genesis_validators_root: Hash256,
@@ -89,6 +92,7 @@ impl<T: SlotClock, E: EthSpec> AnchorValidatorStore<T, E> {
             spec,
             genesis_validators_root,
             operator_id,
+            _eth_spec: PhantomData,
         }
     }
 
@@ -174,6 +178,7 @@ impl<T: SlotClock, E: EthSpec> AnchorValidatorStore<T, E> {
         }
 
         let cluster = self.cluster(validator_pubkey)?;
+        let wrapped_block = wrapper(block.clone());
 
         // first, we have to get to consensus
         let completed = self
@@ -204,7 +209,7 @@ impl<T: SlotClock, E: EthSpec> AnchorValidatorStore<T, E> {
                         BeaconBlock::Deneb(_) => DATA_VERSION_DENEB,
                         BeaconBlock::Electra(_) => DATA_VERSION_UNKNOWN,
                     },
-                    data_ssz: Box::new(wrapper(block)),
+                    data_ssz: SszBytes(wrapped_block.as_ssz_bytes()),
                 },
                 &cluster.cluster,
             )
@@ -212,9 +217,9 @@ impl<T: SlotClock, E: EthSpec> AnchorValidatorStore<T, E> {
             .map_err(SpecificError::from)?;
         let data = match completed {
             Completed::TimedOut => return Err(Error::SpecificError(SpecificError::Timeout)),
-            Completed::Success(data) => data,
+            Completed::Success(_data) => wrapped_block,
         };
-        Ok(*data.data_ssz)
+        Ok(data)
     }
 
     async fn sign_abstract_block<P: AbstractExecPayload<E>>(
@@ -312,6 +317,7 @@ impl<T: SlotClock, E: EthSpec> AnchorValidatorStore<T, E> {
             Err(_) => return error(SpecificError::TooManySyncSubnetsToSign.into()),
         };
 
+        let wrapped_contribution = DataSsz::Contributions(data);
         let completed = self
             .qbft_manager
             .decide_instance(
@@ -333,17 +339,18 @@ impl<T: SlotClock, E: EthSpec> AnchorValidatorStore<T, E> {
                         validator_sync_committee_indices: Default::default(),
                     },
                     version: DATA_VERSION_PHASE0,
-                    data_ssz: Box::new(DataSsz::Contributions(data)),
+                    data_ssz: SszBytes(wrapped_contribution.as_ssz_bytes()),
                 },
                 &cluster.cluster,
             )
             .await;
+        // todo, handle this in a different way
         let data = match completed {
             Ok(Completed::Success(data)) => data,
             Ok(Completed::TimedOut) => return error(SpecificError::Timeout.into()),
             Err(err) => return error(SpecificError::QbftError(err).into()),
         };
-        let data = match *data.data_ssz {
+        let data = match wrapped_contribution {
             DataSsz::Contributions(data) => data,
             _ => return error(SpecificError::InvalidQbftData.into()),
         };
@@ -670,6 +677,7 @@ impl<T: SlotClock, E: EthSpec> ValidatorStore for AnchorValidatorStore<T, E> {
         let message =
             AggregateAndProof::from_attestation(aggregator_index, aggregate, selection_proof);
 
+        let wrapped_aggregate_and_proof = DataSsz::AggregateAndProof(message.clone());
         // first, we have to get to consensus
         let completed = self
             .qbft_manager
@@ -693,17 +701,18 @@ impl<T: SlotClock, E: EthSpec> ValidatorStore for AnchorValidatorStore<T, E> {
                         validator_sync_committee_indices: Default::default(),
                     },
                     version: DATA_VERSION_PHASE0,
-                    data_ssz: Box::new(DataSsz::AggregateAndProof(message)),
+                    data_ssz: SszBytes(wrapped_aggregate_and_proof.as_ssz_bytes()),
                 },
                 &cluster.cluster,
             )
             .await
             .map_err(SpecificError::from)?;
+        // todo!() handle a better way
         let data = match completed {
             Completed::TimedOut => return Err(Error::SpecificError(SpecificError::Timeout)),
             Completed::Success(data) => data,
         };
-        let message = match *data.data_ssz {
+        let message = match wrapped_aggregate_and_proof {
             DataSsz::AggregateAndProof(message) => message,
             _ => return Err(Error::SpecificError(SpecificError::InvalidQbftData)),
         };

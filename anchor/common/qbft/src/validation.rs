@@ -1,6 +1,7 @@
 //! Validation for data function
 
-use crate::types::ConsensusData;
+use crate::qbft_types::ConsensusData;
+use types::EthSpec;
 
 /// The list of possible validation errors that can occur
 #[derive(Debug)]
@@ -23,10 +24,13 @@ pub fn validate_data<D>(data: D) -> Result<ValidatedData<D>, ValidationError> {
 pub fn validate_consensus_data<D>(
     consensus_data: ConsensusData<D>,
 ) -> Result<ConsensusData<ValidatedData<D>>, ValidationError> {
+    todo!()
+    /*
     let round = consensus_data.round;
     let validated_data = validate_data(consensus_data.data)?;
     Ok(ConsensusData {
         round,
         data: validated_data,
     })
+    */
 }

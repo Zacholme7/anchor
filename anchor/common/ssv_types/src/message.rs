@@ -1,5 +1,7 @@
 use crate::msgid::MsgId;
 use crate::{OperatorId, ValidatorIndex};
+use ssz_derive::{Decode, Encode};
+use std::collections::HashSet;
 use std::fmt::Debug;
 use std::hash::Hash;
 use tree_hash::{PackedEncoding, TreeHash, TreeHashType};
@@ -21,18 +23,64 @@ pub trait Data: Debug + Clone {
 }
 
 #[derive(Clone, Debug)]
-pub struct SignedSsvMessage<E: EthSpec> {
+pub struct SignedSsvMessage {
     pub signatures: Vec<[u8; 256]>,
     pub operator_ids: Vec<OperatorId>,
-    pub ssv_message: SsvMessage<E>,
-    pub full_data: Option<FullData<E>>,
+    pub ssv_message: SsvMessage,
+    pub full_data: Option<FullData>, // should this just be serialized???
+}
+
+
+#[derive(Debug, Clone)]
+pub struct UnsignedSsvMessage {
+    pub ssv_message: SsvMessage,
+    pub full_data: Option<FullData>,
+}
+
+
+impl SignedSsvMessage {
+    // Validate the signed message
+    pub fn validate(&self) -> bool {
+        // OperatorID must have at least one element
+        if self.operator_ids.is_empty() {
+            return false;
+        }
+
+        // Note: Len Signers & Operators will only be > 1 after commit aggregation
+
+        // Any OperatorID must not be 0
+        if self.operator_ids.iter().any(|&id| *id == 0) {
+            return false;
+        }
+
+        // The number of signatures and OperatorIDs must be the same
+        if self.operator_ids.len() != self.signatures.len() {
+            return false;
+        }
+
+        // No duplicate signers
+        let mut seen_ids = HashSet::with_capacity(self.operator_ids.len());
+        for &id in &self.operator_ids {
+            if !seen_ids.insert(id) {
+                return false;
+            }
+        }
+        true
+    }
+
+    pub fn get_consensus_data(&self) -> Option<ValidatorConsensusData> {
+        if let Some(FullData::ValidatorConsensusData(data)) = &self.full_data {
+            return Some(data.clone());
+        }
+        None
+    }
 }
 
 #[derive(Clone, Debug)]
-pub struct SsvMessage<E: EthSpec> {
+pub struct SsvMessage {
     pub msg_type: MsgType,
     pub msg_id: MsgId,
-    pub data: SsvData<E>,
+    pub data: Vec<u8>, // Underlying type is SSVData
 }
 
 #[derive(Clone, Debug)]
@@ -42,29 +90,41 @@ pub enum MsgType {
 }
 
 #[derive(Clone, Debug)]
-pub enum SsvData<E: EthSpec> {
-    QbftMessage(QbftMessage<E>),
+pub enum SsvData {
+    QbftMessage(QbftMessage),
     PartialSignatureMessage(PartialSignatureMessage),
 }
 
 #[derive(Clone, Debug)]
-pub struct QbftMessage<E: EthSpec> {
+pub struct QbftMessage {
     pub qbft_message_type: QbftMessageType,
     pub height: u64,
     pub round: u64,
     pub identifier: MsgId,
 
     pub root: Hash256,
-    pub round_change_justification: Vec<SignedSsvMessage<E>>, // always without full_data
-    pub prepare_justification: Vec<SignedSsvMessage<E>>,      // always without full_data
+    // The last round that obtained a prepare quorum
+    pub data_round: u64,
+    pub round_change_justification: Vec<SignedSsvMessage>, // always without full_data
+    pub prepare_justification: Vec<SignedSsvMessage>,      // always without full_data
 }
 
-#[derive(Clone, Debug)]
+impl QbftMessage {
+    pub fn validate(&self) -> bool {
+        // todo!() what other identification?
+        if self.qbft_message_type > QbftMessageType::RoundChange {
+            return false;
+        }
+        true
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum QbftMessageType {
-    ProposalMsgType,
-    PrepareMsgType,
-    CommitMsgType,
-    RoundChangeMsgType,
+    Proposal = 0,
+    Prepare,
+    Commit,
+    RoundChange,
 }
 
 #[derive(Clone, Debug)]
@@ -73,26 +133,61 @@ pub struct PartialSignatureMessage {
     pub signing_root: Hash256,
     pub signer: OperatorId,
     pub validator_index: ValidatorIndex,
+    // todo!() test this out
+    pub full_data: Option<FullData>,
 }
 
 #[derive(Clone, Debug)]
-pub enum FullData<E: EthSpec> {
-    ValidatorConsensusData(ValidatorConsensusData<E>),
+pub enum FullData {
+    ValidatorConsensusData(ValidatorConsensusData),
     BeaconVote(BeaconVote),
 }
 
-#[derive(Clone, Debug, TreeHash)]
-pub struct ValidatorConsensusData<E: EthSpec> {
-    pub duty: ValidatorDuty,
-    pub version: DataVersion,
-    pub data_ssz: Box<DataSsz<E>>,
+impl Data for FullData {
+    type Hash = Hash256;
+
+    fn hash(&self) -> Self::Hash {
+        match self {
+            FullData::ValidatorConsensusData(d) => d.hash(),
+            FullData::BeaconVote(d) => d.hash()
+        }
+    }
 }
 
-impl<E: EthSpec> Data for ValidatorConsensusData<E> {
+#[derive(Clone, Debug)]
+pub struct SszBytes(pub Vec<u8>);
+
+#[derive(Clone, Debug, TreeHash)]
+pub struct ValidatorConsensusData {
+    pub duty: ValidatorDuty,
+    pub version: DataVersion,
+    pub data_ssz: SszBytes,
+}
+
+impl Data for ValidatorConsensusData {
     type Hash = Hash256;
 
     fn hash(&self) -> Self::Hash {
         self.tree_hash_root()
+    }
+}
+
+impl TreeHash for SszBytes {
+    fn tree_hash_type() -> TreeHashType {
+        TreeHashType::List
+    }
+
+    fn tree_hash_packed_encoding(&self) -> PackedEncoding {
+        todo!()
+    }
+
+    fn tree_hash_packing_factor() -> usize {
+        1
+    }
+
+    fn tree_hash_root(&self) -> tree_hash::Hash256 {
+        todo!()
+        //tree_hash::Hash256::from_slice(&tree_hash::merkle_root(&self.0.into(), 1))
     }
 }
 
@@ -167,8 +262,9 @@ impl TreeHash for DataVersion {
     }
 }
 
-#[derive(Clone, Debug, TreeHash)]
+#[derive(Clone, Debug, TreeHash, Encode)]
 #[tree_hash(enum_behaviour = "transparent")]
+#[ssz(enum_behaviour = "transparent")]
 pub enum DataSsz<E: EthSpec> {
     AggregateAndProof(AggregateAndProof<E>),
     BlindedBeaconBlock(BlindedBeaconBlock<E>),
@@ -176,7 +272,7 @@ pub enum DataSsz<E: EthSpec> {
     Contributions(VariableList<Contribution<E>, U13>),
 }
 
-#[derive(Clone, Debug, TreeHash)]
+#[derive(Clone, Debug, TreeHash, Encode)]
 pub struct Contribution<E: EthSpec> {
     pub selection_proof_sig: Signature,
     pub contribution: SyncCommitteeContribution<E>,

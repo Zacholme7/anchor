@@ -96,6 +96,8 @@ validator_metrics = { git = "https://github.com/sigp/lighthouse", branch = "anch
 validator_services = { git = "https://github.com/sigp/lighthouse", branch = "anchor" }
 validator_store = { git = "https://github.com/sigp/lighthouse", branch = "anchor" }
 version = { path = "anchor/common/version" }
+ethereum_ssz = "0.7"
+ethereum_ssz_derive = "0.7.0"
 
 [profile.maxperf]
 inherits = "release"
