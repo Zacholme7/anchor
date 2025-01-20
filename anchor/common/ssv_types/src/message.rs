@@ -1,5 +1,6 @@
 use crate::msgid::MsgId;
 use crate::{OperatorId, ValidatorIndex};
+use sha2::{Digest, Sha256};
 use ssz_derive::{Decode, Encode};
 use std::collections::HashSet;
 use std::fmt::Debug;
@@ -26,14 +27,24 @@ pub trait Data: Debug + Clone {
 pub struct SignedSsvMessage {
     pub signatures: Vec<[u8; 256]>,
     pub operator_ids: Vec<OperatorId>,
-    pub ssv_message: SsvMessage,
-    pub full_data: Option<FullData>, // should this just be serialized???
+    pub ssv_message: SsvMessage, // this is the ssv message, consensu/partial sign
+    pub full_data: Vec<u8>,      // this is the underlying data
+}
+
+
+impl SignedSsvMessage {
+    pub fn hash_fulldata(&self) -> Hash256 {
+        let mut hasher = Sha256::new();
+        hasher.update(self.full_data.clone());
+        let hash: [u8; 32] = hasher.finalize().into();
+        Hash256::from(hash)
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct UnsignedSsvMessage {
     pub ssv_message: SsvMessage,
-    pub full_data: Option<FullData>,
+    pub full_data: Vec<u8>,
 }
 
 impl SignedSsvMessage {
@@ -66,12 +77,14 @@ impl SignedSsvMessage {
         true
     }
 
+    /*
     pub fn get_consensus_data(&self) -> Option<ValidatorConsensusData> {
         if let Some(FullData::ValidatorConsensusData(data)) = &self.full_data {
             return Some(data.clone());
         }
         None
     }
+    */
 }
 
 #[derive(Clone, Debug)]

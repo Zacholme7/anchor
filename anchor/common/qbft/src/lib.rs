@@ -4,6 +4,7 @@ use ssv_types::message::{
 };
 use ssv_types::msgid::MsgId;
 use ssv_types::OperatorId;
+use ssz::Encode;
 use std::collections::HashMap;
 use tracing::{debug, error, warn};
 use types::Hash256;
@@ -25,9 +26,9 @@ mod msg_container;
 mod qbft_types;
 mod validation;
 
-struct ConsensusRecord<D> {
+struct ConsensusRecord {
     round: Round,
-    data: D,
+    data_hash: Hash256,
     prepare_messages: Vec<WrappedQbftMessage>,
 }
 
@@ -39,10 +40,13 @@ mod tests;
 /// This builds and runs an entire QBFT process until it completes. It can complete either
 /// successfully (i.e that it has successfully come to consensus, or through a timeout where enough
 /// round changes have elapsed before coming to consensus.
+///
+/// The QBFT instance will recieve SignedSSVMessages from the network and it will construct
+/// UnsignedSSVMessages to be signed and sent on the network.
 pub struct Qbft<F, D, S>
 where
     F: LeaderFunction + Clone,
-    D: Data,
+    D: Data + Encode,
     S: FnMut(Message),
 {
     /// The initial configuration used to establish this instance of QBFT.
@@ -58,7 +62,7 @@ where
     /// Initial data that we will propose if we are the leader.
     start_data: D,
     /// All of the data that we have seen
-    data: HashMap<D::Hash, D>,
+    data: HashMap<D::Hash, Vec<u8>>,
     /// The current round this instance state is in.a
     current_round: Round,
     /// The current state of the instance
@@ -78,7 +82,7 @@ where
     last_prepared_value: Option<D::Hash>,
 
     /// Past prepare consensus that we have reached
-    past_consensus: HashMap<Round, ConsensusRecord<D>>,
+    past_consensus: HashMap<Round, ConsensusRecord>,
 
     // Network sender
     send_message: S,
@@ -87,7 +91,7 @@ where
 impl<F, D, S> Qbft<F, D, S>
 where
     F: LeaderFunction + Clone,
-    D: Data<Hash = Hash256>,
+    D: Data<Hash = Hash256> + Encode,
     S: FnMut(Message),
 {
     // Construct a new QBFT Instance and start the first round
@@ -125,15 +129,17 @@ where
         qbft
     }
 
+    // Hash of the start data
     pub fn start_data_hash(&self) -> &D::Hash {
         &self.start_data_hash
     }
 
+    /// Return a reference to the qbft configuration
     pub fn config(&self) -> &Config<F> {
         &self.config
     }
 
-    /// Shifts this instance into a new round>
+    // Shifts this instance into a new round>
     fn set_round(&mut self, new_round: Round) {
         self.current_round.set(new_round);
         self.start_round();
@@ -202,12 +208,12 @@ where
     fn record_consensus(
         &mut self,
         round: Round,
-        data: D,
+        data_hash: Hash256,
         prepare_messages: Vec<WrappedQbftMessage>,
     ) {
         let record = ConsensusRecord {
             round,
-            data,
+            data_hash,
             prepare_messages,
         };
         self.past_consensus.insert(round, record);
@@ -220,7 +226,7 @@ where
     /// If there is no past consensus data in the round change quorum or we disagree with quorum set
     /// this function will return None, and we obtain the data as if we were beginning this
     /// instance.
-    fn justify_round_change_quorum(&self) -> Option<D> {
+    fn justify_round_change_quorum(&self) -> Option<(Hash256, Vec<u8>)> {
         // Get all round change messages for the current round
         let round_change_messages = self
             .round_change_container
@@ -240,17 +246,23 @@ where
         // If we found a message with prepared data
         if let Some(highest_msg) = highest_prepared {
             // Get the prepared data from the message
-            let prepared_data = highest_msg.signed_message.full_data.as_ref()?;
+            let prepared_data = highest_msg.signed_message.full_data.clone();
             let prepared_round = Round::from(highest_msg.qbft_message.data_round);
 
             // Verify we have also seen this consensus
             if let Some(our_record) = self.past_consensus.get(&prepared_round) {
+                // We have seen consensus on the data, get the value
+                let our_data = self
+                    .data
+                    .get(&our_record.data_hash)
+                    .expect("Data must exist")
+                    .clone();
+
                 // Verify the data matches what we saw
-                //todo!() figure out this compare
-                //if prepared_data == our_record.data {
-                // We agree with the prepared data - use it
-                //   return Some(our_record.data.clone());
-                //}
+                if prepared_data == our_data {
+                    // We agree with the prepared data - use it
+                    return Some((our_record.data_hash, our_data));
+                }
             }
         }
 
@@ -272,12 +284,12 @@ where
 
             // Check justification of round change quorum. If there is a justification, we will use
             // that data. Otherwise, use the initial state data
-            let data = self
+            let (data_hash, data) = self
                 .justify_round_change_quorum()
-                .unwrap_or_else(|| self.start_data.clone());
+                .unwrap_or_else(|| (self.start_data_hash, self.start_data.as_ssz_bytes()));
 
             // Send the initial proposal
-            self.send_proposal(data.clone());
+            self.send_proposal(data_hash, data);
         }
     }
 
@@ -349,14 +361,8 @@ where
             //self.validate_prepare_justification(wrapped_msg)?;
         }
 
-        // Extract and validate the proposed data
-        let Some(data) = wrapped_msg.signed_message.full_data.clone() else {
-            warn!(from = ?operator_id, "No data was proposed");
-            return;
-        };
-
-        // Verify data hash matches the root
-        let data_hash = data.hash();
+        // Verify that the fulldata matches the data root of the qbft message
+        let data_hash = wrapped_msg.signed_message.hash_fulldata();
         if data_hash != wrapped_msg.qbft_message.root {
             warn!(from = ?operator_id, "Data roots do not match");
             return;
@@ -373,7 +379,8 @@ where
         }
 
         // Store the data
-        //self.data.insert(data_hash, data);
+        self.data
+            .insert(data_hash, wrapped_msg.signed_message.full_data.clone());
 
         // Update state
         self.proposal_accepted_for_current_round = Some(wrapped_msg);
@@ -408,21 +415,24 @@ where
 
         // Check if we have reached quorum, if so send the commit message
         if let Some(hash) = self.prepare_container.has_quorum(round) {
-            // Record this prepare consensus. Fetch the data, all of its prepare messages, and then
+            // Make sure we are in the correct state
+            if !matches!(self.state, InstanceState::Prepare) {
+                warn!(from=?operator_id, ?self.state, "Not in PREPARE state");
+                return;
+            }
+
+            // Record this prepare consensus. Fetch all of the preapre messages for the data and then
             // record the consensus for them
-            let data = self.data.get(&hash).expect("Data must exist");
             let prepares_for_data: Vec<WrappedQbftMessage> = self
                 .prepare_container
                 .get_messages_for_value(round, hash)
                 .into_iter()
                 .cloned()
                 .collect();
-            self.record_consensus(round, data.clone(), prepares_for_data);
+            self.record_consensus(round, hash, prepares_for_data);
 
-            // if we are in the correct state, also send the commit
-            if matches!(self.state, InstanceState::Prepare) {
-                self.send_commit(hash);
-            }
+            // Send a commit message for the prepare quorum data
+            self.send_commit(hash);
         }
     }
 
@@ -528,8 +538,7 @@ where
     }
 
     // Construct a new unsigned message. This will be passed to the processor to be signed and then
-    // send on the network
-    // Helper: Create unsigned message
+    // sent on the network
     fn new_unsigned_message(
         &self,
         msg_type: QbftMessageType,
@@ -557,17 +566,16 @@ where
         UnsignedSsvMessage {
             ssv_message: SsvMessage {
                 msg_type: MsgType::SsvConsensusMsgType,
-                msg_id: self.identifier.clone(), // This should be properly generated
-                data: vec![],                    // this should be ssv_message.serialize()
+                msg_id: self.identifier.clone(),
+                data: vec![], // this should be ssv_message.as_ssz_bytes()
             },
-            full_data: None, //Some(self.data.get(&data_hash).unwrap().clone()), // Include the actual data
+            full_data: self.data.get(&data_hash).unwrap().clone(),
         }
     }
 
     // Send a new qbft proposal message
-    fn send_proposal(&mut self, data: D) {
+    fn send_proposal(&mut self, hash: D::Hash, data: Vec<u8>) {
         // Store the data we're proposing
-        let hash = data.hash();
         self.data.insert(hash, data.clone());
 
         // Construct a unsigned proposal
@@ -592,6 +600,7 @@ where
         (self.send_message)(Message::Prepare(operator_id, unsigned_msg.clone()));
     }
 
+    // Send a new qbft commit message
     fn send_commit(&mut self, data_hash: D::Hash) {
         // Construct unsigned commit
         let unsigned_msg = self.new_unsigned_message(QbftMessageType::Commit, data_hash);
@@ -600,6 +609,7 @@ where
         (self.send_message)(Message::Commit(operator_id, unsigned_msg.clone()));
     }
 
+    // Send a new qbft round change message
     fn send_round_change(&mut self, data_hash: D::Hash) {
         // Construct unsigned round change
         let unsigned_msg = self.new_unsigned_message(QbftMessageType::RoundChange, data_hash);
@@ -608,7 +618,7 @@ where
         (self.send_message)(Message::RoundChange(operator_id, unsigned_msg.clone()));
     }
 
-    pub fn completed(&self) -> Option<Completed<D>> {
+    pub fn completed(&self) -> Option<Completed<Vec<u8>>> {
         self.completed
             .clone()
             .and_then(|completed| match completed {
@@ -618,7 +628,7 @@ where
                     if data.is_none() {
                         error!("could not find finished data");
                     }
-                    data.map(|data| Completed::Success(data))
+                    data.map(Completed::Success)
                 }
             })
     }
