@@ -66,11 +66,14 @@ impl<M: Clone + Data<Hash = Hash256>> MessageContainer<M> {
     }
 
     // Count messages for this round
-    pub fn num_messages_for_round(&self, round: Round) -> usize{
-        self.messages.get(&round).map(|msgs| msgs.len()).unwrap_or(0)
+    pub fn num_messages_for_round(&self, round: Round) -> usize {
+        self.messages
+            .get(&round)
+            .map(|msgs| msgs.len())
+            .unwrap_or(0)
     }
 
-      // Gets all messages for a specific round
+    // Gets all messages for a specific round
     pub fn get_messages_for_round(&self, round: Round) -> Vec<&M> {
         // If we have messages for this round in our container, return them all
         // If not, return an empty vector

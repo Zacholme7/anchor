@@ -22,6 +22,7 @@ use ssz::Encode;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::{error, info, warn};
 use types::attestation::Attestation;
 use types::beacon_block::BeaconBlock;
@@ -31,6 +32,7 @@ use types::signed_aggregate_and_proof::SignedAggregateAndProof;
 use types::signed_beacon_block::SignedBeaconBlock;
 use types::signed_contribution_and_proof::SignedContributionAndProof;
 use types::signed_voluntary_exit::SignedVoluntaryExit;
+use types::slot_data::SlotData;
 use types::slot_epoch::{Epoch, Slot};
 use types::sync_committee_contribution::SyncCommitteeContribution;
 use types::sync_committee_message::SyncCommitteeMessage;
@@ -64,10 +66,11 @@ struct InitializedCluster {
 
 pub struct AnchorValidatorStore<T: SlotClock + 'static, E: EthSpec> {
     clusters: DashMap<PublicKeyBytes, InitializedCluster>,
-    signature_collector: Arc<SignatureCollectorManager>,
+    signature_collector: Arc<SignatureCollectorManager<T>>,
     qbft_manager: Arc<QbftManager<T>>,
     slashing_protection: SlashingDatabase,
     slashing_protection_last_prune: Mutex<Epoch>,
+    slot_clock: T,
     spec: Arc<ChainSpec>,
     genesis_validators_root: Hash256,
     operator_id: OperatorId,
@@ -76,9 +79,10 @@ pub struct AnchorValidatorStore<T: SlotClock + 'static, E: EthSpec> {
 
 impl<T: SlotClock, E: EthSpec> AnchorValidatorStore<T, E> {
     pub fn new(
-        signature_collector: Arc<SignatureCollectorManager>,
+        signature_collector: Arc<SignatureCollectorManager<T>>,
         qbft_manager: Arc<QbftManager<T>>,
         slashing_protection: SlashingDatabase,
+        slot_clock: T,
         spec: Arc<ChainSpec>,
         genesis_validators_root: Hash256,
         operator_id: OperatorId,
@@ -89,6 +93,7 @@ impl<T: SlotClock, E: EthSpec> AnchorValidatorStore<T, E> {
             qbft_manager,
             slashing_protection,
             slashing_protection_last_prune: Mutex::new(Epoch::new(0)),
+            slot_clock,
             spec,
             genesis_validators_root,
             operator_id,
@@ -136,6 +141,7 @@ impl<T: SlotClock, E: EthSpec> AnchorValidatorStore<T, E> {
         &self,
         cluster: InitializedCluster,
         signing_root: Hash256,
+        for_slot: Slot,
     ) -> Result<Signature, Error> {
         let collector = self.signature_collector.sign_and_collect(
             SignatureRequest {
@@ -147,6 +153,7 @@ impl<T: SlotClock, E: EthSpec> AnchorValidatorStore<T, E> {
                     .safe_mul(2)
                     .and_then(|x| x.safe_add(1))
                     .map_err(SpecificError::from)?,
+                slot: for_slot,
             },
             self.operator_id,
             cluster.decrypted_key_share,
@@ -242,7 +249,7 @@ impl<T: SlotClock, E: EthSpec> AnchorValidatorStore<T, E> {
 
         let signing_root = block.signing_root(domain_hash);
         let signature = self
-            .collect_signature(self.cluster(validator_pubkey)?, signing_root)
+            .collect_signature(self.cluster(validator_pubkey)?, signing_root, block.slot())
             .await?;
         Ok(SignedBeaconBlock::from_block(block, signature))
     }
@@ -277,7 +284,7 @@ impl<T: SlotClock, E: EthSpec> AnchorValidatorStore<T, E> {
 
         let domain = self.get_domain(epoch, Domain::SyncCommittee);
         let signing_root = data.block_root.signing_root(domain);
-        let signature = self.collect_signature(cluster, signing_root).await?;
+        let signature = self.collect_signature(cluster, signing_root, slot).await?;
 
         Ok(SyncCommitteeMessage {
             slot,
@@ -361,13 +368,14 @@ impl<T: SlotClock, E: EthSpec> AnchorValidatorStore<T, E> {
             .map(|contribution| {
                 let cluster = cluster.clone();
                 async move {
+                    let slot = contribution.contribution.slot;
                     let message = ContributionAndProof {
                         aggregator_index,
                         contribution: contribution.contribution,
                         selection_proof: contribution.selection_proof_sig,
                     };
                     let signing_root = message.signing_root(domain_hash);
-                    self.collect_signature(cluster, signing_root)
+                    self.collect_signature(cluster, signing_root, slot)
                         .await
                         .map(|signature| SignedContributionAndProof { message, signature })
                 }
@@ -507,8 +515,12 @@ impl<T: SlotClock, E: EthSpec> ValidatorStore for AnchorValidatorStore<T, E> {
     ) -> Result<Signature, Error> {
         let domain_hash = self.get_domain(signing_epoch, Domain::Randao);
         let signing_root = signing_epoch.signing_root(domain_hash);
-        self.collect_signature(self.cluster(validator_pubkey)?, signing_root)
-            .await
+        self.collect_signature(
+            self.cluster(validator_pubkey)?,
+            signing_root,
+            signing_epoch.end_slot(E::slots_per_epoch()),
+        )
+        .await
     }
 
     fn set_validator_index(&self, validator_pubkey: &PublicKeyBytes, index: u64) {
@@ -627,7 +639,9 @@ impl<T: SlotClock, E: EthSpec> ValidatorStore for AnchorValidatorStore<T, E> {
         )?;
 
         let signing_root = attestation.data().signing_root(domain_hash);
-        let signature = self.collect_signature(cluster, signing_root).await?;
+        let signature = self
+            .collect_signature(cluster, signing_root, attestation.data().slot)
+            .await?;
         attestation
             .add_signature(&signature, validator_committee_position)
             .map_err(Error::UnableToSignAttestation)?;
@@ -646,15 +660,28 @@ impl<T: SlotClock, E: EthSpec> ValidatorStore for AnchorValidatorStore<T, E> {
 
     async fn sign_validator_registration_data(
         &self,
-        validator_registration_data: ValidatorRegistrationData,
+        mut validator_registration_data: ValidatorRegistrationData,
     ) -> Result<SignedValidatorRegistrationData, Error> {
         let domain_hash = self.spec.get_builder_domain();
         let signing_root = validator_registration_data.signing_root(domain_hash);
+
+        // SSV always uses the start of the current epoch, so we need to convert to that
+        let epoch = self
+            .slot_clock
+            .slot_of(Duration::from_secs(validator_registration_data.timestamp))
+            .unwrap_or(self.spec.genesis_slot)
+            .epoch(E::slots_per_epoch());
+        let sign_slot = epoch.start_slot(E::slots_per_epoch());
+        let validity_slot = epoch.end_slot(E::slots_per_epoch());
+        if let Some(duration) = self.slot_clock.start_of(sign_slot) {
+            validator_registration_data.timestamp = duration.as_secs();
+        }
 
         let signature = self
             .collect_signature(
                 self.cluster(validator_registration_data.pubkey)?,
                 signing_root,
+                validity_slot,
             )
             .await?;
 
@@ -719,7 +746,9 @@ impl<T: SlotClock, E: EthSpec> ValidatorStore for AnchorValidatorStore<T, E> {
 
         let domain_hash = self.get_domain(signing_epoch, Domain::AggregateAndProof);
         let signing_root = message.signing_root(domain_hash);
-        let signature = self.collect_signature(cluster, signing_root).await?;
+        let signature = self
+            .collect_signature(cluster, signing_root, message.aggregate().get_slot())
+            .await?;
 
         Ok(SignedAggregateAndProof::from_aggregate_and_proof(
             message, signature,
@@ -735,7 +764,7 @@ impl<T: SlotClock, E: EthSpec> ValidatorStore for AnchorValidatorStore<T, E> {
         let domain_hash = self.get_domain(epoch, Domain::SelectionProof);
         let signing_root = slot.signing_root(domain_hash);
 
-        self.collect_signature(self.cluster(validator_pubkey)?, signing_root)
+        self.collect_signature(self.cluster(validator_pubkey)?, signing_root, slot)
             .await
             .map(SelectionProof::from)
     }
@@ -754,7 +783,7 @@ impl<T: SlotClock, E: EthSpec> ValidatorStore for AnchorValidatorStore<T, E> {
         }
         .signing_root(domain_hash);
 
-        self.collect_signature(self.cluster(*validator_pubkey)?, signing_root)
+        self.collect_signature(self.cluster(*validator_pubkey)?, signing_root, slot)
             .await
             .map(SyncSelectionProof::from)
     }

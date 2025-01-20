@@ -4,11 +4,11 @@ use derive_more::{Deref, From};
 use indexmap::IndexSet;
 use ssv_types::message::{Data, QbftMessage, SignedSsvMessage, UnsignedSsvMessage};
 use ssv_types::OperatorId;
-use types::Hash256;
 use std::cmp::Eq;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::num::NonZeroUsize;
+use types::Hash256;
 
 /// Generic LeaderFunction trait to allow for future implementations of the QBFT module
 pub trait LeaderFunction {
@@ -50,10 +50,9 @@ pub struct WrappedQbftMessage {
     pub qbft_message: QbftMessage,
 }
 
-
 impl WrappedQbftMessage {
     // Validate that the message is well formed
-    pub fn validate(&self) -> bool{
+    pub fn validate(&self) -> bool {
         self.signed_message.validate() && self.qbft_message.validate()
     }
 }
@@ -64,7 +63,6 @@ impl Data for WrappedQbftMessage {
     fn hash(&self) -> Self::Hash {
         self.qbft_message.root
     }
-
 }
 
 /// This represents an individual round, these change on regular time intervals
@@ -76,7 +74,6 @@ impl From<u64> for Round {
         todo!()
     }
 }
-
 
 impl Default for Round {
     fn default() -> Self {
@@ -119,6 +116,8 @@ pub enum InstanceState {
     SentRoundChange = 4,
     /// The consensus instance is complete
     Complete,
+    /// We have reached consensus on a round change
+    RoundChangeConsensus,
 }
 
 /// Generic Data trait to allow for future implementations of the QBFT module

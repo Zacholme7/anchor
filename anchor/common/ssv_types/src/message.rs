@@ -30,13 +30,11 @@ pub struct SignedSsvMessage {
     pub full_data: Option<FullData>, // should this just be serialized???
 }
 
-
 #[derive(Clone, Debug)]
 pub struct UnsignedSsvMessage {
     pub ssv_message: SsvMessage,
     pub full_data: Option<FullData>,
 }
-
 
 impl SignedSsvMessage {
     // Validate the signed message
@@ -149,7 +147,7 @@ impl Data for FullData {
     fn hash(&self) -> Self::Hash {
         match self {
             FullData::ValidatorConsensusData(d) => d.hash(),
-            FullData::BeaconVote(d) => d.hash()
+            FullData::BeaconVote(d) => d.hash(),
         }
     }
 }
@@ -157,7 +155,7 @@ impl Data for FullData {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SszBytes(pub Vec<u8>);
 
-#[derive(Clone, Debug, TreeHash ,PartialEq)]
+#[derive(Clone, Debug, TreeHash, PartialEq)]
 pub struct ValidatorConsensusData {
     pub duty: ValidatorDuty,
     pub version: DataVersion,

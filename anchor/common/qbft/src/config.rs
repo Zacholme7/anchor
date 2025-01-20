@@ -1,7 +1,7 @@
 use super::error::ConfigBuilderError;
 use crate::qbft_types::{DefaultLeaderFunction, InstanceHeight, LeaderFunction, Round};
-use ssv_types::OperatorId;
 use indexmap::IndexSet;
+use ssv_types::OperatorId;
 use std::fmt::Debug;
 use std::time::Duration;
 
@@ -154,6 +154,7 @@ where
             leader_fn,
         }
     }
+
     pub fn operator_id(&self) -> OperatorId {
         self.operator_id
     }

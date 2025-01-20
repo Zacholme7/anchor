@@ -1,8 +1,8 @@
 use dashmap::DashMap;
 use processor::{DropOnFinish, Senders, WorkItem};
 use qbft::{
-    Completed, ConfigBuilder, ConfigBuilderError, DefaultLeaderFunction, InstanceHeight,
-    WrappedQbftMessage, Message
+    Completed, ConfigBuilder, ConfigBuilderError, DefaultLeaderFunction, InstanceHeight, Message,
+    WrappedQbftMessage,
 };
 use slot_clock::SlotClock;
 use ssv_types::message::Data;
@@ -394,10 +394,6 @@ async fn qbft_instance<D: Data<Hash = Hash256>>(mut rx: UnboundedReceiver<QbftMe
         }
     }
 }
-
-
-
-
 
 #[derive(Debug, Clone)]
 pub enum QbftError {
