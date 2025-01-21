@@ -1,7 +1,6 @@
 use crate::msg_container::MessageContainer;
-use ssv_types::message::{
-    Data, MsgType, QbftMessage, QbftMessageType, SsvMessage, UnsignedSsvMessage,
-};
+use ssv_types::consensus::{Data, QbftMessage, QbftMessageType, UnsignedSSVMessage};
+use ssv_types::message::{MessageID, MsgType, SSVMessage};
 use ssv_types::msgid::MsgId;
 use ssv_types::OperatorId;
 use ssz::Encode;
@@ -183,9 +182,9 @@ where
         }
 
         // Make sure there is only one signer
-        if wrapped_msg.signed_message.operator_ids.len() != 1 {
+        if wrapped_msg.signed_message.operator_ids().len() != 1 {
             warn!(
-                num_signers = wrapped_msg.signed_message.operator_ids.len(),
+                num_signers = wrapped_msg.signed_message.operator_ids().len(),
                 "Propose message only allows one signer"
             );
             return false;
@@ -246,7 +245,7 @@ where
         // If we found a message with prepared data
         if let Some(highest_msg) = highest_prepared {
             // Get the prepared data from the message
-            let prepared_data = highest_msg.signed_message.full_data.clone();
+            let prepared_data = highest_msg.signed_message.full_data();
             let prepared_round = Round::from(highest_msg.qbft_message.data_round);
 
             // Verify we have also seen this consensus
@@ -304,12 +303,13 @@ where
         // is the sender
         let operator_id = wrapped_msg
             .signed_message
-            .operator_ids
+            .operator_ids()
             .first()
             .expect("Confirmed to exist in validation");
+        let operator_id = OperatorId(*operator_id);
 
         // Check that this operator is in our committee
-        if !self.check_committee(operator_id) {
+        if !self.check_committee(&operator_id) {
             warn!(
                 from = ?operator_id,
                 "PROPOSE message from non-committee operator"
@@ -322,12 +322,12 @@ where
         // All basic verification successful! Dispatch to the correct handler
         match wrapped_msg.qbft_message.qbft_message_type {
             QbftMessageType::Proposal => {
-                self.received_propose(*operator_id, msg_round, wrapped_msg)
+                self.received_propose(operator_id, msg_round, wrapped_msg)
             }
-            QbftMessageType::Prepare => self.received_prepare(*operator_id, msg_round, wrapped_msg),
-            QbftMessageType::Commit => self.received_commit(*operator_id, msg_round, wrapped_msg),
+            QbftMessageType::Prepare => self.received_prepare(operator_id, msg_round, wrapped_msg),
+            QbftMessageType::Commit => self.received_commit(operator_id, msg_round, wrapped_msg),
             QbftMessageType::RoundChange => {
-                self.received_round_change(*operator_id, msg_round, wrapped_msg)
+                self.received_round_change(operator_id, msg_round, wrapped_msg)
             }
         }
     }
@@ -379,8 +379,10 @@ where
         }
 
         // Store the data
-        self.data
-            .insert(data_hash, wrapped_msg.signed_message.full_data.clone());
+        self.data.insert(
+            data_hash,
+            wrapped_msg.signed_message.full_data().to_vec().clone(),
+        );
 
         // Update state
         self.proposal_accepted_for_current_round = Some(wrapped_msg);
@@ -543,7 +545,7 @@ where
         &self,
         msg_type: QbftMessageType,
         data_hash: D::Hash,
-    ) -> UnsignedSsvMessage {
+    ) -> UnsignedSSVMessage {
         // Create the QBFT message
         let _qbft_mesage = QbftMessage {
             qbft_message_type: msg_type,
@@ -556,19 +558,15 @@ where
             prepare_justification: vec![],      // Empty for MVP
         };
 
-        let _ssv_message = SsvMessage {
-            msg_type: MsgType::SsvConsensusMsgType,
-            msg_id: self.identifier.clone(),
-            data: vec![], // this should by qbft_serialized
-        };
+        let ssv_message = SSVMessage::new(
+            MsgType::SSVConsensusMsgType,
+            MessageID::new([0; 56]),
+            vec![], // this should be the qbft message ssz
+        );
 
         // Wrap in unsigned SSV message
-        UnsignedSsvMessage {
-            ssv_message: SsvMessage {
-                msg_type: MsgType::SsvConsensusMsgType,
-                msg_id: self.identifier.clone(),
-                data: vec![], // this should be ssv_message.as_ssz_bytes()
-            },
+        UnsignedSSVMessage {
+            ssv_message,
             full_data: self.data.get(&data_hash).unwrap().clone(),
         }
     }

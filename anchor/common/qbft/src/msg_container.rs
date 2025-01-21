@@ -1,5 +1,5 @@
 use crate::Round;
-use ssv_types::message::Data;
+use ssv_types::consensus::Data;
 use ssv_types::OperatorId;
 use std::collections::{HashMap, HashSet};
 use types::Hash256;

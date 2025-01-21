@@ -5,10 +5,12 @@ use qbft::{
     WrappedQbftMessage,
 };
 use slot_clock::SlotClock;
-use ssv_types::message::Data;
-use ssv_types::message::{BeaconVote, SignedSsvMessage, ValidatorConsensusData};
+use ssv_types::consensus::{BeaconVote, Data, ValidatorConsensusData};
+
+use ssv_types::message::SignedSSVMessage;
 use ssv_types::OperatorId as QbftOperatorId;
 use ssv_types::{Cluster, ClusterId, OperatorId};
+use ssz::Encode;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::Arc;
@@ -53,20 +55,20 @@ pub enum ValidatorDutyKind {
 
 // Message that is passed around the QbftManager
 #[derive(Debug)]
-pub struct QbftMessage<D: Data<Hash = Hash256>> {
+pub struct QbftMessage<D: Data<Hash = Hash256> + Encode> {
     pub kind: QbftMessageKind<D>,
     pub drop_on_finish: DropOnFinish,
 }
 
 // Type of the QBFT Message
 #[derive(Debug)]
-pub enum QbftMessageKind<D: Data<Hash = Hash256>> {
+pub enum QbftMessageKind<D: Data<Hash = Hash256> + Encode> {
     // Initialize a new qbft instance with some initial data,
     // the configuration for the instance, and a channel to send the final data on
     Initialize {
         initial: D,
         config: qbft::Config<DefaultLeaderFunction>,
-        on_completed: oneshot::Sender<Completed<D>>,
+        on_completed: oneshot::Sender<Completed<Vec<u8>>>,
     },
     // A message received from the network. The network exchanges SignedSsvMessages, but after
     // deserialziation we dermine the message is for the qbft instance and decode it into a wrapped
@@ -123,7 +125,7 @@ impl<T: SlotClock> QbftManager<T> {
         id: D::Id,
         initial: D,
         committee: &Cluster,
-    ) -> Result<Completed<D>, QbftError> {
+    ) -> Result<Completed<Vec<u8>>, QbftError> {
         // Tx/Rx pair to send and retrieve the final result
         let (result_sender, result_receiver) = oneshot::channel();
 
@@ -160,6 +162,7 @@ impl<T: SlotClock> QbftManager<T> {
         )?;
 
         // Await the final result
+        // todo!(), we recieve a vec<u8> here, we should deserialize back to D
         Ok(result_receiver.await?)
     }
 
@@ -202,7 +205,9 @@ impl<T: SlotClock> QbftManager<T> {
 }
 
 // Trait that describes any data that is able to be decided upon during a qbft instance
-pub trait QbftDecidable<T: SlotClock + 'static>: Data<Hash = Hash256> + Send + 'static {
+pub trait QbftDecidable<T: SlotClock + 'static>:
+    Data<Hash = Hash256> + Encode + Send + 'static
+{
     type Id: Hash + Eq + Send;
 
     fn get_map(manager: &QbftManager<T>) -> &Map<Self::Id, Self>;
@@ -255,7 +260,7 @@ impl<T: SlotClock + 'static> QbftDecidable<T> for BeaconVote {
 }
 
 // States that Qbft instance may be in
-enum QbftInstance<D: Data<Hash = Hash256>, S: FnMut(Message)> {
+enum QbftInstance<D: Data<Hash = Hash256> + Encode, S: FnMut(Message)> {
     // The instance is uninitialized
     Uninitialized {
         // todo: proooobably limit this
@@ -267,15 +272,17 @@ enum QbftInstance<D: Data<Hash = Hash256>, S: FnMut(Message)> {
     Initialized {
         qbft: Box<Qbft<D, S>>,
         round_end: Interval,
-        on_completed: Vec<oneshot::Sender<Completed<D>>>,
+        on_completed: Vec<oneshot::Sender<Completed<Vec<u8>>>>,
     },
     // The instance has been decided
     Decided {
-        value: Completed<D>,
+        value: Completed<Vec<u8>>,
     },
 }
 
-async fn qbft_instance<D: Data<Hash = Hash256>>(mut rx: UnboundedReceiver<QbftMessage<D>>) {
+async fn qbft_instance<D: Data<Hash = Hash256> + Encode>(
+    mut rx: UnboundedReceiver<QbftMessage<D>>,
+) {
     // Signal a new instance that is uninitialized
     let mut instance = QbftInstance::Uninitialized {
         message_buffer: Vec::new(),

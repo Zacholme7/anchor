@@ -5,6 +5,7 @@ mod cluster;
 pub mod message;
 pub mod msgid;
 mod operator;
+pub mod consensus;
 mod share;
 mod sql_conversions;
 mod util;

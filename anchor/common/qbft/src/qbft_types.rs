@@ -2,7 +2,8 @@
 use crate::validation::ValidatedData;
 use derive_more::{Deref, From};
 use indexmap::IndexSet;
-use ssv_types::message::{Data, QbftMessage, SignedSsvMessage, UnsignedSsvMessage};
+use ssv_types::consensus::{Data, QbftMessage, UnsignedSSVMessage};
+use ssv_types::message::SignedSSVMessage;
 use ssv_types::OperatorId;
 use std::cmp::Eq;
 use std::fmt::Debug;
@@ -46,7 +47,7 @@ impl LeaderFunction for DefaultLeaderFunction {
 // message.
 #[derive(Debug, Clone)]
 pub struct WrappedQbftMessage {
-    pub signed_message: SignedSsvMessage,
+    pub signed_message: SignedSSVMessage,
     pub qbft_message: QbftMessage,
 }
 
@@ -70,7 +71,7 @@ impl Data for WrappedQbftMessage {
 pub struct Round(NonZeroUsize);
 
 impl From<u64> for Round {
-    fn from(round: u64) -> Round {
+    fn from(_round: u64) -> Round {
         todo!()
     }
 }
@@ -93,10 +94,6 @@ impl Round {
         *self = round;
     }
 }
-
-/// The operator that is participating in the consensus instance.
-//#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, From, Deref)]
-//pub struct OperatorId(u64);
 
 /// The instance height behaves like an "ID" for the QBFT instance. It is used to uniquely identify
 /// different instances, that have the same operator id.
@@ -125,13 +122,13 @@ pub enum InstanceState {
 #[derive(Debug, Clone)]
 pub enum Message {
     /// A PROPOSE message to be sent on the network.
-    Propose(OperatorId, UnsignedSsvMessage),
+    Propose(OperatorId, UnsignedSSVMessage),
     /// A PREPARE message to be sent on the network.
-    Prepare(OperatorId, UnsignedSsvMessage),
+    Prepare(OperatorId, UnsignedSSVMessage),
     /// A commit message to be sent on the network.
-    Commit(OperatorId, UnsignedSsvMessage),
+    Commit(OperatorId, UnsignedSSVMessage),
     /// Round change message received from network
-    RoundChange(OperatorId, UnsignedSsvMessage),
+    RoundChange(OperatorId, UnsignedSSVMessage),
 }
 
 /// Type definitions for the allowable messages
