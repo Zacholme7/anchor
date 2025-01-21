@@ -10,7 +10,6 @@ use safe_arith::{ArithError, SafeArith};
 use signature_collector::{CollectionError, SignatureCollectorManager, SignatureRequest};
 use slashing_protection::{NotSafe, Safe, SlashingDatabase};
 use slot_clock::SlotClock;
-use ssv_types::consensus::SszBytes;
 use ssv_types::consensus::{
     BeaconVote, Contribution, DataSsz, ValidatorConsensusData, ValidatorDuty,
     BEACON_ROLE_AGGREGATOR, BEACON_ROLE_PROPOSER, BEACON_ROLE_SYNC_COMMITTEE_CONTRIBUTION,
@@ -18,7 +17,7 @@ use ssv_types::consensus::{
     DATA_VERSION_PHASE0, DATA_VERSION_UNKNOWN,
 };
 use ssv_types::{Cluster, OperatorId, ValidatorMetadata};
-use ssz::{Encode, Decode};
+use ssz::{Decode, Encode};
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -281,8 +280,8 @@ impl<T: SlotClock, E: EthSpec> AnchorValidatorStore<T, E> {
             Completed::TimedOut => return Err(Error::SpecificError(SpecificError::Timeout)),
             Completed::Success(data) => data,
         };
-        let data = BeaconVote::from_ssz_bytes(&data).map_err(|_| Error::SpecificError(SpecificError::InvalidQbftData))?;
-
+        let data = BeaconVote::from_ssz_bytes(&data)
+            .map_err(|_| Error::SpecificError(SpecificError::InvalidQbftData))?;
 
         let domain = self.get_domain(epoch, Domain::SyncCommittee);
         let signing_root = data.block_root.signing_root(domain);
@@ -623,7 +622,8 @@ impl<T: SlotClock, E: EthSpec> ValidatorStore for AnchorValidatorStore<T, E> {
             Completed::TimedOut => return Err(Error::SpecificError(SpecificError::Timeout)),
             Completed::Success(data) => data,
         };
-        let data = BeaconVote::from_ssz_bytes(&data).map_err(|_| Error::SpecificError(SpecificError::InvalidQbftData))?;
+        let data = BeaconVote::from_ssz_bytes(&data)
+            .map_err(|_| Error::SpecificError(SpecificError::InvalidQbftData))?;
 
         attestation.data_mut().beacon_block_root = data.block_root;
         attestation.data_mut().source = data.source;

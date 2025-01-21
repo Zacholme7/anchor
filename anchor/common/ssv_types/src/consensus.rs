@@ -1,8 +1,9 @@
 use crate::message::*;
 use crate::msgid::MsgId;
 use crate::{OperatorId, ValidatorIndex};
+use sha2::{Digest, Sha256};
+use ssz::{Decode, DecodeError, Encode};
 use ssz_derive::{Decode, Encode};
-use ssz::Encode;
 use std::fmt::Debug;
 use std::hash::Hash;
 use tree_hash::{PackedEncoding, TreeHash, TreeHashType};
@@ -50,7 +51,6 @@ pub struct QbftMessage {
     pub round: u64,
     pub identifier: MsgId,
     pub root: Hash256,
-    // The last round that obtained a prepare quorum
     pub data_round: u64,
     pub round_change_justification: Vec<SignedSSVMessage>, // always without full_data
     pub prepare_justification: Vec<SignedSSVMessage>,      // always without full_data
@@ -59,10 +59,11 @@ pub struct QbftMessage {
 impl QbftMessage {
     /// Do QBFTMessage specific validation
     pub fn validate(&self) -> bool {
-        // todo!() what other identification?
         if self.qbft_message_type > QbftMessageType::RoundChange {
             return false;
         }
+
+        // todo!(). Any other validation?
         true
     }
 }
@@ -85,10 +86,8 @@ pub struct PartialSignatureMessage {
     pub validator_index: ValidatorIndex,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct SszBytes(pub Vec<u8>);
 
-#[derive(Clone, Debug,  PartialEq, Encode)]
+#[derive(Clone, Debug, PartialEq, Encode)]
 pub struct ValidatorConsensusData {
     pub duty: ValidatorDuty,
     pub version: DataVersion,
@@ -99,31 +98,14 @@ impl Data for ValidatorConsensusData {
     type Hash = Hash256;
 
     fn hash(&self) -> Self::Hash {
-        todo!()
-        //self.tree_hash_root()
+        let bytes = self.as_ssz_bytes();
+
+        let mut hasher = Sha256::new();
+        hasher.update(bytes);
+        let hash: [u8; 32] = hasher.finalize().into();
+        Hash256::from(hash)
     }
 }
-
-/*
-
-impl TreeHash for SszBytes {
-    fn tree_hash_type() -> TreeHashType {
-        TreeHashType::List
-    }
-
-    fn tree_hash_packed_encoding(&self) -> PackedEncoding {
-        todo!()
-    }
-
-    fn tree_hash_packing_factor() -> usize {
-        todo!()
-    }
-
-    fn tree_hash_root(&self) -> tree_hash::Hash256 {
-        todo!()
-    }
-}
-*/
 
 #[derive(Clone, Debug, TreeHash, PartialEq, Encode)]
 pub struct ValidatorDuty {
@@ -141,21 +123,45 @@ pub struct ValidatorDuty {
 #[derive(Clone, Debug, PartialEq)]
 pub struct BeaconRole(u64);
 
+// BeaconRole SSZ implementation
 impl Encode for BeaconRole {
     fn is_ssz_fixed_len() -> bool {
-        todo!()
+        true
     }
 
-    fn ssz_append(&self, _buf: &mut Vec<u8>) {
-        todo!()
+    fn ssz_append(&self, buf: &mut Vec<u8>) {
+        buf.extend_from_slice(&self.0.to_le_bytes());
     }
 
     fn ssz_fixed_len() -> usize {
-        todo!()
+        8
     }
 
     fn ssz_bytes_len(&self) -> usize {
-        todo!()
+        8
+    }
+}
+
+impl Decode for BeaconRole {
+    fn is_ssz_fixed_len() -> bool {
+        true
+    }
+
+    fn ssz_fixed_len() -> usize {
+        8
+    }
+
+    fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
+        if bytes.len() != 8 {
+            return Err(DecodeError::InvalidByteLength {
+                len: bytes.len(),
+                expected: 8,
+            });
+        }
+
+        let mut array = [0u8; 8];
+        array.copy_from_slice(bytes);
+        Ok(BeaconRole(u64::from_le_bytes(array)))
     }
 }
 
@@ -189,21 +195,46 @@ impl TreeHash for BeaconRole {
 #[derive(Clone, Debug, PartialEq)]
 pub struct DataVersion(u64);
 
+// DataVersion SSZ implementation
 impl Encode for DataVersion {
     fn is_ssz_fixed_len() -> bool {
-        todo!()
+        true
     }
 
-    fn ssz_append(&self, _buf: &mut Vec<u8>) {
-        todo!()
+    fn ssz_append(&self, buf: &mut Vec<u8>) {
+        // DataVersion is represented as u64 internally
+        buf.extend_from_slice(&self.0.to_le_bytes());
     }
 
     fn ssz_fixed_len() -> usize {
-        todo!()
+        8 // u64 size
     }
 
     fn ssz_bytes_len(&self) -> usize {
-        todo!()
+        8
+    }
+}
+
+impl Decode for DataVersion {
+    fn is_ssz_fixed_len() -> bool {
+        true
+    }
+
+    fn ssz_fixed_len() -> usize {
+        8 // u64 size
+    }
+
+    fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
+        if bytes.len() != 8 {
+            return Err(DecodeError::InvalidByteLength {
+                len: bytes.len(),
+                expected: 8,
+            });
+        }
+
+        let mut array = [0u8; 8];
+        array.copy_from_slice(bytes);
+        Ok(DataVersion(u64::from_le_bytes(array)))
     }
 }
 

@@ -16,6 +16,7 @@ pub struct MessageContainer<M> {
 }
 
 impl<M: Clone + Data<Hash = Hash256>> MessageContainer<M> {
+    /// Construct a new MessageContainer with a specific quorum size
     pub fn new(quorum_size: usize) -> Self {
         Self {
             quorum_size,
@@ -24,6 +25,7 @@ impl<M: Clone + Data<Hash = Hash256>> MessageContainer<M> {
         }
     }
 
+    // Add a new message to the container for the round
     pub fn add_message(&mut self, round: Round, sender: OperatorId, msg: &M) -> bool {
         // Check if we already have a message from this sender for this round
         if self
@@ -32,7 +34,7 @@ impl<M: Clone + Data<Hash = Hash256>> MessageContainer<M> {
             .and_then(|msgs| msgs.get(&sender))
             .is_some()
         {
-            return false; // Duplicate
+            return false; // Duplicate message
         }
 
         // Add message and track its value
@@ -49,6 +51,8 @@ impl<M: Clone + Data<Hash = Hash256>> MessageContainer<M> {
         true
     }
 
+    // Check if we have a quorum of messages for the round. If so, return the hash of the value with
+    // the quorum
     pub fn has_quorum(&self, round: Round) -> Option<Hash256> {
         let round_messages = self.messages.get(&round)?;
 
@@ -65,7 +69,7 @@ impl<M: Clone + Data<Hash = Hash256>> MessageContainer<M> {
             .map(|(value, _)| value)
     }
 
-    // Count messages for this round
+    /// Count the number of messages we have recieved for this round
     pub fn num_messages_for_round(&self, round: Round) -> usize {
         self.messages
             .get(&round)
@@ -73,7 +77,7 @@ impl<M: Clone + Data<Hash = Hash256>> MessageContainer<M> {
             .unwrap_or(0)
     }
 
-    // Gets all messages for a specific round
+    /// Gets all messages for a specific round
     pub fn get_messages_for_round(&self, round: Round) -> Vec<&M> {
         // If we have messages for this round in our container, return them all
         // If not, return an empty vector
@@ -86,6 +90,7 @@ impl<M: Clone + Data<Hash = Hash256>> MessageContainer<M> {
             .unwrap_or_default()
     }
 
+    /// Get all of the messages for the round and hash
     pub fn get_messages_for_value(&self, round: Round, value: Hash256) -> Vec<&M> {
         self.messages
             .get(&round)

@@ -321,9 +321,7 @@ where
 
         // All basic verification successful! Dispatch to the correct handler
         match wrapped_msg.qbft_message.qbft_message_type {
-            QbftMessageType::Proposal => {
-                self.received_propose(operator_id, msg_round, wrapped_msg)
-            }
+            QbftMessageType::Proposal => self.received_propose(operator_id, msg_round, wrapped_msg),
             QbftMessageType::Prepare => self.received_prepare(operator_id, msg_round, wrapped_msg),
             QbftMessageType::Commit => self.received_commit(operator_id, msg_round, wrapped_msg),
             QbftMessageType::RoundChange => {

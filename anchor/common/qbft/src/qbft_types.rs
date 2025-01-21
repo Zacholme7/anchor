@@ -71,8 +71,8 @@ impl Data for WrappedQbftMessage {
 pub struct Round(NonZeroUsize);
 
 impl From<u64> for Round {
-    fn from(_round: u64) -> Round {
-        todo!()
+    fn from(round: u64) -> Round {
+        Round(NonZeroUsize::new(round as usize).expect("round == 0"))
     }
 }
 
