@@ -27,7 +27,7 @@ mod validation;
 
 struct ConsensusRecord {
     round: Round,
-    data_hash: Hash256,
+    hash: Hash256,
     prepare_messages: Vec<WrappedQbftMessage>,
 }
 
@@ -203,21 +203,6 @@ where
         true
     }
 
-    // Helper method to record consensus when we see it
-    fn record_consensus(
-        &mut self,
-        round: Round,
-        data_hash: Hash256,
-        prepare_messages: Vec<WrappedQbftMessage>,
-    ) {
-        let record = ConsensusRecord {
-            round,
-            data_hash,
-            prepare_messages,
-        };
-        self.past_consensus.insert(round, record);
-    }
-
     /// Justify the round change quorum
     /// In order to justify a round change quorum, we find the maximum round of the quorum set that
     /// had achieved a past consensus. If we have also seen consensus on this round for the
@@ -253,14 +238,14 @@ where
                 // We have seen consensus on the data, get the value
                 let our_data = self
                     .data
-                    .get(&our_record.data_hash)
+                    .get(&our_record.hash)
                     .expect("Data must exist")
                     .clone();
 
                 // Verify the data matches what we saw
                 if prepared_data == our_data {
                     // We agree with the prepared data - use it
-                    return Some((our_record.data_hash, our_data));
+                    return Some((our_record.hash, our_data));
                 }
             }
         }
@@ -308,7 +293,7 @@ where
             .expect("Confirmed to exist in validation");
         let operator_id = OperatorId(*operator_id);
 
-        // Check that this operator is in our committee
+        // Check that this sender is in our committee
         if !self.check_committee(&operator_id) {
             warn!(
                 from = ?operator_id,
@@ -316,7 +301,6 @@ where
             );
             return;
         }
-
         let msg_round: Round = wrapped_msg.qbft_message.round.into();
 
         // All basic verification successful! Dispatch to the correct handler
@@ -421,15 +405,24 @@ where
                 return;
             }
 
+            // Move the state forward since we have a prepare quorum
+            self.state = InstanceState::Commit;
+
             // Record this prepare consensus. Fetch all of the preapre messages for the data and then
             // record the consensus for them
-            let prepares_for_data: Vec<WrappedQbftMessage> = self
+            let prepare_messages: Vec<WrappedQbftMessage> = self
                 .prepare_container
                 .get_messages_for_value(round, hash)
                 .into_iter()
                 .cloned()
                 .collect();
-            self.record_consensus(round, hash, prepares_for_data);
+
+            let record = ConsensusRecord {
+                round,
+                hash,
+                prepare_messages,
+            };
+            self.past_consensus.insert(round, record);
 
             // Send a commit message for the prepare quorum data
             self.send_commit(hash);
@@ -460,10 +453,12 @@ where
         }
 
         // Check if we have a commit quorum
-        if let Some(_data) = self.prepare_container.has_quorum(round) {
+        if let Some(hash) = self.prepare_container.has_quorum(round) {
             if matches!(self.state, InstanceState::Commit) {
-                //self.completed = Some(Completed::Success(data.clone()));
+                // We have come to consensus, mark ourself as completed and record the agreed upon
+                // value
                 self.state = InstanceState::Complete;
+                self.completed = Some(Completed::Success(hash));
             }
         }
     }
@@ -532,7 +527,7 @@ where
         }
 
         // Get the data to send with the round change?
-        //self.send_round_change(next_round);
+        self.send_round_change(self.start_data_hash);
         // Start a new round
         self.set_round(next_round);
     }
@@ -551,7 +546,7 @@ where
             round: self.current_round.get() as u64,
             identifier: self.identifier.clone(),
             root: data_hash as Hash256,
-            data_round: 0,                      // Not used in MVP
+            data_round: self.current_round.get() as u64,
             round_change_justification: vec![], // Empty for MVP
             prepare_justification: vec![],      // Empty for MVP
         };
@@ -559,7 +554,7 @@ where
         let ssv_message = SSVMessage::new(
             MsgType::SSVConsensusMsgType,
             MessageID::new([0; 56]),
-            vec![], // this should be the qbft message ssz
+            vec![], // qbft_message.as_ssz_bytes()
         );
 
         // Wrap in unsigned SSV message
@@ -614,6 +609,7 @@ where
         (self.send_message)(Message::RoundChange(operator_id, unsigned_msg.clone()));
     }
 
+    /// Extract the data that the instance has come to consensus on
     pub fn completed(&self) -> Option<Completed<Vec<u8>>> {
         self.completed
             .clone()

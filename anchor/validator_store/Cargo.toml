@@ -9,6 +9,7 @@ rust-version = "1.81.0"
 beacon_node_fallback = { workspace = true }
 dashmap = { workspace = true }
 eth2 = { workspace = true }
+ethereum_ssz = { workspace = true }
 futures = "0.3.31"
 parking_lot = { workspace = true }
 qbft = { workspace = true }
@@ -18,7 +19,6 @@ signature_collector = { workspace = true }
 slashing_protection = { workspace = true }
 slot_clock = { workspace = true }
 ssv_types = { workspace = true }
-ethereum_ssz = { workspace = true }
 task_executor = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
 tracing = { workspace = true }

@@ -86,7 +86,6 @@ pub struct PartialSignatureMessage {
     pub validator_index: ValidatorIndex,
 }
 
-
 #[derive(Clone, Debug, PartialEq, Encode)]
 pub struct ValidatorConsensusData {
     pub duty: ValidatorDuty,

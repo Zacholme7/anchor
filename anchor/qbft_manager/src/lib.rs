@@ -7,7 +7,6 @@ use qbft::{
 use slot_clock::SlotClock;
 use ssv_types::consensus::{BeaconVote, Data, ValidatorConsensusData};
 
-use ssv_types::message::SignedSSVMessage;
 use ssv_types::OperatorId as QbftOperatorId;
 use ssv_types::{Cluster, ClusterId, OperatorId};
 use ssz::Encode;
@@ -21,7 +20,7 @@ use tokio::sync::oneshot::error::RecvError;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{sleep, Interval};
 use tracing::{error, warn};
-use types::{EthSpec, Hash256, PublicKeyBytes};
+use types::{Hash256, PublicKeyBytes};
 
 const QBFT_INSTANCE_NAME: &str = "qbft_instance";
 const QBFT_MESSAGE_NAME: &str = "qbft_message";
@@ -133,11 +132,7 @@ impl<T: SlotClock> QbftManager<T> {
         let config = ConfigBuilder::new(
             self.operator_id,
             initial.instance_height(&id),
-            committee
-                .cluster_members
-                .iter()
-                .map(|&m| m) // todo!() fixt his map
-                .collect(),
+            committee.cluster_members.iter().copied().collect(),
         );
         let config = config
             .with_quorum_size(committee.cluster_members.len() - committee.faulty as usize)
@@ -162,11 +157,10 @@ impl<T: SlotClock> QbftManager<T> {
         )?;
 
         // Await the final result
-        // todo!(), we recieve a vec<u8> here, we should deserialize back to D
         Ok(result_receiver.await?)
     }
 
-    // What is the purpose of this??
+    /// Send a new network message to the instance
     pub fn receive_data<D: QbftDecidable<T>>(
         &self,
         id: D::Id,

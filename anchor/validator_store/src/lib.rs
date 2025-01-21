@@ -276,6 +276,8 @@ impl<T: SlotClock, E: EthSpec> AnchorValidatorStore<T, E> {
             )
             .await
             .map_err(SpecificError::from)?;
+
+        // Extract the completed value
         let data = match completed {
             Completed::TimedOut => return Err(Error::SpecificError(SpecificError::Timeout)),
             Completed::Success(data) => data,
@@ -352,8 +354,8 @@ impl<T: SlotClock, E: EthSpec> AnchorValidatorStore<T, E> {
                 &cluster.cluster,
             )
             .await;
-        // todo, handle this in a different way
-        let data = match completed {
+        // todo SSZ deser
+        let _data = match completed {
             Ok(Completed::Success(data)) => data,
             Ok(Completed::TimedOut) => return error(SpecificError::Timeout.into()),
             Err(err) => return error(SpecificError::QbftError(err).into()),
@@ -738,11 +740,12 @@ impl<T: SlotClock, E: EthSpec> ValidatorStore for AnchorValidatorStore<T, E> {
             )
             .await
             .map_err(SpecificError::from)?;
-        // todo!() handle a better way
-        let data = match completed {
+        // todo SSZ deser
+        let _data = match completed {
             Completed::TimedOut => return Err(Error::SpecificError(SpecificError::Timeout)),
             Completed::Success(data) => data,
         };
+
         let message = match wrapped_aggregate_and_proof {
             DataSsz::AggregateAndProof(message) => message,
             _ => return Err(Error::SpecificError(SpecificError::InvalidQbftData)),
