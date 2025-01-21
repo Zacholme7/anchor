@@ -1,7 +1,5 @@
 //! Validation for data function
-
 use crate::qbft_types::ConsensusData;
-use types::EthSpec;
 
 /// The list of possible validation errors that can occur
 #[derive(Debug)]
@@ -16,13 +14,13 @@ pub struct ValidatedData<D> {
 }
 
 /// This verifies the data is correct an appropriate to use for consensus.
-pub fn validate_data<D>(data: D) -> Result<ValidatedData<D>, ValidationError> {
+pub fn _validate_data<D>(data: D) -> Result<ValidatedData<D>, ValidationError> {
     Ok(ValidatedData { data })
 }
 
 // Validates consensus data
 pub fn validate_consensus_data<D>(
-    consensus_data: ConsensusData<D>,
+    _consensus_data: ConsensusData<D>,
 ) -> Result<ConsensusData<ValidatedData<D>>, ValidationError> {
     todo!()
     /*

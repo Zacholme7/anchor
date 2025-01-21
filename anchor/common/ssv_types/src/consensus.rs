@@ -2,7 +2,7 @@ use crate::message::*;
 use crate::msgid::MsgId;
 use crate::{OperatorId, ValidatorIndex};
 use ssz_derive::{Decode, Encode};
-use ssz::{Decode, DecodeError, Encode};
+use ssz::Encode;
 use std::fmt::Debug;
 use std::hash::Hash;
 use tree_hash::{PackedEncoding, TreeHash, TreeHashType};
@@ -146,7 +146,7 @@ impl Encode for BeaconRole {
         todo!()
     }
 
-    fn ssz_append(&self, buf: &mut Vec<u8>) {
+    fn ssz_append(&self, _buf: &mut Vec<u8>) {
         todo!()
     }
 
@@ -194,7 +194,7 @@ impl Encode for DataVersion {
         todo!()
     }
 
-    fn ssz_append(&self, buf: &mut Vec<u8>) {
+    fn ssz_append(&self, _buf: &mut Vec<u8>) {
         todo!()
     }
 

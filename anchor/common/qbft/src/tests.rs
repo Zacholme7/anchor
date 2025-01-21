@@ -2,15 +2,16 @@
 //!
 //! These test individual components and also provide full end-to-end tests of the entire protocol.
 
+/*
 use super::*;
 use crate::validation::{validate_data, ValidatedData};
 use qbft_types::DefaultLeaderFunction;
 use std::cell::RefCell;
+use ssz::{Encode, Decode};
 use std::collections::{HashSet, VecDeque};
 use std::rc::Rc;
 use tracing_subscriber::filter::EnvFilter;
 
-/*
 // HELPER FUNCTIONS FOR TESTS
 
 /// Enable debug logging for tests

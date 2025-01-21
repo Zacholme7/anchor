@@ -2,8 +2,7 @@ use crate::OperatorId;
 use derive_more::{Deref, From};
 use std::collections::HashSet;
 use types::{Address, Graffiti, PublicKey};
-use ssz::{Decode, DecodeError, Encode};
-use ssz_derive::{Decode, Encode};
+use ssz::Encode;
 
 /// Unique identifier for a cluster
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, From, Deref)]
@@ -44,12 +43,13 @@ pub struct ClusterMember {
 pub struct ValidatorIndex(pub usize);
 
 
+// Implement SSZ encoding and decoding for Validator Index
 impl Encode for ValidatorIndex {
     fn is_ssz_fixed_len() -> bool {
         todo!()
     }
 
-    fn ssz_append(&self, buf: &mut Vec<u8>) {
+    fn ssz_append(&self, _buf: &mut Vec<u8>) {
         todo!()
     }
 
