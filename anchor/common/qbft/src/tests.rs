@@ -3,11 +3,12 @@
 //! These test individual components and also provide full end-to-end tests of the entire protocol.
 
 use super::*;
+use sha2::{Digest, Sha256};
 use qbft_types::DefaultLeaderFunction;
 use ssv_types::consensus::UnsignedSSVMessage;
 use ssv_types::message::SignedSSVMessage;
 use ssv_types::OperatorId;
-use ssz::Encode;
+use ssz::{Encode, Decode};
 use std::cell::RefCell;
 use std::collections::{HashSet, VecDeque};
 use std::rc::Rc;
@@ -45,10 +46,10 @@ impl Data for TestData {
     type Hash = Hash256;
 
     fn hash(&self) -> Self::Hash {
-        let mut result = [0u8; 32];
-        let bytes = self.0.to_le_bytes();
-        result[..bytes.len()].copy_from_slice(&bytes);
-        Hash256::from(result)
+        let mut hasher = Sha256::new();
+        hasher.update(self.0.to_le_bytes());
+        let hash: [u8; 32] = hasher.finalize().into();
+        Hash256::from(hash)
     }
 }
 
@@ -57,25 +58,22 @@ fn convert_unsigned_to_wrapped(
     operator_id: OperatorId,
 ) -> WrappedQbftMessage {
     // Create a signed message containing just this operator
-    let _signed_message = SignedSSVMessage::new(
+    let signed_message = SignedSSVMessage::new(
         vec![vec![0; 96]], // Test signature of 96 bytes
         vec![*operator_id],
-        msg.ssv_message,
+        msg.ssv_message.clone(),
         msg.full_data,
     )
     .expect("Should create signed message");
 
-    /*
     // Parse the QBFT message from the SSV message data
-    let qbft_message = QbftMessage::from_ssz_bytes(&msg.ssv_message.data())
+    let qbft_message = QbftMessage::from_ssz_bytes(msg.ssv_message.data())
         .expect("Should decode QBFT message");
 
     WrappedQbftMessage {
         signed_message,
         qbft_message,
     }
-    */
-    todo!()
 }
 
 /// A struct to help build and initialise a test of running instances
@@ -88,9 +86,10 @@ impl Default for TestQBFTCommitteeBuilder {
     fn default() -> Self {
         TestQBFTCommitteeBuilder {
             config: ConfigBuilder::new(
-                0.into(),
+                1.into(),
                 InstanceHeight::default(),
-                (0..5).map(OperatorId::from).collect(),
+                (1..6).map(OperatorId::from).collect(),
+
             ),
         }
     }
@@ -139,7 +138,7 @@ fn construct_and_run_committee<D: Data<Hash = Hash256> + Default + 'static + Enc
     let mut instances = HashMap::with_capacity(config.committee_members().len());
     let mut active_instances = HashSet::new();
 
-    for id in 0..config.committee_members().len() {
+    for id in 1..config.committee_members().len() + 1 {
         let msg_queue = Rc::clone(&msg_queue);
         let id = OperatorId::from(id as u64);
         // Creates a new instance

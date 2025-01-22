@@ -43,7 +43,7 @@ pub struct UnsignedSSVMessage {
 }
 
 /// A QBFT specific message
-#[derive(Clone, Debug, Encode)]
+#[derive(Clone, Debug, Encode, Decode)]
 pub struct QbftMessage {
     pub qbft_message_type: QbftMessageType,
     pub height: u64,

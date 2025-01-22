@@ -6,6 +6,7 @@ use ssz::Encode;
 use std::collections::HashMap;
 use tracing::{debug, error, warn};
 use types::Hash256;
+use sha2::{Digest, Sha256};
 
 // Re-Exports for Manager
 pub use config::{Config, ConfigBuilder};
@@ -92,12 +93,18 @@ where
         let current_round = config.round();
         let quorum_size = config.quorum_size();
 
+        let start_data_ssz = start_data.as_ssz_bytes();
+        let mut hasher = Sha256::new();
+        hasher.update(start_data_ssz);
+        let hash: [u8; 32] = hasher.finalize().into();
+        let start_data_hash = Hash256::from(hash);
+
         let mut qbft = Qbft {
             config,
             identifier: MessageID::new([0; 56]),
             instance_height,
 
-            start_data_hash: start_data.hash(),
+            start_data_hash,
             start_data,
             data: HashMap::new(),
             current_round,
@@ -253,7 +260,6 @@ where
         // Check if we are the leader
         if self.check_leader(&self.config.operator_id()) {
             // We are the leader
-            debug!("Current leader");
 
             // Check justification of round change quorum. If there is a justification, we will use
             // that data. Otherwise, use the initial state data
@@ -261,8 +267,14 @@ where
                 .justify_round_change_quorum()
                 .unwrap_or_else(|| (self.start_data_hash, self.start_data.as_ssz_bytes()));
 
-            // Send the initial proposal
+            debug!(operator_id = ?self.config.operator_id(), hash = ?data_hash, data = ?data, "Current leader proposing data");
+
+            // Send the initial proposal and then the following prepare
             self.send_proposal(data_hash, data);
+            self.send_prepare(data_hash);
+
+            // Since we are the leader and send the proposal, switch to prepare state
+            self.state = InstanceState::Prepare;
         }
     }
 
@@ -339,7 +351,7 @@ where
             return;
         }
 
-        debug!(from = ?operator_id, "PROPOSE received");
+        debug!(from = ?operator_id, in = ?self.config.operator_id(), state = ?self.state, "PROPOSE received");
 
         // Store the received propse message
         if !self
@@ -356,11 +368,12 @@ where
         );
 
         // Update state
-        self.proposal_accepted_for_current_round = Some(wrapped_msg);
+        self.proposal_accepted_for_current_round = Some(wrapped_msg.clone());
         self.state = InstanceState::Prepare;
+        debug!(in = ?self.config.operator_id(), state = ?self.state, "State updated to PREPARE");
 
         // Create and send prepare message
-        self.send_prepare(data_hash);
+        self.send_prepare(wrapped_msg.qbft_message.root);
     }
 
     /// We have received a prepare message
@@ -376,7 +389,7 @@ where
             return;
         }
 
-        debug!(from = ?operator_id, "PREPARE received");
+        debug!(from = ?operator_id, in = ?self.config.operator_id(), state = ?self.state, "PREPARE received");
 
         // Store the prepare message
         if !self
@@ -394,8 +407,10 @@ where
                 return;
             }
 
+
             // Move the state forward since we have a prepare quorum
             self.state = InstanceState::Commit;
+            debug!(in = ?self.config.operator_id(), state = ?self.state, "Reached a PREPARE consensus. State updated to COMMIT");
 
             // Record this prepare consensus
             // todo!() may need to record all of the prepare messages for the hash and save that
@@ -418,13 +433,19 @@ where
         round: Round,
         wrapped_msg: WrappedQbftMessage,
     ) {
+
+        // If we are already done, ignore
+        if self.completed.is_some() {
+            return;
+        }
+
         // Make sure that we are in the correct state
         if (self.state as u8) >= (InstanceState::SentRoundChange as u8) {
             warn!(from=*operator_id, ?self.state, "COMMIT message while in invalid state");
             return;
         }
 
-        debug!(from = ?operator_id, "COMMIT received");
+        debug!(from = ?operator_id, in = ?self.config.operator_id(), state = ?self.state, "COMMIT received");
 
         // Store the received commit message
         if !self
@@ -441,6 +462,7 @@ where
                 // value
                 self.state = InstanceState::Complete;
                 self.completed = Some(Completed::Success(hash));
+                debug!(in = ?self.config.operator_id(), state = ?self.state, "Reached a COMMIT consensus. Success!");
             }
         }
     }
@@ -458,7 +480,7 @@ where
             return;
         }
 
-        debug!(from = ?operator_id, "ROUNDCHANGE received");
+        debug!(from = ?operator_id, in = ?self.config.operator_id(), state = ?self.state, "ROUNDCHANGE received");
 
         // Store the round changed message
         if !self
