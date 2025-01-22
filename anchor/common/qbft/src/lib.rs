@@ -562,7 +562,7 @@ where
 
         let ssv_message = SSVMessage::new(
             MsgType::SSVConsensusMsgType,
-            MessageID::new([0; 56]),
+            self.identifier.clone(),
             qbft_message.as_ssz_bytes(),
         );
 

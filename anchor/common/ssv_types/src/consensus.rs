@@ -337,7 +337,7 @@ pub enum DataSsz<E: EthSpec> {
     Contributions(VariableList<Contribution<E>, U13>),
 }
 
-#[derive(Clone, Debug, TreeHash, Encode)]
+#[derive(Clone, Debug, TreeHash, Encode, Decode)]
 pub struct Contribution<E: EthSpec> {
     pub selection_proof_sig: Signature,
     pub contribution: SyncCommitteeContribution<E>,
