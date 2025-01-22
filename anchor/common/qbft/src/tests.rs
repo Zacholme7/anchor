@@ -3,12 +3,12 @@
 //! These test individual components and also provide full end-to-end tests of the entire protocol.
 
 use super::*;
-use sha2::{Digest, Sha256};
 use qbft_types::DefaultLeaderFunction;
+use sha2::{Digest, Sha256};
 use ssv_types::consensus::UnsignedSSVMessage;
 use ssv_types::message::SignedSSVMessage;
 use ssv_types::OperatorId;
-use ssz::{Encode, Decode};
+use ssz::{Decode, Encode};
 use std::cell::RefCell;
 use std::collections::{HashSet, VecDeque};
 use std::rc::Rc;
@@ -67,8 +67,8 @@ fn convert_unsigned_to_wrapped(
     .expect("Should create signed message");
 
     // Parse the QBFT message from the SSV message data
-    let qbft_message = QbftMessage::from_ssz_bytes(msg.ssv_message.data())
-        .expect("Should decode QBFT message");
+    let qbft_message =
+        QbftMessage::from_ssz_bytes(msg.ssv_message.data()).expect("Should decode QBFT message");
 
     WrappedQbftMessage {
         signed_message,
@@ -89,7 +89,6 @@ impl Default for TestQBFTCommitteeBuilder {
                 1.into(),
                 InstanceHeight::default(),
                 (1..6).map(OperatorId::from).collect(),
-
             ),
         }
     }

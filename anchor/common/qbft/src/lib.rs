@@ -1,4 +1,5 @@
 use crate::msg_container::MessageContainer;
+use sha2::{Digest, Sha256};
 use ssv_types::consensus::{Data, QbftMessage, QbftMessageType, UnsignedSSVMessage};
 use ssv_types::message::{MessageID, MsgType, SSVMessage};
 use ssv_types::OperatorId;
@@ -6,7 +7,6 @@ use ssz::Encode;
 use std::collections::HashMap;
 use tracing::{debug, error, warn};
 use types::Hash256;
-use sha2::{Digest, Sha256};
 
 // Re-Exports for Manager
 pub use config::{Config, ConfigBuilder};
@@ -407,7 +407,6 @@ where
                 return;
             }
 
-
             // Move the state forward since we have a prepare quorum
             self.state = InstanceState::Commit;
             debug!(in = ?self.config.operator_id(), state = ?self.state, "Reached a PREPARE consensus. State updated to COMMIT");
@@ -433,7 +432,6 @@ where
         round: Round,
         wrapped_msg: WrappedQbftMessage,
     ) {
-
         // If we are already done, ignore
         if self.completed.is_some() {
             return;
