@@ -1,5 +1,4 @@
 use crate::message::*;
-use crate::msgid::MsgId;
 use crate::{OperatorId, ValidatorIndex};
 use sha2::{Digest, Sha256};
 use ssz::{Decode, DecodeError, Encode};
@@ -44,12 +43,12 @@ pub struct UnsignedSSVMessage {
 }
 
 /// A QBFT specific message
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Encode)]
 pub struct QbftMessage {
     pub qbft_message_type: QbftMessageType,
     pub height: u64,
     pub round: u64,
-    pub identifier: MsgId,
+    pub identifier: MessageID,
     pub root: Hash256,
     pub data_round: u64,
     pub round_change_justification: Vec<SignedSSVMessage>, // always without full_data
@@ -75,6 +74,72 @@ pub enum QbftMessageType {
     Prepare,
     Commit,
     RoundChange,
+}
+
+impl Encode for QbftMessageType {
+    // QbftMessageType is represented as a fixed-length u64
+    fn is_ssz_fixed_len() -> bool {
+        true
+    }
+
+    // Append the bytes representation of the enum variant
+    fn ssz_append(&self, buf: &mut Vec<u8>) {
+        // Convert enum variant to u64 and append bytes
+        let value: u64 = match self {
+            QbftMessageType::Proposal => 0,
+            QbftMessageType::Prepare => 1,
+            QbftMessageType::Commit => 2,
+            QbftMessageType::RoundChange => 3,
+        };
+        buf.extend_from_slice(&value.to_le_bytes());
+    }
+
+    // Fixed length is 8 bytes (size of u64)
+    fn ssz_fixed_len() -> usize {
+        8
+    }
+
+    // Actual length is always 8 bytes
+    fn ssz_bytes_len(&self) -> usize {
+        8
+    }
+}
+
+impl Decode for QbftMessageType {
+    // QbftMessageType is always fixed length
+    fn is_ssz_fixed_len() -> bool {
+        true
+    }
+
+    // Fixed length is 8 bytes (size of u64)
+    fn ssz_fixed_len() -> usize {
+        8
+    }
+
+    // Convert bytes back into enum variant
+    fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
+        // Verify we have exactly 8 bytes
+        if bytes.len() != 8 {
+            return Err(DecodeError::InvalidByteLength {
+                len: bytes.len(),
+                expected: 8,
+            });
+        }
+
+        // Convert bytes to u64
+        let mut array = [0u8; 8];
+        array.copy_from_slice(bytes);
+        let value = u64::from_le_bytes(array);
+
+        // Convert value back to enum variant
+        match value {
+            0 => Ok(QbftMessageType::Proposal),
+            1 => Ok(QbftMessageType::Prepare),
+            2 => Ok(QbftMessageType::Commit),
+            3 => Ok(QbftMessageType::RoundChange),
+            _ => Err(DecodeError::NoMatchingVariant),
+        }
+    }
 }
 
 // A partial signature specific message

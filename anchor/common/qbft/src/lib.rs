@@ -1,7 +1,6 @@
 use crate::msg_container::MessageContainer;
 use ssv_types::consensus::{Data, QbftMessage, QbftMessageType, UnsignedSSVMessage};
 use ssv_types::message::{MessageID, MsgType, SSVMessage};
-use ssv_types::msgid::MsgId;
 use ssv_types::OperatorId;
 use ssz::Encode;
 use std::collections::HashMap;
@@ -45,7 +44,7 @@ where
     /// The initial configuration used to establish this instance of QBFT.
     config: Config<F>,
     /// The identification of this QBFT instance
-    identifier: MsgId,
+    identifier: MessageID,
     /// The instance height acts as an ID for the current instance and helps distinguish it from
     /// other instances.
     instance_height: InstanceHeight,
@@ -95,7 +94,7 @@ where
 
         let mut qbft = Qbft {
             config,
-            identifier: MsgId([0; 56]),
+            identifier: MessageID::new([0; 56]),
             instance_height,
 
             start_data_hash: start_data.hash(),
@@ -528,7 +527,7 @@ where
         data_hash: D::Hash,
     ) -> UnsignedSSVMessage {
         // Create the QBFT message
-        let _qbft_mesage = QbftMessage {
+        let qbft_message = QbftMessage {
             qbft_message_type: msg_type,
             height: *self.instance_height as u64,
             round: self.current_round.get() as u64,
@@ -544,7 +543,7 @@ where
         let ssv_message = SSVMessage::new(
             MsgType::SSVConsensusMsgType,
             MessageID::new([0; 56]),
-            vec![], // qbft_message.as_ssz_bytes()
+            qbft_message.as_ssz_bytes(),
         );
 
         // Wrap in unsigned SSV message

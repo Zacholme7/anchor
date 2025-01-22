@@ -742,7 +742,7 @@ impl<T: SlotClock, E: EthSpec> ValidatorStore for AnchorValidatorStore<T, E> {
             .await
             .map_err(SpecificError::from)?;
         // todo SSZ deser
-        let data = match completed {
+        let _data = match completed {
             Completed::TimedOut => return Err(Error::SpecificError(SpecificError::Timeout)),
             Completed::Success(data) => data,
         };
