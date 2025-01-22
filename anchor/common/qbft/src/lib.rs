@@ -324,13 +324,13 @@ where
     ) {
         // Make sure that we are actually waiting for a proposal
         if !matches!(self.state, InstanceState::AwaitingProposal) {
-            warn!(from=?operator_id, ?self.state, "PROPOSE message while in invalid state");
+            warn!(from=?operator_id, self=?self.config.operator_id(), ?self.state, "PROPOSE message while in invalid state");
             return;
         }
 
         // Check if proposal is from the leader we expect
         if !self.check_leader(&operator_id) {
-            warn!(from = ?operator_id, "PROPOSE message from non-leader");
+            warn!(from = ?operator_id, self=?self.config.operator_id(), "PROPOSE message from non-leader");
             return;
         }
 
@@ -347,7 +347,7 @@ where
         // Verify that the fulldata matches the data root of the qbft message
         let data_hash = wrapped_msg.signed_message.hash_fulldata();
         if data_hash != wrapped_msg.qbft_message.root {
-            warn!(from = ?operator_id, "Data roots do not match");
+            warn!(from = ?operator_id, self=?self.config.operator_id(), "Data roots do not match");
             return;
         }
 

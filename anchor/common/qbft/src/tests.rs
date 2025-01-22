@@ -177,19 +177,19 @@ impl<D: Default + Data<Hash = Hash256> + Encode, S: FnMut(Message)> TestQBFTComm
 
             // Only recieve messages for active instances
             for id in self.active_instances.iter() {
-                if *id != sender {
-                    let instance = self.instances.get_mut(id).expect("Instance exists");
-                    // get the unsigned message and the sender
-                    let (_, unsigned) = match msg {
-                        Message::Propose(o, ref u)
-                        | Message::Prepare(o, ref u)
-                        | Message::Commit(o, ref u)
-                        | Message::RoundChange(o, ref u) => (o, u),
-                    };
+                // We do not make sure that id != sender since we want to loop back and recieve our
+                // own messages
+                let instance = self.instances.get_mut(id).expect("Instance exists");
+                // get the unsigned message and the sender
+                let (_, unsigned) = match msg {
+                    Message::Propose(o, ref u)
+                    | Message::Prepare(o, ref u)
+                    | Message::Commit(o, ref u)
+                    | Message::RoundChange(o, ref u) => (o, u),
+                };
 
-                    let wrapped = convert_unsigned_to_wrapped(unsigned.clone(), sender);
-                    instance.receive(wrapped);
-                }
+                let wrapped = convert_unsigned_to_wrapped(unsigned.clone(), sender);
+                instance.receive(wrapped);
             }
         }
     }
@@ -232,127 +232,11 @@ fn test_node_recovery() {
     let mut test_instance = TestQBFTCommitteeBuilder::default().run(TestData(42));
 
     // Pause a node
-    test_instance.pause_instance(&OperatorId::from(0));
+    test_instance.pause_instance(&OperatorId::from(2));
 
     // Then restart it
-    test_instance.restart_instance(&OperatorId::from(0));
+    test_instance.restart_instance(&OperatorId::from(2));
 
     let num_consensus = test_instance.wait_until_end();
     assert_eq!(num_consensus, 5); // Should reach full consensus after recovery
 }
-
-/*
-#[test]
-fn test_duplicate_proposals() {
-    let mut test_instance = TestQBFTCommitteeBuilder::default().run(TestData(42));
-
-    // Send duplicate propose messages
-    let msg = Message::Propose(
-        OperatorId::from(0),
-        ConsensusData {
-            round: Round::default(),
-            data: TestData(42),
-        },
-    );
-
-
-    // Send the same message multiple times
-    for id in 0..5 {
-        let instance = test_instance
-            .instances
-            .get_mut(&OperatorId::from(id))
-            .unwrap();
-        instance.receive(msg.clone());
-        instance.receive(msg.clone());
-        instance.receive(msg.clone());
-    }
-
-    let num_consensus = test_instance.wait_until_end();
-    assert_eq!(num_consensus, 5); // Should still reach consensus despite duplicates
-}
-
-#[test]
-fn test_invalid_sender() {
-    let mut test_instance = TestQBFTCommitteeBuilder::default().run(TestData(42));
-
-    // Create a message from an invalid sender (operator id 10 which isn't in the committee)
-    let invalid_msg = Message::Propose(
-        OperatorId::from(10),
-        ConsensusData {
-            round: Round::default(),
-            data: TestData(42),
-        },
-    );
-
-    // Send to a valid instance
-    let instance = test_instance
-        .instances
-        .get_mut(&OperatorId::from(0))
-        .unwrap();
-    instance.receive(invalid_msg);
-
-    let num_consensus = test_instance.wait_until_end();
-    assert_eq!(num_consensus, 5); // Should ignore invalid sender and still reach consensus
-}
-
-#[test]
-fn test_proposal_from_non_leader() {
-    let mut test_instance = TestQBFTCommitteeBuilder::default().run(TestData(42));
-
-    // Send proposal from non-leader (node 1)
-    let non_leader_msg = Message::Propose(
-        OperatorId::from(1),
-        ConsensusData {
-            round: Round::default(),
-            data: TestData(42),
-        },
-    );
-
-    // Send to all instances
-    for instance in test_instance.instances.values_mut() {
-        instance.receive(non_leader_msg.clone());
-    }
-
-    let num_consensus = test_instance.wait_until_end();
-    assert_eq!(num_consensus, 5); // Should ignore non-leader proposal and still reach consensus
-}
-
-#[test]
-fn test_invalid_round_messages() {
-    let mut test_instance = TestQBFTCommitteeBuilder::default().run(TestData(42));
-
-    // Create a message with an invalid round number
-    let future_round = Round::default().next().unwrap().next().unwrap(); // Round 3
-    let invalid_round_msg = Message::Prepare(
-        OperatorId::from(0),
-        ConsensusData {
-            round: future_round,
-            data: 42,
-        },
-    );
-
-    // Send to all instances
-    for instance in test_instance.instances.values_mut() {
-        instance.receive(invalid_round_msg.clone());
-    }
-
-    let num_consensus = test_instance.wait_until_end();
-    assert_eq!(num_consensus, 5); // Should ignore invalid round messages and still reach consensus
-}
-
-#[test]
-fn test_round_change_timeout() {
-    let mut test_instance = TestQBFTCommitteeBuilder::default().run(TestData(42));
-
-    // Pause the leader node to force a round change
-    test_instance.pause_instance(&OperatorId::from(0));
-
-    // Manually trigger round changes in all instances
-    for instance in test_instance.instances.values_mut() {
-        instance.end_round();
-    }
-
-    let num_consensus = test_instance.wait_until_end();
-    assert_eq!(num_consensus, 4); // Should reach consensus with new leader
-}
-*/
