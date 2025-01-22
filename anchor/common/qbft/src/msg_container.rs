@@ -89,12 +89,4 @@ impl<M: Clone + Data<Hash = Hash256>> MessageContainer<M> {
             })
             .unwrap_or_default()
     }
-
-    /// Get all of the messages for the round and hash
-    pub fn get_messages_for_value(&self, round: Round, value: Hash256) -> Vec<&M> {
-        self.messages
-            .get(&round)
-            .map(|msgs| msgs.values().filter(|msg| msg.hash() == value).collect())
-            .unwrap_or_default()
-    }
 }

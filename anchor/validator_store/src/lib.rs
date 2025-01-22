@@ -214,6 +214,7 @@ impl<T: SlotClock, E: EthSpec> AnchorValidatorStore<T, E> {
                         BeaconBlock::Capella(_) => DATA_VERSION_CAPELLA,
                         BeaconBlock::Deneb(_) => DATA_VERSION_DENEB,
                         BeaconBlock::Electra(_) => DATA_VERSION_UNKNOWN,
+                        BeaconBlock::Fulu(_) => DATA_VERSION_UNKNOWN, // todo! fulu is now upstream
                     },
                     data_ssz: wrapped_block.as_ssz_bytes(),
                 },
@@ -741,7 +742,7 @@ impl<T: SlotClock, E: EthSpec> ValidatorStore for AnchorValidatorStore<T, E> {
             .await
             .map_err(SpecificError::from)?;
         // todo SSZ deser
-        let _data = match completed {
+        let data = match completed {
             Completed::TimedOut => return Err(Error::SpecificError(SpecificError::Timeout)),
             Completed::Success(data) => data,
         };
