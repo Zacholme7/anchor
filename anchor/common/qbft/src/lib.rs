@@ -192,6 +192,20 @@ where
             return false;
         }
 
+        // Try to decode the data. If we can decode the data, then also validate it
+        let data = match D::from_ssz_bytes(wrapped_msg.signed_message.full_data()) {
+            Ok(data) => data,
+            _ => {
+                warn!(in = ?self.config.operator_id(), "Invalid data");
+                return false;
+            }
+        };
+
+        if !data.validate() {
+            warn!(in = ?self.config.operator_id(), "Data failed validation");
+            return false;
+        }
+
         // Success! Message is well formed
         true
     }
@@ -351,14 +365,10 @@ where
             return;
         }
 
-        // Store the data
-        if let Ok(data) = D::from_ssz_bytes(wrapped_msg.signed_message.full_data()) {
-            // Store the data
-            self.data.insert(data_hash, data);
-        } else {
-            debug!(from = ?operator_id, in = ?self.config.operator_id(), state = ?self.state, "Failed to deserialize data");
-            return;
-        }
+        // We have previously verified that this data is able to be de-serialized. Store it now
+        let data = D::from_ssz_bytes(wrapped_msg.signed_message.full_data())
+            .expect("Data has already been validated");
+        self.data.insert(data_hash, data);
 
         // Update state
         self.proposal_accepted_for_current_round = Some(wrapped_msg.clone());

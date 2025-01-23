@@ -73,6 +73,10 @@ impl QbftData for TestData {
         let hash: [u8; 32] = hasher.finalize().into();
         Hash256::from(hash)
     }
+
+    fn validate(&self) -> bool {
+        true
+    }
 }
 
 fn convert_unsigned_to_wrapped(

@@ -29,7 +29,9 @@ use types::{
 
 pub trait QbftData: Debug + Clone + Encode + Decode {
     type Hash: Debug + Clone + Eq + Hash;
+
     fn hash(&self) -> Self::Hash;
+    fn validate(&self) -> bool;
 }
 
 /// A SSV Message that has not been signed yet.
@@ -169,6 +171,11 @@ impl QbftData for ValidatorConsensusData {
         hasher.update(bytes);
         let hash: [u8; 32] = hasher.finalize().into();
         Hash256::from(hash)
+    }
+
+    fn validate(&self) -> bool {
+        // todo!(). What does proper validation look like??
+        true
     }
 }
 
@@ -388,5 +395,10 @@ impl QbftData for BeaconVote {
 
     fn hash(&self) -> Self::Hash {
         self.tree_hash_root()
+    }
+
+    fn validate(&self) -> bool {
+        // todo!(). What does proper validation look like??
+        true
     }
 }
