@@ -31,7 +31,6 @@ impl Encode for TestData {
 
     fn ssz_append(&self, buf: &mut Vec<u8>) {
         let value = self.0;
-        println!("{:?}", value.to_le_bytes());
         buf.extend_from_slice(&value.to_le_bytes());
     }
 
