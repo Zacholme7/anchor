@@ -36,19 +36,24 @@ qbft_manager = { path = "anchor/qbft_manager" }
 signature_collector = { path = "anchor/signature_collector" }
 ssv_types = { path = "anchor/common/ssv_types" }
 
-beacon_node_fallback = { git = "https://github.com/sigp/lighthouse", branch = "anchor" }
-eth2 = { git = "https://github.com/sigp/lighthouse", branch = "anchor" }
-eth2_config = { git = "https://github.com/sigp/lighthouse", branch = "anchor" }
-health_metrics = { git = "https://github.com/sigp/lighthouse", branch = "anchor" }
-lighthouse_network = { git = "https://github.com/sigp/lighthouse", branch = "anchor" }
-metrics = { git = "https://github.com/sigp/lighthouse", branch = "anchor" }
-safe_arith = { git = "https://github.com/sigp/lighthouse", branch = "anchor" }
-sensitive_url = { git = "https://github.com/sigp/lighthouse", branch = "anchor" }
-slashing_protection = { git = "https://github.com/sigp/lighthouse", branch = "anchor" }
-slot_clock = { git = "https://github.com/sigp/lighthouse", branch = "anchor" }
-task_executor = { git = "https://github.com/sigp/lighthouse", branch = "anchor", default-features = false, features = [
+beacon_node_fallback = { git = "https://github.com/sigp/lighthouse", rev = "1a77f7a0" }
+eth2 = { git = "https://github.com/sigp/lighthouse", rev = "1a77f7a0" }
+eth2_config = { git = "https://github.com/sigp/lighthouse", rev = "1a77f7a0" }
+health_metrics = { git = "https://github.com/sigp/lighthouse", rev = "1a77f7a0" }
+lighthouse_network = { git = "https://github.com/sigp/lighthouse", rev = "1a77f7a0" }
+metrics = { git = "https://github.com/sigp/lighthouse", rev = "1a77f7a0" }
+safe_arith = { git = "https://github.com/sigp/lighthouse", rev = "1a77f7a0" }
+sensitive_url = { git = "https://github.com/sigp/lighthouse", rev = "1a77f7a0" }
+slashing_protection = { git = "https://github.com/sigp/lighthouse", rev = "1a77f7a0" }
+slot_clock = { git = "https://github.com/sigp/lighthouse", rev = "1a77f7a0" }
+task_executor = { git = "https://github.com/sigp/lighthouse", rev = "1a77f7a0", default-features = false, features = [
     "tracing",
 ] }
+types = { git = "https://github.com/sigp/lighthouse", rev = "1a77f7a0" }
+unused_port = { git = "https://github.com/sigp/lighthouse", rev = "1a77f7a0" }
+validator_metrics = { git = "https://github.com/sigp/lighthouse", rev = "1a77f7a0" }
+validator_services = { git = "https://github.com/sigp/lighthouse", rev = "1a77f7a0" }
+validator_store = { git = "https://github.com/sigp/lighthouse", rev = "1a77f7a0" }
 
 alloy = { version = "0.6.4", features = [
     "sol-types",
@@ -95,11 +100,6 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["fmt", "env-filter"] }
 tree_hash = "0.8"
 tree_hash_derive = "0.8"
-types = { git = "https://github.com/sigp/lighthouse", branch = "anchor" }
-unused_port = { git = "https://github.com/sigp/lighthouse", branch = "anchor" }
-validator_metrics = { git = "https://github.com/sigp/lighthouse", branch = "anchor" }
-validator_services = { git = "https://github.com/sigp/lighthouse", branch = "anchor" }
-validator_store = { git = "https://github.com/sigp/lighthouse", branch = "anchor" }
 version = { path = "anchor/common/version" }
 
 [profile.maxperf]
