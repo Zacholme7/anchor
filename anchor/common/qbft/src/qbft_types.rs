@@ -1,5 +1,4 @@
 //! A collection of types used by the QBFT modules
-use crate::validation::ValidatedData;
 use derive_more::{Deref, From};
 use indexmap::IndexSet;
 use ssv_types::consensus::{QbftMessage, UnsignedSSVMessage};
@@ -130,15 +129,6 @@ pub struct ConsensusData<D> {
     pub round: Round,
     /// The actual value we reached consensus on.
     pub data: D,
-}
-
-impl<D> From<ConsensusData<ValidatedData<D>>> for ConsensusData<D> {
-    fn from(value: ConsensusData<ValidatedData<D>>) -> Self {
-        ConsensusData {
-            round: value.round,
-            data: value.data.data,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]

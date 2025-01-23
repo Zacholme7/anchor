@@ -348,7 +348,7 @@ pub enum DataSsz<E: EthSpec> {
 impl<E: EthSpec> DataSsz<E> {
     /// SSZ deserialization that tries all possible variants
     pub fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, ssz::DecodeError> {
-        // 1. Try BeaconBlock variants first (using fork-aware decoding)
+        // 1. Try BeaconBlock variants
         if let Ok(block) = BeaconBlock::any_from_ssz_bytes(bytes) {
             return Ok(Self::BeaconBlock(block));
         }

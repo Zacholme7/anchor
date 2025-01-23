@@ -16,13 +16,11 @@ pub use qbft_types::{
     Completed, ConsensusData, DefaultLeaderFunction, InstanceHeight, InstanceState, LeaderFunction,
     Round,
 };
-pub use validation::{validate_consensus_data, ValidatedData, ValidationError};
 
 mod config;
 mod error;
 mod msg_container;
 mod qbft_types;
-mod validation;
 
 #[cfg(test)]
 mod tests;
@@ -33,7 +31,7 @@ mod tests;
 /// successfully (i.e that it has successfully come to consensus, or through a timeout where enough
 /// round changes have elapsed before coming to consensus.
 ///
-/// The QBFT instance will recieve SignedSSVMessages from the network and it will construct
+/// The QBFT instance will recieve WrappedQbftMessages from the network and it will construct
 /// UnsignedSSVMessages to be signed and sent on the network.
 pub struct Qbft<F, D, S>
 where
@@ -247,7 +245,7 @@ where
             }
         }
 
-        // No consensus found or we disagree - use initial data
+        // No consensus found
         None
     }
 
@@ -345,9 +343,7 @@ where
             //self.validate_prepare_justification(wrapped_msg)?;
         }
 
-        // Verify that the fulldata matches the data root of the qbft message
-        // Data
-        // data as ssz bytes then hashed
+        // Verify that the fulldata matches the data root of the qbft message data
         let data_hash = wrapped_msg.signed_message.hash_fulldata();
         if data_hash != wrapped_msg.qbft_message.root {
             warn!(from = ?operator_id, self=?self.config.operator_id(), "Data roots do not match");
