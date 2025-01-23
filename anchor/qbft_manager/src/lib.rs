@@ -5,11 +5,10 @@ use qbft::{
     WrappedQbftMessage,
 };
 use slot_clock::SlotClock;
-use ssv_types::consensus::{BeaconVote, Data, ValidatorConsensusData};
+use ssv_types::consensus::{BeaconVote, QbftData, ValidatorConsensusData};
 
 use ssv_types::OperatorId as QbftOperatorId;
 use ssv_types::{Cluster, ClusterId, OperatorId};
-use ssz::{Decode, Encode};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::Arc;
@@ -54,14 +53,14 @@ pub enum ValidatorDutyKind {
 
 // Message that is passed around the QbftManager
 #[derive(Debug)]
-pub struct QbftMessage<D: Data<Hash = Hash256> + Encode + Decode> {
+pub struct QbftMessage<D: QbftData<Hash = Hash256>> {
     pub kind: QbftMessageKind<D>,
     pub drop_on_finish: DropOnFinish,
 }
 
 // Type of the QBFT Message
 #[derive(Debug)]
-pub enum QbftMessageKind<D: Data<Hash = Hash256> + Encode + Decode> {
+pub enum QbftMessageKind<D: QbftData<Hash = Hash256>> {
     // Initialize a new qbft instance with some initial data,
     // the configuration for the instance, and a channel to send the final data on
     Initialize {
@@ -199,9 +198,7 @@ impl<T: SlotClock> QbftManager<T> {
 }
 
 // Trait that describes any data that is able to be decided upon during a qbft instance
-pub trait QbftDecidable<T: SlotClock + 'static>:
-    Data<Hash = Hash256> + Encode + Decode + Send + 'static
-{
+pub trait QbftDecidable<T: SlotClock + 'static>: QbftData<Hash = Hash256> + Send + 'static {
     type Id: Hash + Eq + Send;
 
     fn get_map(manager: &QbftManager<T>) -> &Map<Self::Id, Self>;
@@ -254,7 +251,7 @@ impl<T: SlotClock + 'static> QbftDecidable<T> for BeaconVote {
 }
 
 // States that Qbft instance may be in
-enum QbftInstance<D: Data<Hash = Hash256> + Encode + Decode, S: FnMut(Message)> {
+enum QbftInstance<D: QbftData<Hash = Hash256>, S: FnMut(Message)> {
     // The instance is uninitialized
     Uninitialized {
         // todo: proooobably limit this
@@ -274,9 +271,7 @@ enum QbftInstance<D: Data<Hash = Hash256> + Encode + Decode, S: FnMut(Message)> 
     },
 }
 
-async fn qbft_instance<D: Data<Hash = Hash256> + Encode + Decode>(
-    mut rx: UnboundedReceiver<QbftMessage<D>>,
-) {
+async fn qbft_instance<D: QbftData<Hash = Hash256>>(mut rx: UnboundedReceiver<QbftMessage<D>>) {
     // Signal a new instance that is uninitialized
     let mut instance = QbftInstance::Uninitialized {
         message_buffer: Vec::new(),

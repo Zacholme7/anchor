@@ -1,9 +1,8 @@
 use crate::msg_container::MessageContainer;
-use sha2::{Digest, Sha256};
-use ssv_types::consensus::{Data, QbftMessage, QbftMessageType, UnsignedSSVMessage};
+use ssv_types::consensus::{QbftData, QbftMessage, QbftMessageType, UnsignedSSVMessage};
 use ssv_types::message::{MessageID, MsgType, SSVMessage};
 use ssv_types::OperatorId;
-use ssz::{Decode, Encode};
+use ssz::Encode;
 use std::collections::HashMap;
 use tracing::{debug, error, warn};
 use types::Hash256;
@@ -39,7 +38,7 @@ mod tests;
 pub struct Qbft<F, D, S>
 where
     F: LeaderFunction + Clone,
-    D: Data + Encode + Decode,
+    D: QbftData<Hash = Hash256>,
     S: FnMut(Message),
 {
     /// The initial configuration used to establish this instance of QBFT.
@@ -64,10 +63,10 @@ where
     completed: Option<Completed<D::Hash>>,
 
     // Message containers
-    propose_container: MessageContainer<WrappedQbftMessage>,
-    prepare_container: MessageContainer<WrappedQbftMessage>,
-    commit_container: MessageContainer<WrappedQbftMessage>,
-    round_change_container: MessageContainer<WrappedQbftMessage>,
+    propose_container: MessageContainer,
+    prepare_container: MessageContainer,
+    commit_container: MessageContainer,
+    round_change_container: MessageContainer,
 
     // Current round state
     proposal_accepted_for_current_round: Option<WrappedQbftMessage>,
@@ -84,7 +83,7 @@ where
 impl<F, D, S> Qbft<F, D, S>
 where
     F: LeaderFunction + Clone,
-    D: Data<Hash = Hash256> + Encode + Decode,
+    D: QbftData<Hash = Hash256>,
     S: FnMut(Message),
 {
     // Construct a new QBFT Instance and start the first round
@@ -93,18 +92,12 @@ where
         let current_round = config.round();
         let quorum_size = config.quorum_size();
 
-        let start_data_ssz = start_data.as_ssz_bytes();
-        let mut hasher = Sha256::new();
-        hasher.update(start_data_ssz);
-        let hash: [u8; 32] = hasher.finalize().into();
-        let start_data_hash = Hash256::from(hash);
-
         let mut qbft = Qbft {
             config,
             identifier: MessageID::new([0; 56]),
             instance_height,
 
-            start_data_hash,
+            start_data_hash: start_data.hash(),
             start_data,
             data: HashMap::new(),
             current_round,
@@ -210,7 +203,7 @@ where
     /// If there is no past consensus data in the round change quorum or we disagree with quorum set
     /// this function will return None, and we obtain the data as if we were beginning this
     /// instance.
-    fn justify_round_change_quorum(&self) -> Option<(Hash256, D)> {
+    fn justify_round_change_quorum(&self) -> Option<(D::Hash, D)> {
         // Get all round change messages for the current round
         let round_change_messages = self
             .round_change_container
@@ -552,7 +545,7 @@ where
             height: *self.instance_height as u64,
             round: self.current_round.get() as u64,
             identifier: self.identifier.clone(),
-            root: data_hash as Hash256,
+            root: data_hash,
             data_round: self
                 .last_prepared_round
                 .map_or(0, |round| round.get() as u64),

@@ -2,14 +2,13 @@
 use crate::validation::ValidatedData;
 use derive_more::{Deref, From};
 use indexmap::IndexSet;
-use ssv_types::consensus::{Data, QbftMessage, UnsignedSSVMessage};
+use ssv_types::consensus::{QbftMessage, UnsignedSSVMessage};
 use ssv_types::message::SignedSSVMessage;
 use ssv_types::OperatorId;
 use std::cmp::Eq;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::num::NonZeroUsize;
-use types::Hash256;
 
 /// Generic LeaderFunction trait to allow for future implementations of the QBFT module
 pub trait LeaderFunction {
@@ -55,14 +54,6 @@ impl WrappedQbftMessage {
     // Validate that the message is well formed
     pub fn validate(&self) -> bool {
         self.signed_message.validate() && self.qbft_message.validate()
-    }
-}
-
-impl Data for WrappedQbftMessage {
-    type Hash = Hash256;
-
-    fn hash(&self) -> Self::Hash {
-        self.qbft_message.root
     }
 }
 

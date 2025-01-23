@@ -27,7 +27,7 @@ use types::{
 //  ConsensusMsg       QBFTMessage SSZ
 //  PartialSigMsg      PartialSignatureMessage SSZ
 
-pub trait Data: Debug + Clone {
+pub trait QbftData: Debug + Clone + Encode + Decode {
     type Hash: Debug + Clone + Eq + Hash;
     fn hash(&self) -> Self::Hash;
 }
@@ -159,7 +159,7 @@ pub struct ValidatorConsensusData {
     pub data_ssz: Vec<u8>,
 }
 
-impl Data for ValidatorConsensusData {
+impl QbftData for ValidatorConsensusData {
     type Hash = Hash256;
 
     fn hash(&self) -> Self::Hash {
@@ -383,7 +383,7 @@ pub struct BeaconVote {
     pub target: Checkpoint,
 }
 
-impl Data for BeaconVote {
+impl QbftData for BeaconVote {
     type Hash = Hash256;
 
     fn hash(&self) -> Self::Hash {

@@ -64,7 +64,7 @@ impl Decode for TestData {
     }
 }
 
-impl Data for TestData {
+impl QbftData for TestData {
     type Hash = Hash256;
 
     fn hash(&self) -> Self::Hash {
@@ -122,7 +122,7 @@ impl TestQBFTCommitteeBuilder {
     /// represents a running quorum.
     pub fn run<D>(self, data: D) -> TestQBFTCommittee<D, impl FnMut(Message)>
     where
-        D: Default + Data<Hash = Hash256> + Encode + Decode,
+        D: Default + QbftData<Hash = Hash256>,
     {
         if ENABLE_TEST_LOGGING {
             let env_filter = EnvFilter::new("debug");
@@ -137,10 +137,7 @@ impl TestQBFTCommitteeBuilder {
 
 /// A testing structure representing a committee of running instances
 #[allow(clippy::type_complexity)]
-struct TestQBFTCommittee<
-    D: Default + Data<Hash = Hash256> + 'static + Encode + Decode,
-    S: FnMut(Message),
-> {
+struct TestQBFTCommittee<D: QbftData<Hash = Hash256>, S: FnMut(Message)> {
     msg_queue: Rc<RefCell<VecDeque<(OperatorId, Message)>>>,
     instances: HashMap<OperatorId, Qbft<DefaultLeaderFunction, D, S>>,
     // All of the instances that are currently active, allows us to stop/restart instances by
@@ -152,7 +149,7 @@ struct TestQBFTCommittee<
 ///
 /// This will create instances and spawn them in a task and return the sender/receiver channels for
 /// all created instances.
-fn construct_and_run_committee<D: Data<Hash = Hash256> + Default + 'static + Encode + Decode>(
+fn construct_and_run_committee<D: QbftData<Hash = Hash256>>(
     mut config: ConfigBuilder,
     validated_data: D,
 ) -> TestQBFTCommittee<D, impl FnMut(Message)> {
@@ -183,9 +180,7 @@ fn construct_and_run_committee<D: Data<Hash = Hash256> + Default + 'static + Enc
     }
 }
 
-impl<D: Default + Data<Hash = Hash256> + Encode + Decode, S: FnMut(Message)>
-    TestQBFTCommittee<D, S>
-{
+impl<D: QbftData<Hash = Hash256>, S: FnMut(Message)> TestQBFTCommittee<D, S> {
     fn wait_until_end(mut self) -> i32 {
         loop {
             let msg = self.msg_queue.borrow_mut().pop_front();
