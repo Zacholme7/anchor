@@ -9,9 +9,9 @@ use tree_hash::{PackedEncoding, TreeHash, TreeHashType};
 use tree_hash_derive::TreeHash;
 use types::typenum::U13;
 use types::{
-    AggregateAndProof, BeaconBlock, BlindedBeaconBlock, Checkpoint, CommitteeIndex, EthSpec,
-    Hash256, PublicKeyBytes, Signature, Slot, SyncCommitteeContribution, VariableList,
-    AggregateAndProofBase, AggregateAndProofElectra
+    AggregateAndProof, AggregateAndProofBase, AggregateAndProofElectra, BeaconBlock,
+    BlindedBeaconBlock, Checkpoint, CommitteeIndex, EthSpec, Hash256, PublicKeyBytes, Signature,
+    Slot, SyncCommitteeContribution, VariableList,
 };
 
 //                          UnsignedSSVMessage

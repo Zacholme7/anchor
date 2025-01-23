@@ -42,36 +42,45 @@ pub struct ClusterMember {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, From, Deref)]
 pub struct ValidatorIndex(pub usize);
 
-// Implement SSZ encoding and decoding for Validator Index
 impl Encode for ValidatorIndex {
     fn is_ssz_fixed_len() -> bool {
-        todo!()
+        true
     }
 
-    fn ssz_append(&self, _buf: &mut Vec<u8>) {
-        todo!()
+    fn ssz_append(&self, buf: &mut Vec<u8>) {
+        // Convert usize to u64 for consistent encoding across platforms
+        let value = self.0 as u64;
+        buf.extend_from_slice(&value.to_le_bytes());
     }
 
     fn ssz_fixed_len() -> usize {
-        todo!()
+        8 // Size of u64 in bytes
     }
 
     fn ssz_bytes_len(&self) -> usize {
-        todo!()
+        8 // Size of u64 in bytes
     }
 }
 
 impl Decode for ValidatorIndex {
     fn is_ssz_fixed_len() -> bool {
-        todo!()
+        true
     }
 
     fn ssz_fixed_len() -> usize {
-        todo!()
+        8 // Size of u64 in bytes
     }
 
     fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
-        todo!()
+        if bytes.len() != 8 {
+            return Err(DecodeError::InvalidByteLength {
+                len: bytes.len(),
+                expected: 8,
+            });
+        }
+
+        let value = u64::from_le_bytes(bytes.try_into().unwrap());
+        Ok(ValidatorIndex(value as usize))
     }
 }
 

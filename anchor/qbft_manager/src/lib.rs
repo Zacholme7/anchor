@@ -9,7 +9,7 @@ use ssv_types::consensus::{BeaconVote, Data, ValidatorConsensusData};
 
 use ssv_types::OperatorId as QbftOperatorId;
 use ssv_types::{Cluster, ClusterId, OperatorId};
-use ssz::{Encode, Decode};
+use ssz::{Decode, Encode};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::Arc;

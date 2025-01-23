@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use ssv_types::consensus::UnsignedSSVMessage;
 use ssv_types::message::SignedSSVMessage;
 use ssv_types::OperatorId;
-use ssz::{Decode, Encode, DecodeError};
+use ssz::{Decode, DecodeError, Encode};
 use std::cell::RefCell;
 use std::collections::{HashSet, VecDeque};
 use std::rc::Rc;
@@ -22,7 +22,7 @@ const ENABLE_TEST_LOGGING: bool = true;
 
 /// Test data structure that implements the Data trait
 #[derive(Debug, Clone, Default)]
-struct TestData(usize);
+struct TestData(u64);
 
 impl Encode for TestData {
     fn is_ssz_fixed_len() -> bool {
@@ -30,33 +30,40 @@ impl Encode for TestData {
     }
 
     fn ssz_append(&self, buf: &mut Vec<u8>) {
-        buf.extend_from_slice(&self.0.to_le_bytes());
+        let value = self.0;
+        println!("{:?}", value.to_le_bytes());
+        buf.extend_from_slice(&value.to_le_bytes());
     }
 
     fn ssz_fixed_len() -> usize {
-        std::mem::size_of::<usize>()
+        8 // u64 size
     }
 
     fn ssz_bytes_len(&self) -> usize {
-        std::mem::size_of::<usize>()
+        8 // u64 size
     }
 }
 
 impl Decode for TestData {
     fn is_ssz_fixed_len() -> bool {
-        todo!()
+        true
     }
 
     fn ssz_fixed_len() -> usize {
-        todo!()
+        8 // u64 size
     }
 
-    fn from_ssz_bytes(_bytes: &[u8]) -> Result<Self, DecodeError> {
-        todo!()
+    fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
+        if bytes.len() != 8 {
+            return Err(DecodeError::InvalidByteLength {
+                len: bytes.len(),
+                expected: 8,
+            });
+        }
+        let value = u64::from_le_bytes(bytes.try_into().unwrap());
+        Ok(TestData(value))
     }
 }
-
-
 
 impl Data for TestData {
     type Hash = Hash256;
@@ -131,7 +138,10 @@ impl TestQBFTCommitteeBuilder {
 
 /// A testing structure representing a committee of running instances
 #[allow(clippy::type_complexity)]
-struct TestQBFTCommittee<D: Default + Data<Hash = Hash256> + 'static + Encode + Decode, S: FnMut(Message)> {
+struct TestQBFTCommittee<
+    D: Default + Data<Hash = Hash256> + 'static + Encode + Decode,
+    S: FnMut(Message),
+> {
     msg_queue: Rc<RefCell<VecDeque<(OperatorId, Message)>>>,
     instances: HashMap<OperatorId, Qbft<DefaultLeaderFunction, D, S>>,
     // All of the instances that are currently active, allows us to stop/restart instances by
@@ -174,7 +184,9 @@ fn construct_and_run_committee<D: Data<Hash = Hash256> + Default + 'static + Enc
     }
 }
 
-impl<D: Default + Data<Hash = Hash256> + Encode + Decode, S: FnMut(Message)> TestQBFTCommittee<D, S> {
+impl<D: Default + Data<Hash = Hash256> + Encode + Decode, S: FnMut(Message)>
+    TestQBFTCommittee<D, S>
+{
     fn wait_until_end(mut self) -> i32 {
         loop {
             let msg = self.msg_queue.borrow_mut().pop_front();

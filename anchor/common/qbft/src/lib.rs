@@ -339,6 +339,8 @@ where
         }
 
         // Verify that the fulldata matches the data root of the qbft message
+        // Data
+        // data as ssz bytes then hashed
         let data_hash = wrapped_msg.signed_message.hash_fulldata();
         if data_hash != wrapped_msg.qbft_message.root {
             warn!(from = ?operator_id, self=?self.config.operator_id(), "Data roots do not match");
@@ -352,12 +354,18 @@ where
             .propose_container
             .add_message(round, operator_id, &wrapped_msg)
         {
-            warn!(from = ?operator_id, "PROPOSE message is a duplicate")
+            warn!(from = ?operator_id, "PROPOSE message is a duplicate");
+            return;
         }
 
-        let data = D::from_ssz_bytes(wrapped_msg.signed_message.full_data()).unwrap();
         // Store the data
-        self.data.insert(data_hash, data);
+        if let Ok(data) = D::from_ssz_bytes(wrapped_msg.signed_message.full_data()) {
+            // Store the data
+            self.data.insert(data_hash, data);
+        } else {
+            debug!(from = ?operator_id, in = ?self.config.operator_id(), state = ?self.state, "Failed to deserialize data");
+            return;
+        }
 
         // Update state
         self.proposal_accepted_for_current_round = Some(wrapped_msg.clone());
@@ -558,10 +566,16 @@ where
             qbft_message.as_ssz_bytes(),
         );
 
+        let full_data = if let Some(data) = self.data.get(&data_hash) {
+            data.as_ssz_bytes()
+        } else {
+            vec![]
+        };
+
         // Wrap in unsigned SSV message
         UnsignedSSVMessage {
             ssv_message,
-            full_data: self.data.get(&data_hash).as_ssz_bytes(),
+            full_data,
         }
     }
 
