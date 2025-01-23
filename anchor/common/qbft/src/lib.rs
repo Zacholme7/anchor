@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 use ssv_types::consensus::{Data, QbftMessage, QbftMessageType, UnsignedSSVMessage};
 use ssv_types::message::{MessageID, MsgType, SSVMessage};
 use ssv_types::OperatorId;
-use ssz::Encode;
+use ssz::{Decode, Encode};
 use std::collections::HashMap;
 use tracing::{debug, error, warn};
 use types::Hash256;
@@ -39,7 +39,7 @@ mod tests;
 pub struct Qbft<F, D, S>
 where
     F: LeaderFunction + Clone,
-    D: Data + Encode,
+    D: Data + Encode + Decode,
     S: FnMut(Message),
 {
     /// The initial configuration used to establish this instance of QBFT.
@@ -55,7 +55,7 @@ where
     /// Initial data that we will propose if we are the leader.
     start_data: D,
     /// All of the data that we have seen
-    data: HashMap<D::Hash, Vec<u8>>,
+    data: HashMap<D::Hash, D>,
     /// The current round this instance state is in.a
     current_round: Round,
     /// The current state of the instance
@@ -84,7 +84,7 @@ where
 impl<F, D, S> Qbft<F, D, S>
 where
     F: LeaderFunction + Clone,
-    D: Data<Hash = Hash256> + Encode,
+    D: Data<Hash = Hash256> + Encode + Decode,
     S: FnMut(Message),
 {
     // Construct a new QBFT Instance and start the first round
@@ -210,7 +210,7 @@ where
     /// If there is no past consensus data in the round change quorum or we disagree with quorum set
     /// this function will return None, and we obtain the data as if we were beginning this
     /// instance.
-    fn justify_round_change_quorum(&self) -> Option<(Hash256, Vec<u8>)> {
+    fn justify_round_change_quorum(&self) -> Option<(Hash256, D)> {
         // Get all round change messages for the current round
         let round_change_messages = self
             .round_change_container
@@ -230,19 +230,13 @@ where
         // If we found a message with prepared data
         if let Some(highest_msg) = highest_prepared {
             // Get the prepared data from the message
-            let prepared_data = highest_msg.signed_message.full_data();
             let prepared_round = Round::from(highest_msg.qbft_message.data_round);
 
             // Verify we have also seen this consensus
             if let Some(hash) = self.past_consensus.get(&prepared_round) {
                 // We have seen consensus on the data, get the value
                 let our_data = self.data.get(hash).expect("Data must exist").clone();
-
-                // Verify the data matches what we saw
-                if prepared_data == our_data {
-                    // We agree with the prepared data - use it
-                    return Some((*hash, our_data));
-                }
+                return Some((*hash, our_data));
             }
         }
 
@@ -265,7 +259,7 @@ where
             // that data. Otherwise, use the initial state data
             let (data_hash, data) = self
                 .justify_round_change_quorum()
-                .unwrap_or_else(|| (self.start_data_hash, self.start_data.as_ssz_bytes()));
+                .unwrap_or_else(|| (self.start_data_hash, self.start_data.clone()));
 
             debug!(operator_id = ?self.config.operator_id(), hash = ?data_hash, data = ?data, "Current leader proposing data");
 
@@ -361,11 +355,9 @@ where
             warn!(from = ?operator_id, "PROPOSE message is a duplicate")
         }
 
+        let data = D::from_ssz_bytes(wrapped_msg.signed_message.full_data()).unwrap();
         // Store the data
-        self.data.insert(
-            data_hash,
-            wrapped_msg.signed_message.full_data().to_vec().clone(),
-        );
+        self.data.insert(data_hash, data);
 
         // Update state
         self.proposal_accepted_for_current_round = Some(wrapped_msg.clone());
@@ -569,12 +561,12 @@ where
         // Wrap in unsigned SSV message
         UnsignedSSVMessage {
             ssv_message,
-            full_data: self.data.get(&data_hash).unwrap_or(&Vec::new()).clone(),
+            full_data: self.data.get(&data_hash).as_ssz_bytes(),
         }
     }
 
     // Send a new qbft proposal message
-    fn send_proposal(&mut self, hash: D::Hash, data: Vec<u8>) {
+    fn send_proposal(&mut self, hash: D::Hash, data: D) {
         // Store the data we're proposing
         self.data.insert(hash, data.clone());
 
@@ -619,7 +611,7 @@ where
     }
 
     /// Extract the data that the instance has come to consensus on
-    pub fn completed(&self) -> Option<Completed<Vec<u8>>> {
+    pub fn completed(&self) -> Option<Completed<D>> {
         self.completed
             .clone()
             .and_then(|completed| match completed {

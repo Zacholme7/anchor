@@ -11,6 +11,7 @@ use types::typenum::U13;
 use types::{
     AggregateAndProof, BeaconBlock, BlindedBeaconBlock, Checkpoint, CommitteeIndex, EthSpec,
     Hash256, PublicKeyBytes, Signature, Slot, SyncCommitteeContribution, VariableList,
+    AggregateAndProofBase, AggregateAndProofElectra
 };
 
 //                          UnsignedSSVMessage
@@ -151,7 +152,7 @@ pub struct PartialSignatureMessage {
     pub validator_index: ValidatorIndex,
 }
 
-#[derive(Clone, Debug, PartialEq, Encode)]
+#[derive(Clone, Debug, PartialEq, Encode, Decode)]
 pub struct ValidatorConsensusData {
     pub duty: ValidatorDuty,
     pub version: DataVersion,
@@ -171,7 +172,7 @@ impl Data for ValidatorConsensusData {
     }
 }
 
-#[derive(Clone, Debug, TreeHash, PartialEq, Encode)]
+#[derive(Clone, Debug, TreeHash, PartialEq, Encode, Decode)]
 pub struct ValidatorDuty {
     pub r#type: BeaconRole,
     pub pub_key: PublicKeyBytes,
@@ -335,6 +336,38 @@ pub enum DataSsz<E: EthSpec> {
     BlindedBeaconBlock(BlindedBeaconBlock<E>),
     BeaconBlock(BeaconBlock<E>),
     Contributions(VariableList<Contribution<E>, U13>),
+}
+
+impl<E: EthSpec> DataSsz<E> {
+    /// SSZ deserialization that tries all possible variants
+    pub fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, ssz::DecodeError> {
+        // 1. Try BeaconBlock variants first (using fork-aware decoding)
+        if let Ok(block) = BeaconBlock::any_from_ssz_bytes(bytes) {
+            return Ok(Self::BeaconBlock(block));
+        }
+
+        // 2. Try BlindedBeaconBlock
+        if let Ok(blinded) = BlindedBeaconBlock::any_from_ssz_bytes(bytes) {
+            return Ok(Self::BlindedBeaconBlock(blinded));
+        }
+
+        // 3. Handle AggregateAndProof variants explicitly
+        if let Ok(base) = AggregateAndProofBase::<E>::from_ssz_bytes(bytes) {
+            return Ok(Self::AggregateAndProof(AggregateAndProof::Base(base)));
+        }
+        if let Ok(electra) = AggregateAndProofElectra::<E>::from_ssz_bytes(bytes) {
+            return Ok(Self::AggregateAndProof(AggregateAndProof::Electra(electra)));
+        }
+
+        // 4. Try Contributions
+        if let Ok(contributions) = VariableList::<Contribution<E>, U13>::from_ssz_bytes(bytes) {
+            return Ok(Self::Contributions(contributions));
+        }
+
+        Err(ssz::DecodeError::BytesInvalid(
+            "Failed to decode as any DataSsz variant".into(),
+        ))
+    }
 }
 
 #[derive(Clone, Debug, TreeHash, Encode, Decode)]

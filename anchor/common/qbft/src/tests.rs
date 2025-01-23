@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use ssv_types::consensus::UnsignedSSVMessage;
 use ssv_types::message::SignedSSVMessage;
 use ssv_types::OperatorId;
-use ssz::{Decode, Encode};
+use ssz::{Decode, Encode, DecodeError};
 use std::cell::RefCell;
 use std::collections::{HashSet, VecDeque};
 use std::rc::Rc;
@@ -41,6 +41,22 @@ impl Encode for TestData {
         std::mem::size_of::<usize>()
     }
 }
+
+impl Decode for TestData {
+    fn is_ssz_fixed_len() -> bool {
+        todo!()
+    }
+
+    fn ssz_fixed_len() -> usize {
+        todo!()
+    }
+
+    fn from_ssz_bytes(_bytes: &[u8]) -> Result<Self, DecodeError> {
+        todo!()
+    }
+}
+
+
 
 impl Data for TestData {
     type Hash = Hash256;
@@ -100,7 +116,7 @@ impl TestQBFTCommitteeBuilder {
     /// represents a running quorum.
     pub fn run<D>(self, data: D) -> TestQBFTCommittee<D, impl FnMut(Message)>
     where
-        D: Default + Data<Hash = Hash256> + Encode,
+        D: Default + Data<Hash = Hash256> + Encode + Decode,
     {
         if ENABLE_TEST_LOGGING {
             let env_filter = EnvFilter::new("debug");
@@ -115,7 +131,7 @@ impl TestQBFTCommitteeBuilder {
 
 /// A testing structure representing a committee of running instances
 #[allow(clippy::type_complexity)]
-struct TestQBFTCommittee<D: Default + Data<Hash = Hash256> + 'static + Encode, S: FnMut(Message)> {
+struct TestQBFTCommittee<D: Default + Data<Hash = Hash256> + 'static + Encode + Decode, S: FnMut(Message)> {
     msg_queue: Rc<RefCell<VecDeque<(OperatorId, Message)>>>,
     instances: HashMap<OperatorId, Qbft<DefaultLeaderFunction, D, S>>,
     // All of the instances that are currently active, allows us to stop/restart instances by
@@ -127,7 +143,7 @@ struct TestQBFTCommittee<D: Default + Data<Hash = Hash256> + 'static + Encode, S
 ///
 /// This will create instances and spawn them in a task and return the sender/receiver channels for
 /// all created instances.
-fn construct_and_run_committee<D: Data<Hash = Hash256> + Default + 'static + Encode>(
+fn construct_and_run_committee<D: Data<Hash = Hash256> + Default + 'static + Encode + Decode>(
     mut config: ConfigBuilder,
     validated_data: D,
 ) -> TestQBFTCommittee<D, impl FnMut(Message)> {
@@ -158,7 +174,7 @@ fn construct_and_run_committee<D: Data<Hash = Hash256> + Default + 'static + Enc
     }
 }
 
-impl<D: Default + Data<Hash = Hash256> + Encode, S: FnMut(Message)> TestQBFTCommittee<D, S> {
+impl<D: Default + Data<Hash = Hash256> + Encode + Decode, S: FnMut(Message)> TestQBFTCommittee<D, S> {
     fn wait_until_end(mut self) -> i32 {
         loop {
             let msg = self.msg_queue.borrow_mut().pop_front();

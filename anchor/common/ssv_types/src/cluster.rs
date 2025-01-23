@@ -1,6 +1,6 @@
 use crate::OperatorId;
 use derive_more::{Deref, From};
-use ssz::Encode;
+use ssz::{Decode, DecodeError, Encode};
 use std::collections::HashSet;
 use types::{Address, Graffiti, PublicKey};
 
@@ -57,6 +57,20 @@ impl Encode for ValidatorIndex {
     }
 
     fn ssz_bytes_len(&self) -> usize {
+        todo!()
+    }
+}
+
+impl Decode for ValidatorIndex {
+    fn is_ssz_fixed_len() -> bool {
+        todo!()
+    }
+
+    fn ssz_fixed_len() -> usize {
+        todo!()
+    }
+
+    fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
         todo!()
     }
 }
