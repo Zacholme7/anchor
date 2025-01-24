@@ -320,8 +320,10 @@ async fn qbft_instance<D: QbftData<Hash = Hash256>>(
                     QbftInstance::Uninitialized { message_buffer } => {
                         // todo: actually send messages somewhere
                         // Create a new instance and receive any buffered messages
-                        let mut instance =
-                            Box::new(Qbft::new(config, initial, |message| tx.send(message.unsigned()).unwrap()));
+                        // todo!() how do we handle error on send?
+                        let mut instance = Box::new(Qbft::new(config, initial, |message| {
+                            tx.send(message.unsigned()).unwrap()
+                        }));
                         for message in message_buffer {
                             instance.receive(message);
                         }
