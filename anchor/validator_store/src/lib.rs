@@ -20,11 +20,11 @@ use ssv_types::consensus::{
     DATA_VERSION_ALTAIR, DATA_VERSION_BELLATRIX, DATA_VERSION_CAPELLA, DATA_VERSION_DENEB,
     DATA_VERSION_PHASE0, DATA_VERSION_UNKNOWN,
 };
-use ssz::Encode;
-use std::marker::PhantomData;
 use ssv_types::{Cluster, OperatorId, ValidatorIndex, ValidatorMetadata};
+use ssz::Encode;
 use std::collections::HashSet;
 use std::fmt::Debug;
+use std::marker::PhantomData;
 use std::str::from_utf8;
 use std::sync::Arc;
 use std::time::Duration;
