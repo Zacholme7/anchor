@@ -22,6 +22,7 @@ use sensitive_url::SensitiveUrl;
 use signature_collector::SignatureCollectorManager;
 use slashing_protection::SlashingDatabase;
 use slot_clock::{SlotClock, SystemTimeSlotClock};
+use ssv_types::consensus::UnsignedSSVMessage;
 use ssv_types::OperatorId;
 use std::fs::File;
 use std::io::{ErrorKind, Read, Write};
@@ -349,9 +350,11 @@ impl Client {
                 .map_err(|e| format!("Unable to initialize signature collector manager: {e:?}"))?;
 
         // Create the qbft manager
+        let (qbft_sender, _qbft_receiver) = mpsc::unbounded_channel::<UnsignedSSVMessage>();
         let qbft_manager =
-            QbftManager::new(processor_senders.clone(), operator_id, slot_clock.clone())
+            QbftManager::new(processor_senders.clone(), operator_id, slot_clock.clone(), qbft_sender)
                 .map_err(|e| format!("Unable to initialize qbft manager: {e:?}"))?;
+
 
         let validator_store = Arc::new(AnchorValidatorStore::<_, E>::new(
             database,

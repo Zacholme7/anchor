@@ -121,6 +121,17 @@ pub enum Message {
     RoundChange(OperatorId, UnsignedSSVMessage),
 }
 
+impl Message {
+    pub fn unsigned(&self) -> UnsignedSSVMessage {
+        match self {
+            Message::Propose(_, msg)
+            | Message::Prepare(_, msg)
+            | Message::Commit(_, msg)
+            | Message::RoundChange(_, msg) => msg.clone(),
+        }
+    }
+}
+
 /// Type definitions for the allowable messages
 /// This holds the consensus data for a given round.
 #[derive(Debug, Clone)]

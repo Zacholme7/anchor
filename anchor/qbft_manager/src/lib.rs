@@ -5,7 +5,7 @@ use qbft::{
     WrappedQbftMessage,
 };
 use slot_clock::SlotClock;
-use ssv_types::consensus::{BeaconVote, QbftData, ValidatorConsensusData};
+use ssv_types::consensus::{BeaconVote, QbftData, UnsignedSSVMessage, ValidatorConsensusData};
 
 use ssv_types::OperatorId as QbftOperatorId;
 use ssv_types::{Cluster, ClusterId, OperatorId};
@@ -91,6 +91,8 @@ pub struct QbftManager<T: SlotClock + 'static> {
     validator_consensus_data_instances: Map<ValidatorInstanceId, ValidatorConsensusData>,
     // All of the QBFT instances that are voting on beacon data
     beacon_vote_instances: Map<CommitteeInstanceId, BeaconVote>,
+    // Takes messages from qbft instances and sends them to be signed
+    qbft_out: mpsc::UnboundedSender<UnsignedSSVMessage>,
 }
 
 impl<T: SlotClock> QbftManager<T> {
@@ -99,6 +101,7 @@ impl<T: SlotClock> QbftManager<T> {
         processor: Senders,
         operator_id: OperatorId,
         slot_clock: T,
+        qbft_out: mpsc::UnboundedSender<UnsignedSSVMessage>,
     ) -> Result<Arc<Self>, QbftError> {
         let manager = Arc::new(QbftManager {
             processor,
@@ -106,6 +109,7 @@ impl<T: SlotClock> QbftManager<T> {
             slot_clock,
             validator_consensus_data_instances: DashMap::new(),
             beacon_vote_instances: DashMap::new(),
+            qbft_out,
         });
 
         // Start a long running task that will clean up old instances
@@ -139,7 +143,7 @@ impl<T: SlotClock> QbftManager<T> {
 
         // Get or spawn a new qbft instance. This will return the sender that we can use to send
         // new messages to the specific instance
-        let sender = D::get_or_spawn_instance(self, id);
+        let sender = D::get_or_spawn_instance(self, id, self.qbft_out.clone());
         self.processor.urgent_consensus.send_immediate(
             move |drop_on_finish: DropOnFinish| {
                 // A message to initialize this instance
@@ -165,7 +169,7 @@ impl<T: SlotClock> QbftManager<T> {
         id: D::Id,
         data: WrappedQbftMessage,
     ) -> Result<(), QbftError> {
-        let sender = D::get_or_spawn_instance(self, id);
+        let sender = D::get_or_spawn_instance(self, id, self.qbft_out.clone());
         self.processor.urgent_consensus.send_immediate(
             move |drop_on_finish: DropOnFinish| {
                 let _ = sender.send(QbftMessage {
@@ -206,6 +210,7 @@ pub trait QbftDecidable<T: SlotClock + 'static>: QbftData<Hash = Hash256> + Send
     fn get_or_spawn_instance(
         manager: &QbftManager<T>,
         id: Self::Id,
+        qbft_out: UnboundedSender<UnsignedSSVMessage>,
     ) -> UnboundedSender<QbftMessage<Self>> {
         let map = Self::get_map(manager);
         let ret = match map.entry(id) {
@@ -218,7 +223,7 @@ pub trait QbftDecidable<T: SlotClock + 'static>: QbftData<Hash = Hash256> + Send
                 let _ = manager
                     .processor
                     .permitless
-                    .send_async(Box::pin(qbft_instance(rx)), QBFT_INSTANCE_NAME);
+                    .send_async(Box::pin(qbft_instance(rx, qbft_out)), QBFT_INSTANCE_NAME);
                 tx.clone()
             }
         };
@@ -271,7 +276,10 @@ enum QbftInstance<D: QbftData<Hash = Hash256>, S: FnMut(Message)> {
     },
 }
 
-async fn qbft_instance<D: QbftData<Hash = Hash256>>(mut rx: UnboundedReceiver<QbftMessage<D>>) {
+async fn qbft_instance<D: QbftData<Hash = Hash256>>(
+    mut rx: UnboundedReceiver<QbftMessage<D>>,
+    tx: UnboundedSender<UnsignedSSVMessage>,
+) {
     // Signal a new instance that is uninitialized
     let mut instance = QbftInstance::Uninitialized {
         message_buffer: Vec::new(),
@@ -312,7 +320,8 @@ async fn qbft_instance<D: QbftData<Hash = Hash256>>(mut rx: UnboundedReceiver<Qb
                     QbftInstance::Uninitialized { message_buffer } => {
                         // todo: actually send messages somewhere
                         // Create a new instance and receive any buffered messages
-                        let mut instance = Box::new(Qbft::new(config, initial, |_| {}));
+                        let mut instance =
+                            Box::new(Qbft::new(config, initial, |message| tx.send(message.unsigned()).unwrap()));
                         for message in message_buffer {
                             instance.receive(message);
                         }
