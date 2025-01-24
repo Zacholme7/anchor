@@ -7,9 +7,11 @@ rust-version = "1.83.0"
 
 [dependencies]
 async-channel = { workspace = true }
+bls = { workspace = true }
 clap = { workspace = true }
 client = { workspace = true }
 dirs = { workspace = true }
+eth2_network_config = { workspace = true }
 futures = { workspace = true }
 sensitive_url = { workspace = true }
 serde = { workspace = true }
@@ -21,3 +23,11 @@ types = { workspace = true }
 
 [dev-dependencies]
 regex = "1.10.6"
+
+[features]
+# Compiles the BLS crypto code so that the binary is portable across machines.
+portable = ["bls/supranational-portable"]
+# Compiles BLST so that it always uses ADX instructions.
+modern = ["bls/supranational-force-adx"]
+# Support minimal spec (used for testing only).
+spec-minimal = []

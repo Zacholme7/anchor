@@ -95,15 +95,25 @@ pub struct Anchor {
 
     #[clap(
         long,
+        short = 't',
+        global = true,
         value_name = "DIR",
-        help = "The directory which contains the password to unlock the validator \
-            voting keypairs. Each password should be contained in a file where the \
-            name is the 0x-prefixed hex representation of the validators voting public \
-            key. Defaults to ~/.lighthouse/{network}/secrets.",
-        conflicts_with = "datadir",
+        help = "Path to directory containing eth2_testnet specs.",
         display_order = 0
     )]
-    pub secrets_dir: Option<PathBuf>,
+    pub testnet_dir: Option<PathBuf>,
+
+    #[clap(
+        long,
+        global = true,
+        value_name = "NETWORK",
+        value_parser = vec!["mainnet", "holesky"],
+        conflicts_with = "testnet_dir",
+        help = "Name of the chain Anchor will validate.",
+        display_order = 0,
+        default_value = crate::config::DEFAULT_HARDCODED_NETWORK,
+    )]
+    pub network: String,
 
     /* External APIs */
     #[clap(

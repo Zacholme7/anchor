@@ -28,6 +28,7 @@ mod tests;
 
 const POOL_SIZE: u32 = 1;
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
+const UNKNOWN_OWN_OPERATOR_ID: OperatorId = OperatorId(u64::MAX);
 
 type Pool = r2d2::Pool<SqliteConnectionManager>;
 type PoolConn = r2d2::PooledConnection<SqliteConnectionManager>;

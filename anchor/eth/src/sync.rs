@@ -13,6 +13,7 @@ use futures::StreamExt;
 use rand::Rng;
 use std::collections::BTreeMap;
 use std::sync::{Arc, LazyLock};
+use tokio::sync::oneshot::Sender;
 use tokio::time::Duration;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -89,6 +90,7 @@ pub struct Config {
     pub ws_url: String,
     pub beacon_url: String,
     pub network: Network,
+    pub historic_finished_notify: Option<Sender<()>>,
 }
 
 /// Client for interacting with the SSV contract on Ethereum L1
@@ -106,6 +108,8 @@ pub struct SsvEventSyncer {
     event_processor: EventProcessor,
     /// The network the node is connected to
     network: Network,
+    /// Notify a channel as soon as the historical sync is done
+    historic_finished_notify: Option<Sender<()>>,
 }
 
 impl SsvEventSyncer {
@@ -139,6 +143,7 @@ impl SsvEventSyncer {
             ws_url: config.ws_url,
             event_processor,
             network: config.network,
+            historic_finished_notify: config.historic_finished_notify,
         })
     }
 
@@ -162,6 +167,8 @@ impl SsvEventSyncer {
         info!("Starting historical sync");
         self.historical_sync(contract_address, deployment_block)
             .await?;
+
+        self.historic_finished_notify.take().map(|x| x.send(()));
 
         info!("Starting live sync");
         self.live_sync(contract_address).await?;

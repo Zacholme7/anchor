@@ -636,9 +636,11 @@ name = "anchor"
 version = "0.1.0"
 dependencies = [
  "async-channel",
+ "bls",
  "clap",
  "client",
  "dirs 5.0.1",
+ "eth2_network_config",
  "futures",
  "regex",
  "sensitive_url",
@@ -656,9 +658,12 @@ version = "0.1.0"
 dependencies = [
  "beacon_node_fallback",
  "dashmap",
+ "database",
  "eth2",
  "ethereum_ssz 0.7.1",
  "futures",
+ "hex",
+ "openssl",
  "parking_lot",
  "qbft",
  "qbft_manager",
@@ -1544,15 +1549,19 @@ dependencies = [
  "anchor_validator_store",
  "beacon_node_fallback",
  "clap",
+ "database",
  "dirs 5.0.1",
+ "eth",
  "eth2",
  "eth2_config",
+ "eth2_network_config",
  "ethereum_hashing",
  "fdlimit",
  "http_api",
  "http_metrics",
  "hyper 1.5.2",
  "network",
+ "openssl",
  "parking_lot",
  "processor",
  "qbft_manager",
@@ -1571,6 +1580,7 @@ dependencies = [
  "validator_metrics",
  "validator_services",
  "version",
+ "zeroize",
 ]
 
 [[package]]

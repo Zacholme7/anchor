@@ -12,15 +12,19 @@ path = "src/lib.rs"
 anchor_validator_store = { workspace = true }
 beacon_node_fallback = { workspace = true }
 clap = { workspace = true }
+database = { workspace = true }
 dirs = { workspace = true }
+eth = { workspace = true }
 eth2 = { workspace = true }
 eth2_config = { workspace = true }
+eth2_network_config = { workspace = true }
 ethereum_hashing = "0.7.0"
 fdlimit = "0.3"
 http_api = { workspace = true }
 http_metrics = { workspace = true }
 hyper = { workspace = true }
 network = { workspace = true }
+openssl = { workspace = true }
 parking_lot = { workspace = true }
 processor = { workspace = true }
 qbft_manager = { workspace = true }
@@ -39,3 +43,4 @@ unused_port = { workspace = true }
 validator_metrics = { workspace = true }
 validator_services = { workspace = true }
 version = { workspace = true }
+zeroize = { workspace = true }

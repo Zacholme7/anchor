@@ -1,4 +1,7 @@
-use crate::{ClusterMultiIndexMap, MetadataMultiIndexMap, MultiIndexMap, ShareMultiIndexMap};
+use crate::{
+    ClusterMultiIndexMap, MetadataMultiIndexMap, MultiIndexMap, ShareMultiIndexMap,
+    UNKNOWN_OWN_OPERATOR_ID,
+};
 use crate::{DatabaseError, NetworkDatabase, NetworkState, Pool, PoolConn};
 use crate::{MultiState, SingleState};
 use crate::{SqlStatement, SQL};
@@ -31,13 +34,7 @@ impl NetworkState {
         // Without an ID, we have no idea who we are. Check to see if an operator with our public key
         // is stored the database. If it does not exist, that means the operator still has to be registered
         // with the network contract or that we have not seen the corresponding event yet
-        let id = if let Ok(Some(operator_id)) = Self::does_self_exist(&conn, pubkey) {
-            operator_id
-        } else {
-            // It does not exist, just default to some impossible operator
-            // SQL bounded by u32::max
-            OperatorId(u64::MAX / 2)
-        };
+        let id = Self::does_self_exist(&conn, pubkey)?;
 
         // First Phase: Fetch data from the database
         // 1) OperatorId -> Operator
@@ -47,7 +44,7 @@ impl NetworkState {
         // 3) ClusterId -> Vec<ValidatorMetadata>
         let validator_map = Self::fetch_validators(&conn)?;
         // 4) ClusterId -> Vec<Share>
-        let share_map = Self::fetch_shares(&conn, id)?;
+        let share_map = id.map(|id| Self::fetch_shares(&conn, id)).transpose()?;
         // 5) Owner -> Nonce (u16)
         let nonce_map = Self::fetch_nonces(&conn)?;
 
@@ -56,10 +53,13 @@ impl NetworkState {
         let metadata_multi: MetadataMultiIndexMap = MultiIndexMap::new();
         let cluster_multi: ClusterMultiIndexMap = MultiIndexMap::new();
         let single_state = SingleState {
-            id: AtomicU64::new(*id),
+            id: AtomicU64::new(*id.unwrap_or(UNKNOWN_OWN_OPERATOR_ID)),
             last_processed_block: AtomicU64::new(last_processed_block),
             operators: DashMap::from_iter(operators),
-            clusters: DashSet::from_iter(cluster_map.keys().copied()),
+            clusters: share_map
+                .as_ref()
+                .map(|m| m.keys().copied().collect())
+                .unwrap_or_default(),
             nonces: DashMap::from_iter(nonce_map),
         };
 
@@ -87,15 +87,17 @@ impl NetworkState {
                 );
 
                 // Process this validators shares
-                if let Some(shares) = share_map.get(cluster_id) {
-                    for share in shares {
-                        if share.validator_pubkey == validator.public_key {
-                            shares_multi.insert(
-                                &validator.public_key,
-                                cluster_id,
-                                &cluster.owner,
-                                share.clone(),
-                            );
+                if let Some(share_map) = &share_map {
+                    if let Some(shares) = share_map.get(cluster_id) {
+                        for share in shares {
+                            if share.validator_pubkey == validator.public_key {
+                                shares_multi.insert(
+                                    &validator.public_key,
+                                    cluster_id,
+                                    &cluster.owner,
+                                    share.clone(),
+                                );
+                            }
                         }
                     }
                 }
@@ -261,7 +263,7 @@ impl NetworkDatabase {
     /// Get the ID of our Operator if it exists
     pub fn get_own_id(&self) -> Option<OperatorId> {
         let id = self.state.single_state.id.load(Ordering::Relaxed);
-        if id == u64::MAX {
+        if id == *UNKNOWN_OWN_OPERATOR_ID {
             None
         } else {
             Some(OperatorId(id))
@@ -281,6 +283,11 @@ impl NetworkDatabase {
     /// Check if we are a member of a specific cluster
     pub fn member_of_cluster(&self, id: &ClusterId) -> bool {
         self.state.single_state.clusters.contains(id)
+    }
+
+    /// Get the clusters we are member of
+    pub fn get_own_clusters(&self) -> &DashSet<ClusterId> {
+        &self.state.single_state.clusters
     }
 
     /// Get the last block that has been fully processed by the database

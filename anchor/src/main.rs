@@ -5,7 +5,7 @@ mod environment;
 use client::{config, Anchor, Client};
 use environment::Environment;
 use task_executor::ShutdownReason;
-use types::MainnetEthSpec;
+use types::EthSpecId;
 
 fn main() {
     // Enable backtraces unless a RUST_BACKTRACE value has already been explicitly provided.
@@ -37,10 +37,30 @@ fn main() {
     let anchor_executor = core_executor.clone();
     let shutdown_executor = core_executor.clone();
 
+    let eth_spec_id = match config.eth2_network.eth_spec_id() {
+        Ok(eth_spec_id) => eth_spec_id,
+        Err(e) => {
+            error!(e, "Unable to get eth spec id");
+            return;
+        }
+    };
+
     // Run the main task
     core_executor.spawn(
         async move {
-            if let Err(e) = Client::run::<MainnetEthSpec>(anchor_executor, config).await {
+            let result = match eth_spec_id {
+                EthSpecId::Mainnet => {
+                    Client::run::<types::MainnetEthSpec>(anchor_executor, config).await
+                }
+                #[cfg(feature = "spec-minimal")]
+                EthSpecId::Minimal => {
+                    Client::run::<types::MinimalEthSpec>(anchor_executor, config).await
+                }
+                other => Err(format!(
+                    "Eth spec `{other}` is not supported by this build of Anchor",
+                )),
+            };
+            if let Err(e) = result {
                 error!(reason = e, "Failed to start Anchor");
                 // Ignore the error since it always occurs during normal operation when
                 // shutting down.

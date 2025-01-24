@@ -37,8 +37,10 @@ signature_collector = { path = "anchor/signature_collector" }
 ssv_types = { path = "anchor/common/ssv_types" }
 
 beacon_node_fallback = { git = "https://github.com/sigp/lighthouse", rev = "1a77f7a0" }
+bls = { git = "https://github.com/sigp/lighthouse", rev = "1a77f7a0" }
 eth2 = { git = "https://github.com/sigp/lighthouse", rev = "1a77f7a0" }
 eth2_config = { git = "https://github.com/sigp/lighthouse", rev = "1a77f7a0" }
+eth2_network_config = { git = "https://github.com/sigp/lighthouse", rev = "1a77f7a0" }
 health_metrics = { git = "https://github.com/sigp/lighthouse", rev = "1a77f7a0" }
 lighthouse_network = { git = "https://github.com/sigp/lighthouse", rev = "1a77f7a0" }
 metrics = { git = "https://github.com/sigp/lighthouse", rev = "1a77f7a0" }
@@ -101,6 +103,7 @@ tracing-subscriber = { version = "0.3.18", features = ["fmt", "env-filter"] }
 tree_hash = "0.8"
 tree_hash_derive = "0.8"
 version = { path = "anchor/common/version" }
+zeroize = "1.8.1"
 
 [profile.maxperf]
 inherits = "release"

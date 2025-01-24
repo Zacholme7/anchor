@@ -1,4 +1,4 @@
-use super::{DatabaseError, NetworkDatabase, SqlStatement, SQL};
+use super::{DatabaseError, NetworkDatabase, SqlStatement, SQL, UNKNOWN_OWN_OPERATOR_ID};
 use base64::prelude::*;
 use rusqlite::params;
 use ssv_types::{Operator, OperatorId};
@@ -34,7 +34,7 @@ impl NetworkDatabase {
 
         // Check to see if this operator is the current operator
         let own_id = self.state.single_state.id.load(Ordering::Relaxed);
-        if own_id == (u64::MAX / 2) {
+        if own_id == *UNKNOWN_OWN_OPERATOR_ID {
             // If the keys match, this is the current operator so we want to save the id
             let keys_match = pem_key == self.pubkey.public_key_to_pem().unwrap_or_default();
             if keys_match {

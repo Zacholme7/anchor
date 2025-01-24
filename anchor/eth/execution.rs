@@ -28,6 +28,7 @@ async fn main() {
         ws_url: String::from(ws_endpoint),
         beacon_url: String::from(beacon_endpoint),
         network: Network::Mainnet,
+        historic_finished_notify: None,
     };
 
     // Setup mock operator data
