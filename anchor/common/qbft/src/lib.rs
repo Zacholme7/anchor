@@ -2,8 +2,9 @@ use crate::msg_container::MessageContainer;
 use ssv_types::consensus::{QbftData, QbftMessage, QbftMessageType, UnsignedSSVMessage};
 use ssv_types::message::{MessageID, MsgType, SSVMessage};
 use ssv_types::OperatorId;
-use ssz::Encode;
+use ssz::{Decode, Encode};
 use std::collections::HashMap;
+use std::collections::HashSet;
 use tracing::{debug, error, warn};
 use types::Hash256;
 
@@ -376,65 +377,89 @@ where
     }
 
     fn validate_round_change_justification(&self, msg: &WrappedQbftMessage) -> bool {
-        let prepare_messages = msg.qbft_message.prepare_justification;
+        // Record if any of the round change messages have a value that was prepared
+        let mut previously_prepared = false;
+        let mut max_prepared_round = 0;
+        let mut max_prepared_value = None;
 
-        if prepare_messages.len() < self.config().quorum_size() {
-            warn!(
-                messages = prepare_messages.len(),
-                required = self.config.quorum_size(),
-                "Not enough prepare justifications for quorum"
-            );
-            return false;
-        }
+        for signed_round_change in &msg.qbft_message.round_change_justification {
+            let deser_round_change: QbftMessage =
+                QbftMessage::from_ssz_bytes(signed_round_change.ssv_message().data()).unwrap(); // todo!() get rid of this unwrap
 
-        // Validate each prepare message
-        for prepare_msg in &prepare_messages {
-            // Message must be a PREPARE message
-            if prepare_msg.qbft_message.qbft_message_type != QbftMessageType::Prepare {
-                warn!("Justification contains non-PREPARE message");
+            // Make sure this is actually a round change message
+            if !matches!(
+                deser_round_change.qbft_message_type,
+                QbftMessageType::RoundChange
+            ) {
                 return false;
             }
 
-            // Must be for the claimed prepared round
-            if prepare_msg.qbft_message.round != prepared_round {
-                warn!(
-                    msg_round = prepare_msg.qbft_message.round,
-                    claimed_round = prepared_round,
-                    "Prepare justification round mismatch"
-                );
+            // Make sure it is for the correct height
+            if deser_round_change.height != *self.instance_height as u64 {
                 return false;
             }
 
-            // Must match the claimed prepared value
-            if prepare_msg.qbft_message.root != prepared_value {
-                warn!("Prepare justification value mismatch");
+            // Make sure this is for the correct round
+            if deser_round_change.round != self.current_round.get() as u64 {
                 return false;
             }
 
-            // Verify the prepare message is from a committee member
-            if !self.check_committee(&OperatorId(
-                *prepare_msg.signed_message.operator_ids().first().unwrap(),
-            )) {
-                warn!("Prepare justification from non-committee member");
+            // Make sure there is only one signer
+            if signed_round_change.operator_ids().len() != 1 {
                 return false;
+            }
+
+            // If the data round != 0, that means we have prepared a value in previous rounds
+            if deser_round_change.data_round > 0 {
+                previously_prepared = true;
+                if deser_round_change.data_round > max_prepared_round {
+                    max_prepared_round = deser_round_change.data_round;
+                    max_prepared_value = Some(deser_round_change.root);
+                }
             }
         }
 
-        // Verify we have unique signers for the quorum
-        let unique_signers: std::collections::HashSet<_> = prepare_messages
-            .iter()
-            .map(|msg| msg.signed_message.operator_ids().first().unwrap())
-            .collect();
+        if previously_prepared {
+            // Must have enough prepare messages for quorum
+            if msg.qbft_message.prepare_justification.len() < self.config.quorum_size() {
+                return false;
+            }
 
-        if unique_signers.len() < self.config.quorum_size() {
-            warn!(
-                unique_signers = unique_signers.len(),
-                required = self.config.quorum_size(),
-                "Not enough unique signers in prepare justifications"
-            );
-            return false;
+            // Validate each prepare message matches highest prepared round/value
+            for prepare_msg in &msg.qbft_message.prepare_justification {
+                let deser_prepare = QbftMessage::from_ssz_bytes(prepare_msg.ssv_message().data())
+                    .map_err(|_| false)
+                    .unwrap(); // todo!() get rid of this unwrap
+
+                // Must be for highest prepared round
+                if deser_prepare.round != max_prepared_round {
+                    return false;
+                }
+
+                // Must match highest prepared value
+                if deser_prepare.root != max_prepared_value.unwrap() {
+                    return false;
+                }
+
+                // Must be from committee member
+                if !self.check_committee(&OperatorId(*prepare_msg.operator_ids().first().unwrap()))
+                {
+                    return false;
+                }
+            }
+
+            // Verify unique signers for quorum
+            let unique_signers: HashSet<_> = msg
+                .qbft_message
+                .prepare_justification
+                .iter()
+                .map(|m| m.operator_ids().first().unwrap())
+                .collect();
+
+            if unique_signers.len() < self.config.quorum_size() {
+                return false;
+            }
         }
-
         true
     }
 
@@ -630,6 +655,9 @@ where
         data_hash: D::Hash,
     ) -> UnsignedSSVMessage {
         // if we are in a round change, use round + 1 and get the prepare justifications if needed
+        // Round change. we only include the round change justifications which are the prepare
+        // messageks
+        // The justification is a quorum of signed prepare messages that agree on state.LastPreparedValue
         let (round, prepare_justification) = if matches!(self.state, InstanceState::SentRoundChange)
         {
             // If we are sending a round change and have a value that was prepared in the last
@@ -647,6 +675,14 @@ where
                 vec![]
             };
             (self.current_round.get() as u64 + 1, prepare_justification)
+        } else if matches!(self.state, InstanceState::AwaitingProposal) {
+            let round_changes = self
+                .round_change_container
+                .get_messages_for_round(self.current_round)
+                .iter()
+                .map(|msg| msg.signed_message.clone())
+                .collect();
+            (self.current_round.get() as u64, round_changes)
         } else {
             (self.current_round.get() as u64, vec![])
         };
@@ -654,7 +690,7 @@ where
         // if round > 1 and we are AwaitingProposal. Include round change justifications. We know
         // that only the leader can send a message while in the AwaitingProposal state, so this must
         // be a proposal message. We must include the round change messages that justify the choice
-        // of value
+        // of value. We also have to include the round change justifications??
         let round_change_justification =
             if round > 0 && matches!(self.state, InstanceState::AwaitingProposal) {
                 self.round_change_container
