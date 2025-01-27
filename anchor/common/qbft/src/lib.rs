@@ -273,8 +273,10 @@ where
             self.send_proposal(data_hash, data);
             self.send_prepare(data_hash);
 
-            // Since we are the leader and send the proposal, switch to prepare state
+            // Since we are the leader and send the proposal, switch to prepare state and accept
+            // proposal
             self.state = InstanceState::Prepare;
+            // how do we accpet this proposal???
         }
     }
 
@@ -391,21 +393,25 @@ where
                 deser_round_change.qbft_message_type,
                 QbftMessageType::RoundChange
             ) {
+                warn!("Message is not a RoundChange message");
                 return false;
             }
 
             // Make sure it is for the correct height
             if deser_round_change.height != *self.instance_height as u64 {
+                warn!("Height is incorrect");
                 return false;
             }
 
             // Make sure this is for the correct round
             if deser_round_change.round != self.current_round.get() as u64 {
+                warn!("Round is incorrect");
                 return false;
             }
 
             // Make sure there is only one signer
             if signed_round_change.operator_ids().len() != 1 {
+                warn!("There should only be one signer");
                 return false;
             }
 
@@ -433,17 +439,20 @@ where
 
                 // Must be for highest prepared round
                 if deser_prepare.round != max_prepared_round {
+                    warn!("Prepare round incorrect");
                     return false;
                 }
 
                 // Must match highest prepared value
                 if deser_prepare.root != max_prepared_value.unwrap() {
+                    warn!("Prepare root incorrect");
                     return false;
                 }
 
                 // Must be from committee member
                 if !self.check_committee(&OperatorId(*prepare_msg.operator_ids().first().unwrap()))
                 {
+                    warn!("not part of the committee");
                     return false;
                 }
             }
@@ -476,11 +485,13 @@ where
             return;
         }
 
+        /*
         // Make sure that we have accepted a proposal for this round
         if self.proposal_accepted_for_current_round.is_none() {
-            warn!(from=?operator_id, ?self.state, "Have not accepted Proposal for current round yet");
+            warn!(from=?operator_id, ?self.state, self=?self.config.operator_id(), "Have not accepted Proposal for current round yet");
             return;
         }
+            */
 
         debug!(from = ?operator_id, in = ?self.config.operator_id(), state = ?self.state, "PREPARE received");
 
@@ -496,7 +507,7 @@ where
         if let Some(hash) = self.prepare_container.has_quorum(round) {
             // Make sure we are in the correct state
             if !matches!(self.state, InstanceState::Prepare)
-                | !matches!(self.state, InstanceState::AwaitingProposal)
+                && !matches!(self.state, InstanceState::AwaitingProposal)
             {
                 warn!(from=?operator_id, ?self.state, "Not in PREPARE state");
                 return;
