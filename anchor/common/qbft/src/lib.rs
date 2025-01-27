@@ -68,7 +68,7 @@ where
     round_change_container: MessageContainer,
 
     // Current round state
-    proposal_accepted_for_current_round: Option<WrappedQbftMessage>,
+    proposal_accepted_for_current_round: bool,
     last_prepared_round: Option<Round>,
     last_prepared_value: Option<D::Hash>,
 
@@ -108,7 +108,7 @@ where
             commit_container: MessageContainer::new(quorum_size),
             round_change_container: MessageContainer::new(quorum_size),
 
-            proposal_accepted_for_current_round: None,
+            proposal_accepted_for_current_round: false,
             last_prepared_round: None,
             last_prepared_value: None,
 
@@ -276,7 +276,7 @@ where
             // Since we are the leader and send the proposal, switch to prepare state and accept
             // proposal
             self.state = InstanceState::Prepare;
-            // how do we accpet this proposal???
+            self.proposal_accepted_for_current_round = true;
         }
     }
 
@@ -370,7 +370,7 @@ where
         self.data.insert(data_hash, data);
 
         // Update state
-        self.proposal_accepted_for_current_round = Some(wrapped_msg.clone());
+        self.proposal_accepted_for_current_round = true;
         self.state = InstanceState::Prepare;
         debug!(in = ?self.config.operator_id(), state = ?self.state, "State updated to PREPARE");
 
@@ -485,13 +485,11 @@ where
             return;
         }
 
-        /*
         // Make sure that we have accepted a proposal for this round
-        if self.proposal_accepted_for_current_round.is_none() {
+        if !self.proposal_accepted_for_current_round {
             warn!(from=?operator_id, ?self.state, self=?self.config.operator_id(), "Have not accepted Proposal for current round yet");
             return;
         }
-            */
 
         debug!(from = ?operator_id, in = ?self.config.operator_id(), state = ?self.state, "PREPARE received");
 
@@ -788,7 +786,7 @@ where
         let unsigned_msg = self.new_unsigned_message(QbftMessageType::RoundChange, data_hash);
 
         // forget that we accpeted a proposal
-        self.proposal_accepted_for_current_round = None;
+        self.proposal_accepted_for_current_round = false;
 
         let operator_id = self.config.operator_id();
         (self.send_message)(Message::RoundChange(operator_id, unsigned_msg.clone()));
