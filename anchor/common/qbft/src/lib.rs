@@ -199,7 +199,6 @@ where
                 return false;
             }
         };
-
         if !data.validate() {
             warn!(in = ?self.config.operator_id(), "Data failed validation");
             return false;
@@ -273,7 +272,7 @@ where
             self.send_proposal(data_hash, data);
             self.send_prepare(data_hash);
 
-            // Since we are the leader and send the proposal, switch to prepare state and accept
+            // Since we are the leader and sent the proposal, switch to prepare state and accept
             // proposal
             self.state = InstanceState::Prepare;
             self.proposal_accepted_for_current_round = true;
@@ -341,11 +340,6 @@ where
             self.validate_round_change_justification(&wrapped_msg);
         }
 
-        // Validate the prepare justifications if they exist
-        if !wrapped_msg.qbft_message.prepare_justification.is_empty() {
-            //self.validate_prepare_justification(wrapped_msg)?;
-        }
-
         // Verify that the fulldata matches the data root of the qbft message data
         let data_hash = wrapped_msg.signed_message.hash_fulldata();
         if data_hash != wrapped_msg.qbft_message.root {
@@ -384,34 +378,49 @@ where
         let mut max_prepared_round = 0;
         let mut max_prepared_value = None;
 
+        // Go through all of the round changes messages and verify each one
         for signed_round_change in &msg.qbft_message.round_change_justification {
             let deser_round_change: QbftMessage =
-                QbftMessage::from_ssz_bytes(signed_round_change.ssv_message().data()).unwrap(); // todo!() get rid of this unwrap
+                match QbftMessage::from_ssz_bytes(signed_round_change.ssv_message().data()) {
+                    Ok(data) => data,
+                    Err(_) => return false,
+                };
 
             // Make sure this is actually a round change message
             if !matches!(
                 deser_round_change.qbft_message_type,
                 QbftMessageType::RoundChange
             ) {
-                warn!("Message is not a RoundChange message");
+                warn!(message_type = ?deser_round_change.qbft_message_type, "Message is not a ROUNDCHANGE message");
                 return false;
             }
 
             // Make sure it is for the correct height
             if deser_round_change.height != *self.instance_height as u64 {
-                warn!("Height is incorrect");
+                warn!(
+                    got = deser_round_change.height,
+                    expected = *self.instance_height,
+                    "Message for the wrong height"
+                );
                 return false;
             }
 
             // Make sure this is for the correct round
             if deser_round_change.round != self.current_round.get() as u64 {
-                warn!("Round is incorrect");
+                warn!(
+                    got = deser_round_change.round,
+                    expected = self.current_round.get(),
+                    "Message for the wrong round"
+                );
                 return false;
             }
 
             // Make sure there is only one signer
             if signed_round_change.operator_ids().len() != 1 {
-                warn!("There should only be one signer");
+                warn!(
+                    num_signers = signed_round_change.operator_ids().len(),
+                    "More than one message signer found"
+                );
                 return false;
             }
 
@@ -425,34 +434,50 @@ where
             }
         }
 
+        // If there was a value that was also previously prepared, validate the prepare messages
         if previously_prepared {
             // Must have enough prepare messages for quorum
             if msg.qbft_message.prepare_justification.len() < self.config.quorum_size() {
+                warn!(
+                    num_justifications = msg.qbft_message.prepare_justification.len(),
+                    "Not enough prepare messages for quorum"
+                );
                 return false;
             }
 
             // Validate each prepare message matches highest prepared round/value
-            for prepare_msg in &msg.qbft_message.prepare_justification {
-                let deser_prepare = QbftMessage::from_ssz_bytes(prepare_msg.ssv_message().data())
-                    .map_err(|_| false)
-                    .unwrap(); // todo!() get rid of this unwrap
+            for signed_prepare in &msg.qbft_message.prepare_justification {
+                let deser_prepare =
+                    match QbftMessage::from_ssz_bytes(signed_prepare.ssv_message().data()) {
+                        Ok(data) => data,
+                        Err(_) => return false,
+                    };
 
                 // Must be for highest prepared round
                 if deser_prepare.round != max_prepared_round {
-                    warn!("Prepare round incorrect");
+                    warn!(
+                        got = deser_prepare.round,
+                        expected = max_prepared_round,
+                        "Prepare round does not match the highest found prepare"
+                    );
                     return false;
                 }
 
                 // Must match highest prepared value
-                if deser_prepare.root != max_prepared_value.unwrap() {
-                    warn!("Prepare root incorrect");
+                if deser_prepare.root != max_prepared_value.expect("Value exist") {
+                    warn!(
+                        got = ?deser_prepare.root,
+                        expected = ?max_prepared_value.expect("Value exist"),
+                        "Prepared root does not match expected max prepared root"
+                    );
                     return false;
                 }
 
                 // Must be from committee member
-                if !self.check_committee(&OperatorId(*prepare_msg.operator_ids().first().unwrap()))
+                if !self
+                    .check_committee(&OperatorId(*signed_prepare.operator_ids().first().unwrap()))
                 {
-                    warn!("not part of the committee");
+                    warn!("Operator is not part of the committee");
                     return false;
                 }
             }
@@ -466,6 +491,7 @@ where
                 .collect();
 
             if unique_signers.len() < self.config.quorum_size() {
+                warn!("Did not find a quorum of unique signers");
                 return false;
             }
         }
