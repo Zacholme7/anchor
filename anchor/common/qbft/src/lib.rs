@@ -4,7 +4,6 @@ use ssv_types::message::{MessageID, MsgType, SSVMessage, SignedSSVMessage};
 use ssv_types::OperatorId;
 use ssz::{Decode, Encode};
 use std::collections::HashMap;
-use std::collections::HashSet;
 use tracing::{debug, error, warn};
 use types::Hash256;
 
@@ -743,6 +742,58 @@ where
         self.start_round();
     }
 
+    // Get data for the qbft message. Todo!() does this work???
+    // (
+    //   data_round (u64) -> round related to the proposed data
+    //   round (u64) -> the message round
+    //   root (D::Hash) -> the hash of the proposed data, if necessary
+    //   full_data (Vec<u8>) -> serialized data that we are coming to conseusn on
+    // )
+    fn get_message_data(
+        &self,
+        msg_type: &QbftMessageType,
+        data_hash: D::Hash,
+    ) -> (u64, u64, D::Hash, Vec<u8>) {
+        // Get the fulldata for the data_hash
+        let full_data = if let Some(data) = self.data.get(&data_hash) {
+            data.as_ssz_bytes()
+        } else {
+            vec![]
+        };
+
+        match msg_type {
+            QbftMessageType::Proposal | QbftMessageType::Prepare | QbftMessageType::Commit => {
+                // todo!() for prepare, does it leave fulldata blank??
+                let data_round = 0; // todo!(), why is this zero
+                let round = self.current_round.get() as u64;
+                (data_round, round, data_hash, full_data)
+            }
+            QbftMessageType::RoundChange => {
+                if self.last_prepared_round.is_some() && self.last_prepared_value.is_some() {
+                    let last_prepared_value =
+                        self.last_prepared_value.expect("Confirmed to be Some");
+                    let last_prepared_round =
+                        self.last_prepared_round.expect("Confirmed to be Some");
+
+                    let full_data = if let Some(data) = self.data.get(&last_prepared_value) {
+                        data.as_ssz_bytes()
+                    } else {
+                        vec![]
+                    };
+
+                    (
+                        last_prepared_round.get() as u64,
+                        self.current_round.get() as u64 + 1,
+                        last_prepared_value,
+                        full_data,
+                    )
+                } else {
+                    todo!()
+                }
+            }
+        }
+    }
+
     // Construct a new unsigned message. This will be passed to the processor to be signed and then
     // sent on the network
     fn new_unsigned_message(
@@ -752,16 +803,17 @@ where
         round_change_justification: Vec<SignedSSVMessage>,
         prepare_justification: Vec<SignedSSVMessage>,
     ) -> UnsignedSSVMessage {
+        // Get misc data to populate the message with based off of the message type
+        let (data_round, round, root, full_data) = self.get_message_data(&msg_type, data_hash);
+
         // Create the QBFT message
         let qbft_message = QbftMessage {
             qbft_message_type: msg_type,
             height: *self.instance_height as u64,
-            round: self.current_round.get() as u64,
+            round,
             identifier: self.identifier.clone(),
-            root: data_hash,
-            data_round: self
-                .last_prepared_round
-                .map_or(0, |round| round.get() as u64),
+            root,
+            data_round,
             round_change_justification,
             prepare_justification,
         };
@@ -771,12 +823,6 @@ where
             self.identifier.clone(),
             qbft_message.as_ssz_bytes(),
         );
-
-        let full_data = if let Some(data) = self.data.get(&data_hash) {
-            data.as_ssz_bytes()
-        } else {
-            vec![]
-        };
 
         // Wrap in unsigned SSV message
         UnsignedSSVMessage {
@@ -803,11 +849,36 @@ where
             // If we are past the first round and are sending a round change. We have to include
             // prepare messages that prove we have prepared a value
             else if matches!(self.state, InstanceState::SentRoundChange) {
-                todo!()
+                // if we have a last prepared value and a last prepared round...
+                if self.last_prepared_round.is_some() && self.last_prepared_value.is_some() {
+                    // todo!() diff syntax for this
+                    let _last_prepared_value =
+                        self.last_prepared_value.expect("Confirmed to be Some");
+                    let last_prepared_round =
+                        self.last_prepared_round.expect("Confirmed to be Some");
+
+                    // Get all of the prepare messages for the last prepared round
+                    let last_prepared_messages = self
+                        .prepare_container
+                        .get_messages_for_round(last_prepared_round);
+
+                    // confirm that root of all messages match the last_prepared_value. TODO!(). is
+                    // this necessary???
+
+                    // Make sure we have a quorum of prepare message
+                    if last_prepared_messages.len() < self.config.quorum_size() {
+                        return vec![];
+                    }
+                    return last_prepared_messages
+                        .iter()
+                        .map(|msg| msg.signed_message.clone())
+                        .collect();
+                }
+                return vec![];
             }
         }
 
-        // We are either in the first round
+        // We are either in the first round or sending a prepare/commit message
         vec![]
     }
 
@@ -925,11 +996,16 @@ where
     fn send_round_change(&mut self, data_hash: D::Hash) {
         // For Round Change messages
         // round_change_justification: list of prepare messages
+        let round_change_justifications = self.get_round_change_justifications();
         // prepare_justification: N/A
 
         // Construct unsigned round change
-        let unsigned_msg =
-            self.new_unsigned_message(QbftMessageType::RoundChange, data_hash, vec![], vec![]);
+        let unsigned_msg = self.new_unsigned_message(
+            QbftMessageType::RoundChange,
+            data_hash,
+            round_change_justifications,
+            vec![],
+        );
 
         // forget that we accpeted a proposal
         self.proposal_accepted_for_current_round = false;
