@@ -409,44 +409,8 @@ where
                 return false;
             }
 
-            // Make sure it is for the correct height
-            if round_change.height != *self.instance_height as u64 {
-                warn!(
-                    got = round_change.height,
-                    expected = *self.instance_height,
-                    "Message for the wrong height"
-                );
-                return false;
-            }
-
-            // Make sure this is for the correct round
-            if round_change.round != self.current_round.get() as u64 {
-                warn!(
-                    got = round_change.round,
-                    expected = self.current_round.get(),
-                    "Message for the wrong round"
-                );
-                return false;
-            }
-
-            // Make sure there is only one signer
-            if signed_round_change.operator_ids().len() != 1 {
-                warn!(
-                    num_signers = signed_round_change.operator_ids().len(),
-                    "More than one message signer found"
-                );
-                return false;
-            }
-
-            // Make sure the one signer is in our committee
-            let signer = OperatorId(
-                *signed_round_change
-                    .operator_ids()
-                    .first()
-                    .expect("Confirmed to exist"),
-            );
-            if !self.check_committee(&signer) {
-                warn!("Signer is not part of committee");
+            if !self.validate_qbft_message_against_state(&round_change, signed_round_change) {
+                warn!("ROUNDCHANGE message validation failed");
                 return false;
             }
 
@@ -497,31 +461,14 @@ where
                     Err(_) => return false,
                 };
 
-                // validate each prepare message against the highest previously prepared fullData and round
-
                 // Make sure this is a prepare message
                 if prepare.qbft_message_type != QbftMessageType::Prepare {
                     warn!("Expected a prepare message");
                     return false;
                 }
 
-                // Make sure it is for the correct height
-                if prepare.height != *self.instance_height as u64 {
-                    warn!(
-                        got = prepare.height,
-                        expected = *self.instance_height,
-                        "Message for the wrong height"
-                    );
-                    return false;
-                }
-
-                // Make sure this is for the correct round
-                if prepare.round != self.current_round.get() as u64 {
-                    warn!(
-                        got = prepare.round,
-                        expected = self.current_round.get(),
-                        "Message for the wrong round"
-                    );
+                if !self.validate_qbft_message_against_state(&prepare, signed_prepare) {
+                    warn!("PREPARE message validation failed");
                     return false;
                 }
 
@@ -530,30 +477,58 @@ where
                     return false;
                 }
 
-                // Make sure there is only one signer
-                if signed_prepare.operator_ids().len() != 1 {
-                    warn!(
-                        num_signers = signed_prepare.operator_ids().len(),
-                        "More than one message signer found"
-                    );
-                    return false;
-                }
-
-                // Make sure the one signer is in our committee
-                let signer = OperatorId(
-                    *signed_prepare
-                        .operator_ids()
-                        .first()
-                        .expect("Confirmed to exist"),
-                );
-                if !self.check_committee(&signer) {
-                    warn!("Signer is not part of committee");
-                    return false;
-                }
-
                 // verify the signature
                 // todo!()
             }
+        }
+        true
+    }
+
+    // Validate a qbft message against the state
+    fn validate_qbft_message_against_state(
+        &self,
+        msg: &QbftMessage,
+        signed_msg: &SignedSSVMessage,
+    ) -> bool {
+        // Make sure it is for the correct height
+        if msg.height != *self.instance_height as u64 {
+            warn!(
+                got = msg.height,
+                expected = *self.instance_height,
+                "Message for the wrong height"
+            );
+            return false;
+        }
+
+        // Make sure this is for the correct round
+        if msg.round != self.current_round.get() as u64 {
+            warn!(
+                got = msg.round,
+                expected = self.current_round.get(),
+                "Message for the wrong round"
+            );
+            return false;
+        }
+
+        // Make sure there is only one signer
+        if signed_msg.operator_ids().len() != 1 {
+            warn!(
+                num_signers = signed_msg.operator_ids().len(),
+                "More than one message signer found"
+            );
+            return false;
+        }
+
+        // Make sure the one signer is in our committee
+        let signer = OperatorId(
+            *signed_msg
+                .operator_ids()
+                .first()
+                .expect("Confirmed to exist"),
+        );
+        if !self.check_committee(&signer) {
+            warn!("Signer is not part of committee");
+            return false;
         }
         true
     }
