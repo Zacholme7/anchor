@@ -744,12 +744,9 @@ where
                 (data_round, round, data_hash, full_data)
             }
             QbftMessageType::RoundChange => {
-                if self.last_prepared_round.is_some() && self.last_prepared_value.is_some() {
-                    let last_prepared_value =
-                        self.last_prepared_value.expect("Confirmed to be Some");
-                    let last_prepared_round =
-                        self.last_prepared_round.expect("Confirmed to be Some");
-
+                if let (Some(last_prepared_value), Some(last_prepared_round)) =
+                    (self.last_prepared_value, self.last_prepared_round)
+                {
                     let full_data = if let Some(data) = self.data.get(&last_prepared_value) {
                         data.as_ssz_bytes()
                     } else {
