@@ -812,7 +812,7 @@ where
     }
 
     // Get all of the prepare justifications for proposals
-    fn get_prepare_justifications(&self) -> Vec<SignedSSVMessage> {
+    fn get_prepare_justifications(&self) -> (Vec<SignedSSVMessage>, Option<Hash256>) {
         // Make sure we are past the first round
         if self.current_round > Round::default() {
             // We only send prepare justifications with for proposal messages. If we are in the
@@ -829,7 +829,7 @@ where
                     .round_change_container
                     .get_messages_for_round(self.current_round);
                 if round_change_msg.len() < self.config.quorum_size() {
-                    return vec![];
+                    return (vec![], None);
                 }
 
                 // Go through each message and see if any have a value that was already prepared
@@ -853,13 +853,16 @@ where
                     // Validate the proposal, if this is a valid proposal then this is our prepare
                     // justification
                     if self.validate_justifications(wrapped_round_change) {
-                        return vec![wrapped_round_change.signed_message.clone()];
+                        return (
+                            vec![wrapped_round_change.signed_message.clone()],
+                            Some(round_change.root),
+                        );
                     }
                 }
             }
         }
         // We are either in the first round, or not sending a proposal. Just return empty vec
-        vec![]
+        (vec![], None)
     }
 
     // Send a new qbft proposal message
@@ -871,23 +874,19 @@ where
         // round_change_justification: list of round change messages
         let round_change_justifications = self.get_round_change_justifications();
         // prepare_justification: list of prepare messages
-        let prepare_justifications = self.get_prepare_justifications();
+        let (prepare_justifications, value_to_propose) = self.get_prepare_justifications();
 
-        // If we have a prepare justification, we have to use that value in message, else we just
-        // use the start value
-        /*
-        let value_to_propose = if prepare_justification.len() > 1 {
-            // extract the root that we need to propose
-            let signed_msg = prepare_justifications.first().expect("Confirmed to exist");
-
-
-        }
-        */
+        // Determine the value that should be proposed based off of justification. If we have a
+        // prepare justification, we want to propose that value. Else, just propose the start data
+        let value_to_propose = match value_to_propose {
+            Some(value) => value,
+            None => self.start_data_hash,
+        };
 
         // Construct a unsigned proposal
         let unsigned_msg = self.new_unsigned_message(
             QbftMessageType::Proposal,
-            hash,
+            value_to_propose,
             round_change_justifications,
             prepare_justifications,
         );
