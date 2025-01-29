@@ -291,6 +291,7 @@ where
             // proposal
             self.state = InstanceState::Prepare;
             self.proposal_accepted_for_current_round = true;
+            self.proposal_root = Some(data_hash);
         }
     }
 
@@ -437,9 +438,6 @@ where
 
             // Verify the signature. TODO!()
 
-            // Addtional verifiction. TODO!(). this is literally the exact same thing just over
-            // again???
-
             // If the data round > 1, that means we have prepared a value in previous rounds
             if round_change.data_round > 1 {
                 previously_prepared = true;
@@ -502,8 +500,7 @@ where
                     return false;
                 }
 
-                // verify the signature
-                // todo!()
+                // verify the signature. TODO!()
             }
         }
         true
@@ -639,7 +636,7 @@ where
             if matches!(self.state, InstanceState::Commit) {
                 // Commit aggregation??? todo!()
 
-                // We have come to consensus, mark ourself as completed and record the agreed upon
+                // We have come to commit consensus, mark ourself as completed and record the agreed upon
                 // value
                 self.state = InstanceState::Complete;
                 self.completed = Some(Completed::Success(hash));
