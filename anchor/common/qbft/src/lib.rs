@@ -185,7 +185,8 @@ where
 
         // Make sure the one signer is in our committee
         let signer = OperatorId(
-            *wrapped_msg.signed_message
+            *wrapped_msg
+                .signed_message
                 .operator_ids()
                 .first()
                 .expect("Confirmed to exist"),
@@ -425,7 +426,10 @@ where
             }
 
             // Convert to a wrapped message and perform verification
-            let wrapped = WrappedQbftMessage { signed_message: signed_round_change.clone(), qbft_message: round_change.clone()};
+            let wrapped = WrappedQbftMessage {
+                signed_message: signed_round_change.clone(),
+                qbft_message: round_change.clone(),
+            };
             if !self.validate_message(&wrapped) {
                 warn!("ROUNDCHANGE message validation failed");
                 return false;
@@ -484,7 +488,10 @@ where
                     return false;
                 }
 
-                let wrapped = WrappedQbftMessage { signed_message: signed_prepare.clone(), qbft_message: prepare.clone()};
+                let wrapped = WrappedQbftMessage {
+                    signed_message: signed_prepare.clone(),
+                    qbft_message: prepare.clone(),
+                };
                 if !self.validate_message(&wrapped) {
                     warn!("PREPARE message validation failed");
                     return false;
@@ -501,7 +508,6 @@ where
         }
         true
     }
-
 
     /// We have received a prepare message
     fn received_prepare(
@@ -595,6 +601,21 @@ where
             return;
         }
 
+        // Make sure this is actually a commit message
+        if !(matches!(
+            wrapped_msg.qbft_message.qbft_message_type,
+            QbftMessageType::Commit,
+        )) {
+            warn!(from=?operator_id, self=?self.config.operator_id(), "Expected a COMMIT message");
+            return;
+        }
+
+        // Make sure that we have accepted a proposal for this round
+        if !self.proposal_accepted_for_current_round {
+            warn!(from=?operator_id, ?self.state, self=?self.config.operator_id(), "Have not accepted Proposal for current round yet");
+            return;
+        }
+
         debug!(from = ?operator_id, in = ?self.config.operator_id(), state = ?self.state, "COMMIT received");
 
         // Store the received commit message
@@ -607,6 +628,14 @@ where
 
         // Check if we have a commit quorum
         if let Some(hash) = self.prepare_container.has_quorum(round) {
+            // Make sure that the root of the data that we have come to a commit consensus on
+            // matches the root of the proposal that we have accepted
+            if hash != self.proposal_root.expect("Proposal has been accepted") {
+                warn!("COMMIT quorum root does not match accepted PROPOSAL root");
+                return;
+            }
+
+            // All validation successful, make sure we are in the proper commit state
             if matches!(self.state, InstanceState::Commit) {
                 // Commit aggregation??? todo!()
 
