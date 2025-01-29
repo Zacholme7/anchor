@@ -621,6 +621,8 @@ where
         // Check if we have a commit quorum
         if let Some(hash) = self.prepare_container.has_quorum(round) {
             if matches!(self.state, InstanceState::Commit) {
+                // Commit aggregation??? todo!()
+
                 // We have come to consensus, mark ourself as completed and record the agreed upon
                 // value
                 self.state = InstanceState::Complete;
@@ -675,8 +677,6 @@ where
             if num_messages_for_round > self.config.get_f()
                 && !(matches!(self.state, InstanceState::SentRoundChange))
             {
-                // send our own round change message
-
                 // Set the state so SendRoundChange so we include Round + 1 in message
                 self.state = InstanceState::SentRoundChange;
 
@@ -822,13 +822,9 @@ where
             // prepare messages that prove we have prepared a value
             else if matches!(self.state, InstanceState::SentRoundChange) {
                 // if we have a last prepared value and a last prepared round...
-                if self.last_prepared_round.is_some() && self.last_prepared_value.is_some() {
-                    // todo!() diff syntax for this
-                    let _last_prepared_value =
-                        self.last_prepared_value.expect("Confirmed to be Some");
-                    let last_prepared_round =
-                        self.last_prepared_round.expect("Confirmed to be Some");
-
+                if let (Some(last_prepared_value), Some(last_prepared_round)) =
+                    (self.last_prepared_value, self.last_prepared_round)
+                {
                     // Get all of the prepare messages for the last prepared round
                     let last_prepared_messages = self
                         .prepare_container
