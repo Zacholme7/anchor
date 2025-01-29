@@ -68,6 +68,7 @@ where
 
     // Current round state
     proposal_accepted_for_current_round: bool,
+    proposal_root: Option<D::Hash>,
     last_prepared_round: Option<Round>,
     last_prepared_value: Option<D::Hash>,
 
@@ -108,6 +109,7 @@ where
             round_change_container: MessageContainer::new(quorum_size),
 
             proposal_accepted_for_current_round: false,
+            proposal_root: None,
             last_prepared_round: None,
             last_prepared_value: None,
 
@@ -178,6 +180,18 @@ where
                 num_signers = wrapped_msg.signed_message.operator_ids().len(),
                 "Propose message only allows one signer"
             );
+            return false;
+        }
+
+        // Make sure the one signer is in our committee
+        let signer = OperatorId(
+            *wrapped_msg.signed_message
+                .operator_ids()
+                .first()
+                .expect("Confirmed to exist"),
+        );
+        if !self.check_committee(&signer) {
+            warn!("Signer is not part of committee");
             return false;
         }
 
@@ -367,6 +381,7 @@ where
 
         // Update state
         self.proposal_accepted_for_current_round = true;
+        self.proposal_root = Some(data_hash);
         self.state = InstanceState::Prepare;
         debug!(in = ?self.config.operator_id(), state = ?self.state, "State updated to PREPARE");
 
@@ -409,7 +424,9 @@ where
                 return false;
             }
 
-            if !self.validate_qbft_message_against_state(&round_change, signed_round_change) {
+            // Convert to a wrapped message and perform verification
+            let wrapped = WrappedQbftMessage { signed_message: signed_round_change.clone(), qbft_message: round_change.clone()};
+            if !self.validate_message(&wrapped) {
                 warn!("ROUNDCHANGE message validation failed");
                 return false;
             }
@@ -467,7 +484,8 @@ where
                     return false;
                 }
 
-                if !self.validate_qbft_message_against_state(&prepare, signed_prepare) {
+                let wrapped = WrappedQbftMessage { signed_message: signed_prepare.clone(), qbft_message: prepare.clone()};
+                if !self.validate_message(&wrapped) {
                     warn!("PREPARE message validation failed");
                     return false;
                 }
@@ -484,54 +502,6 @@ where
         true
     }
 
-    // Validate a qbft message against the state
-    fn validate_qbft_message_against_state(
-        &self,
-        msg: &QbftMessage,
-        signed_msg: &SignedSSVMessage,
-    ) -> bool {
-        // Make sure it is for the correct height
-        if msg.height != *self.instance_height as u64 {
-            warn!(
-                got = msg.height,
-                expected = *self.instance_height,
-                "Message for the wrong height"
-            );
-            return false;
-        }
-
-        // Make sure this is for the correct round
-        if msg.round != self.current_round.get() as u64 {
-            warn!(
-                got = msg.round,
-                expected = self.current_round.get(),
-                "Message for the wrong round"
-            );
-            return false;
-        }
-
-        // Make sure there is only one signer
-        if signed_msg.operator_ids().len() != 1 {
-            warn!(
-                num_signers = signed_msg.operator_ids().len(),
-                "More than one message signer found"
-            );
-            return false;
-        }
-
-        // Make sure the one signer is in our committee
-        let signer = OperatorId(
-            *signed_msg
-                .operator_ids()
-                .first()
-                .expect("Confirmed to exist"),
-        );
-        if !self.check_committee(&signer) {
-            warn!("Signer is not part of committee");
-            return false;
-        }
-        true
-    }
 
     /// We have received a prepare message
     fn received_prepare(
@@ -540,9 +510,19 @@ where
         round: Round,
         wrapped_msg: WrappedQbftMessage,
     ) {
-        // Check that we are in the correct state
+        // Check that we are in the correct state. We do not have to be in the PREPARE state right
+        // now as this message may have been delayed
         if (self.state as u8) >= (InstanceState::SentRoundChange as u8) {
             warn!(from=?operator_id, ?self.state, "PREPARE message while in invalid state");
+            return;
+        }
+
+        // Make sure this is actually a prepare message
+        if !(matches!(
+            wrapped_msg.qbft_message.qbft_message_type,
+            QbftMessageType::Prepare,
+        )) {
+            warn!(from=?operator_id, self=?self.config.operator_id(), "Expected a PREPARE message");
             return;
         }
 
@@ -562,7 +542,7 @@ where
             warn!(from = ?operator_id, "PREPARE message is a duplicate")
         }
 
-        // Check if we have reached quorum, if so send the commit message
+        // Check if we have reached a prepare quorum for this round, if so send the commit message
         if let Some(hash) = self.prepare_container.has_quorum(round) {
             // Make sure we are in the correct state
             if !matches!(self.state, InstanceState::Prepare)
@@ -572,13 +552,20 @@ where
                 return;
             }
 
+            // Make sure that the root of the data that we have come to a prepare consensus on
+            // matches the root of the proposal that we have accepted
+            if hash != self.proposal_root.expect("Proposal has been accepted") {
+                warn!("PREPARE quorum root does not match accepted PROPOSAL root");
+                return;
+            }
+
+            // Success! We have come to a prepare consensus on a value
+
             // Move the state forward since we have a prepare quorum
             self.state = InstanceState::Commit;
             debug!(in = ?self.config.operator_id(), state = ?self.state, "Reached a PREPARE consensus. State updated to COMMIT");
 
-            // Record this prepare consensus
-            // todo!() may need to record all of the prepare messages for the hash and save that
-            // too, used for justifications
+            // Record that we have come to a consensus on this value
             self.past_consensus.insert(round, hash);
 
             // Record as last prepared value and round
@@ -822,7 +809,7 @@ where
             // prepare messages that prove we have prepared a value
             else if matches!(self.state, InstanceState::SentRoundChange) {
                 // if we have a last prepared value and a last prepared round...
-                if let (Some(last_prepared_value), Some(last_prepared_round)) =
+                if let (Some(_), Some(last_prepared_round)) =
                     (self.last_prepared_value, self.last_prepared_round)
                 {
                     // Get all of the prepare messages for the last prepared round
@@ -837,6 +824,8 @@ where
                     if last_prepared_messages.len() < self.config.quorum_size() {
                         return vec![];
                     }
+
+                    // This will hold the value that we want to propose
                     return last_prepared_messages
                         .iter()
                         .map(|msg| msg.signed_message.clone())
