@@ -1,7 +1,7 @@
 use super::{
-    CommitteeInstanceId, Completed, QbftData, QbftDecidable, QbftError, QbftManager, WrappedQbftMessage,
+    CommitteeInstanceId, Completed, QbftData, QbftDecidable, QbftError, QbftManager,
+    WrappedQbftMessage,
 };
-use dashmap::DashMap;
 use processor::Senders;
 use qbft::Message;
 use slot_clock::{SlotClock, SystemTimeSlotClock};
@@ -51,8 +51,8 @@ where
     // Used to recieve messages from the qbft instances
     network_rx: UnboundedReceiver<Message>,
     // Channels for sending and receiving results once instances have been decided
-    result_rx: UnboundedReceiver<Result<Completed<D>, QbftError>>,
-    result_tx: UnboundedSender<Result<Completed<D>, QbftError>>,
+    result_rx: UnboundedReceiver<(Hash256, Result<Completed<D>, QbftError>)>,
+    result_tx: UnboundedSender<(Hash256, Result<Completed<D>, QbftError>)>,
     // The size of the committee
     size: CommitteeSize,
     // Mapping of the data hash to the data identifier. This is to send data to the proper instance
@@ -60,7 +60,7 @@ where
     // Mapping from data to the results of the consensus
     results: HashMap<Hash256, ConsensusResult>,
     // The number of individual qbft instances that are running at any given moment
-    num_running: u64,
+    num_running: HashMap<Hash256, u64>,
     // Specific behavior for each operator on how they should behave during an instance
     behavior: HashMap<Hash256, HashMap<OperatorId, OperatorBehavior>>,
 }
@@ -69,9 +69,7 @@ where
 #[derive(Clone)]
 pub struct OperatorBehavior {
     // Id of the operator
-    operator_id: OperatorId,
-    // Whether this operator should drop messages instead of processing them
-    drop_messages: bool,
+    pub operator_id: OperatorId,
     // If this operator is online or not
     pub online: bool,
 }
@@ -79,14 +77,8 @@ pub struct OperatorBehavior {
 impl OperatorBehavior {
     pub fn new(operator_id: OperatorId) -> Self {
         Self {
-            online: true,
             operator_id,
-            //active: true,
-            //message_delay: None,
-            //send_delay: None,
-            //send_malformed: false,
-            drop_messages: false,
-            //stop_at_round: None,
+            online: true,
         }
     }
 
@@ -94,37 +86,6 @@ impl OperatorBehavior {
         self.online = false;
         self
     }
-
-    pub fn drop_messages(&mut self) {
-        self.drop_messages = true;
-    }
-
-    /*
-    /// Sets a delay for processing incoming messages
-    pub fn set_message_delay(&mut self, delay: Duration) {
-        self.message_delay = Some(delay);
-    }
-
-    /// Sets a delay for sending outgoing messages
-    pub fn set_send_delay(&mut self, delay: Duration) {
-        self.send_delay = Some(delay);
-    }
-
-    /// Configures the operator to stop participating at a specific round
-    pub fn stop_at_round(&mut self, round: u64) {
-        self.stop_at_round = Some(round);
-    }
-
-    /// Temporarily stops the operator from participating
-    pub fn pause(&mut self) {
-        self.active = false;
-    }
-
-    /// Resumes operator participation
-    pub fn resume(&mut self) {
-        self.active = true;
-    }
-    */
 }
 
 impl<T, D> QbftTester<T, D>
@@ -172,7 +133,7 @@ where
             network_rx,
             size,
             results: HashMap::new(),
-            num_running: 0,
+            num_running: HashMap::new(),
             behavior: HashMap::new(),
         }
     }
@@ -200,11 +161,10 @@ where
 
             let result = ConsensusResult::default();
             self.results.insert(data.hash(), result);
+            self.num_running.insert(data.hash(), self.size as u64);
 
             // Go through all of the managers. Spawn a new instance for the data and record it
             for manager in self.managers.values() {
-                self.num_running += 1;
-
                 // clone data for task
                 let manager_clone = manager.clone();
                 let cluster = cluster.clone();
@@ -216,9 +176,9 @@ where
                 let _ = self.senders.permitless.send_async(
                     async move {
                         let result = manager_clone
-                            .decide_instance(id_clone, data_clone, &cluster)
+                            .decide_instance(id_clone, data_clone.clone(), &cluster)
                             .await;
-                        let _ = tx_clone.send(result);
+                        let _ = tx_clone.send((data_clone.hash(), result));
                     },
                     "qbft_instance starting",
                 );
@@ -237,8 +197,11 @@ where
                     self.process_network_message(qbft_message);
                 },
                 // Try to see if a instance has completed
-                Some(completion) = async { self.result_rx.try_recv().ok() } => {
-                    self.handle_completion(completion);
+                Some((hash, completion)) = async { self.result_rx.try_recv().ok() } => {
+                    let num = self.num_running.get_mut(&hash).expect("this exists");
+                    *num -= 1;
+
+                    self.handle_completion(hash, completion);
                     if self.finished() {
                         return self.results.values().cloned().collect();
                     }
@@ -252,12 +215,10 @@ where
     }
 
     // Once an instance has completed, we want to record what happened
-    pub fn handle_completion(&mut self, msg: Result<Completed<D>, QbftError>) {
-        self.num_running -= 1;
+    pub fn handle_completion(&mut self, hash: Hash256, msg: Result<Completed<D>, QbftError>) {
         match msg {
             Ok(completed) => match completed {
-                Completed::Success(value) => {
-                    let hash = value.hash();
+                Completed::Success(_) => {
                     let results = self.results.get_mut(&hash).expect("This exists");
                     results.successful += 1;
 
@@ -275,7 +236,11 @@ where
 
     // Check if all of the instances have finished running
     pub fn finished(&self) -> bool {
-        self.num_running == 0
+        let mut finished = true;
+        for running in self.num_running.values() {
+            finished &= *running <= self.size.get_f();
+        }
+        finished
     }
 
     // Process and send a network message to the correct instance
@@ -449,13 +414,15 @@ mod manager_tests {
         let mut tester: QbftTester<SystemTimeSlotClock, BeaconVote> =
             QbftTester::new(setup.clock, setup.executor, CommitteeSize::Four);
 
-
         // Take operator 1 offline
         let op3 = OperatorBehavior::new(OperatorId::from(3)).set_offline();
         let data = generate_test_data();
         tester.add_behavior(data.0.hash(), op3);
 
-        tester.start_instance(vec![data]).await.expect("should start instance");
+        tester
+            .start_instance(vec![data])
+            .await
+            .expect("should start instance");
 
         for res in tester.run_until_complete().await {
             assert!(res.reached_consensus);
@@ -471,7 +438,6 @@ mod manager_tests {
         // Setup the tester
         let mut tester: QbftTester<SystemTimeSlotClock, BeaconVote> =
             QbftTester::new(setup.clock, setup.executor, CommitteeSize::Four);
-
 
         let data = vec![generate_test_data(), generate_test_data()];
         tester
