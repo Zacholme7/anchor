@@ -65,27 +65,32 @@ where
     behavior: HashMap<Hash256, HashMap<OperatorId, OperatorBehavior>>,
 }
 
+#[derive(Clone, Debug)]
+pub enum OperationalStatus {
+    Normal,
+    Offline,
+    Delayed(Duration),
+}
+
 // Descirbes the behavior of an operator
 #[derive(Clone, Debug)]
 pub struct OperatorBehavior {
     // Id of the operator
     pub operator_id: OperatorId,
     // If this operator is online or not
-    pub online: bool,
-
-    // How long the node should stay offline for
+    pub status: OperationalStatus,
 }
 
 impl OperatorBehavior {
     pub fn new(operator_id: OperatorId) -> Self {
         Self {
             operator_id,
-            online: true,
+            status: OperationalStatus::Normal,
         }
     }
 
     pub fn set_offline(mut self) -> Self {
-        self.online = false;
+        self.status = OperationalStatus::Offline;
         self
     }
 }
@@ -282,20 +287,40 @@ where
         // Ex delay the message sending
         let behavior = self.get_behavior(&qbft_msg.root, &sender_operator_id);
         if let Some(behavior) = behavior {
-            if !behavior.online {
-                return
+            if !(matches!(behavior.status, OperationalStatus::Normal)) {
+                return;
             }
         }
 
         // for each operator, send the message to the instance for the data
         for id in 1..=(self.size as u64) {
             let operator_id = OperatorId::from(id);
-            let manager = self.managers.get(&operator_id).unwrap();
+            let manager = self.managers.get(&operator_id).unwrap().clone();
 
+            let behavior = self.get_behavior(&qbft_msg.root, &sender_operator_id);
             // Check if we have beheavior for the receiver of the message
-
-
-            let _ = manager.receive_data::<D>(data_id.clone(), wrapped_msg.clone());
+            if let Some(behavior) = behavior {
+                match behavior.status {
+                    OperationalStatus::Offline => {
+                        // Skip delivering message to this operator.
+                        continue;
+                    }
+                    OperationalStatus::Delayed(delay) => {
+                        let data_id = data_id.clone();
+                        let wrapped_msg = wrapped_msg.clone();
+                        // Spawn an asynchronous task to simulate the delay.
+                        tokio::spawn(async move {
+                            tokio::time::sleep(delay).await;
+                            let _ = manager.receive_data::<D>(data_id, wrapped_msg);
+                        });
+                    }
+                    OperationalStatus::Normal => {
+                        let _ = manager.receive_data::<D>(data_id.clone(), wrapped_msg.clone());
+                    }
+                }
+            } else {
+                let _ = manager.receive_data::<D>(data_id.clone(), wrapped_msg.clone());
+            }
         }
     }
 
