@@ -760,7 +760,7 @@ where
         let full_data = if let Some(data) = self.data.get(&data_hash) {
             data.as_ssz_bytes()
         } else {
-            vec![]
+            self.start_data.as_ssz_bytes()
         };
 
         match msg_type {

@@ -472,10 +472,8 @@ mod manager_tests {
         // Take operator 2 offline, which for a 4 node committee is the first leader. If no value is
         // proposed it will go onto the second round
         let op2 = OperatorBehavior::new(OperatorId::from(2)).set_offline();
-        let op3 = OperatorBehavior::new(OperatorId::from(3)).set_offline();
         let data = generate_test_data();
         tester.add_behavior(data.0.hash(), op2);
-        tester.add_behavior(data.0.hash(), op3);
 
         tester
             .start_instance(vec![data])
