@@ -268,6 +268,11 @@ where
     fn start_round(&mut self) {
         debug!(self = ?self.config.operator_id(), round = *self.current_round, "Starting new round");
 
+        // We are waiting for consensus on a round change, do not start the round yet
+        if matches!(self.state, InstanceState::SentRoundChange) {
+            return;
+        }
+
         // Initialise the instance state for the round
         self.state = InstanceState::AwaitingProposal;
 
@@ -380,7 +385,6 @@ where
             warn!(from = ?operator_id, self=?self.config.operator_id(), "Data roots do not match");
             return;
         }
-
 
         self.data.insert(wrapped_msg.qbft_message.root, data);
 
@@ -688,6 +692,9 @@ where
                     "Round change quorum reached"
                 );
 
+                // We have reached consensus on a round change, we can start a new round now
+                self.state = InstanceState::RoundChangeConsensus;
+
                 // The round change messages is round + 1, so this is the next round we want to use
                 self.set_round(round);
             }
@@ -732,7 +739,7 @@ where
 
         // Check if we have a prepared value, if so we want to send a round change proposing the
         // value. Else, send a blank hash
-        let hash = self.last_prepared_value.unwrap_or_default();
+        let hash = self.last_prepared_value.unwrap_or(self.start_data_hash);
         self.send_round_change(hash);
         self.start_round();
     }
@@ -772,7 +779,6 @@ where
                     } else {
                         vec![]
                     };
-
                     (
                         last_prepared_round.get() as u64,
                         self.current_round.get() as u64 + 1,
@@ -780,7 +786,7 @@ where
                         full_data,
                     )
                 } else {
-                    todo!()
+                    (0, self.current_round.get() as u64 + 1, data_hash, full_data)
                 }
             }
         }

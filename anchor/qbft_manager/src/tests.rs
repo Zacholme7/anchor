@@ -66,12 +66,14 @@ where
 }
 
 // Descirbes the behavior of an operator
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct OperatorBehavior {
     // Id of the operator
     pub operator_id: OperatorId,
     // If this operator is online or not
     pub online: bool,
+
+    // How long the node should stay offline for
 }
 
 impl OperatorBehavior {
@@ -276,18 +278,22 @@ where
         // for this data
         let data_id = self.identifiers.get(&qbft_msg.root).expect("Value exists");
 
+        // Check if we have behavior for the sender
+        // Ex delay the message sending
+        let behavior = self.get_behavior(&qbft_msg.root, &sender_operator_id);
+        if let Some(behavior) = behavior {
+            if !behavior.online {
+                return
+            }
+        }
+
         // for each operator, send the message to the instance for the data
         for id in 1..=(self.size as u64) {
             let operator_id = OperatorId::from(id);
             let manager = self.managers.get(&operator_id).unwrap();
 
-            // Go through behavior checks
-            let behavior = self.get_behavior(&qbft_msg.root, &operator_id);
-            if let Some(behavior) = behavior {
-                if !behavior.online {
-                    continue;
-                }
-            }
+            // Check if we have beheavior for the receiver of the message
+
 
             let _ = manager.receive_data::<D>(data_id.clone(), wrapped_msg.clone());
         }
@@ -322,7 +328,7 @@ pub struct ConsensusResult {
 #[cfg(test)]
 mod manager_tests {
     use super::*;
-    use rand::Rng;
+    use rand::random;
 
     // Provides test setup
     struct Setup {
@@ -335,9 +341,10 @@ mod manager_tests {
     // Generate unique test data
     fn generate_test_data() -> (BeaconVote, CommitteeInstanceId) {
         // setup mock data
+        let rand_id: [u8; 32] = [(); 32].map(|_| random());
         let id = CommitteeInstanceId {
-            committee: ClusterId([0; 32]),
-            instance_height: rand::thread_rng().gen_range(0..1000).into(),
+            committee: ClusterId(rand_id),
+            instance_height: 10.into(),
         };
 
         let data = BeaconVote {
@@ -447,6 +454,35 @@ mod manager_tests {
 
         // Wait for it to run and confirm all reached consensus
         // Confirm that we reached consensus
+        for res in tester.run_until_complete().await {
+            assert!(res.reached_consensus);
+        }
+    }
+
+    #[tokio::test]
+    // Test a round change occuring by taking the leader offline
+    async fn test_round_change() {
+        // Standard setup
+        let setup = setup_test();
+
+        // Setup the tester
+        let mut tester: QbftTester<SystemTimeSlotClock, BeaconVote> =
+            QbftTester::new(setup.clock, setup.executor, CommitteeSize::Four);
+
+        // Take operator 2 offline, which for a 4 node committee is the first leader. If no value is
+        // proposed it will go onto the second round
+        let op2 = OperatorBehavior::new(OperatorId::from(2)).set_offline();
+        let op3 = OperatorBehavior::new(OperatorId::from(3)).set_offline();
+        let data = generate_test_data();
+        tester.add_behavior(data.0.hash(), op2);
+        tester.add_behavior(data.0.hash(), op3);
+
+        tester
+            .start_instance(vec![data])
+            .await
+            .expect("should start instance");
+
+        // We shoulds till reach consensus
         for res in tester.run_until_complete().await {
             assert!(res.reached_consensus);
         }
