@@ -85,6 +85,7 @@ indexmap = "2.7.0"
 num_cpus = "1"
 openssl = "0.10.68"
 parking_lot = "0.12"
+rand = "0.8.5"
 reqwest = "0.12.12"
 rusqlite = "0.28.0"
 serde = { version = "1.0.208", features = ["derive"] }

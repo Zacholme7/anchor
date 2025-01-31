@@ -17,7 +17,7 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::error::RecvError;
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::{sleep, Interval, Duration, Instant};
+use tokio::time::{sleep, Duration, Instant, Interval};
 use tracing::{error, warn};
 use types::{Hash256, PublicKeyBytes};
 
@@ -330,16 +330,16 @@ async fn qbft_instance<D: QbftData<Hash = Hash256>>(
                         let mut instance = Box::new(Qbft::new(config, initial, |message| {
                             // todo!() this should be sent right to the processor to be signed? and
                             // then sent somewhere
-                            tx.send(message).unwrap()
+                            let res = tx.send(message);
                         }));
                         for message in message_buffer {
                             instance.receive(message);
                         }
                         QbftInstance::Initialized {
-                              // Fixed line:
+                            // Fixed line:
                             round_end: tokio::time::interval_at(
                                 Instant::now() + Duration::from_secs(2),
-                                Duration::from_secs(2)
+                                Duration::from_secs(2),
                             ),
                             qbft: instance,
                             on_completed: vec![on_completed],
@@ -353,7 +353,8 @@ async fn qbft_instance<D: QbftData<Hash = Hash256>>(
                         round_end,
                         on_completed: mut on_completed_vec,
                     } => {
-                        if qbft.start_data_hash() != &initial.hash() {
+                        // TODO!() should this be equal instead
+                        if qbft.start_data_hash() == &initial.hash() {
                             warn!("got conflicting double initialization of qbft instance");
                         }
                         on_completed_vec.push(on_completed);

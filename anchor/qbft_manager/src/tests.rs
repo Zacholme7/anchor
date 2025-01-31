@@ -8,14 +8,12 @@ use ssv_types::consensus::{BeaconVote, QbftMessage};
 use ssv_types::message::SignedSSVMessage;
 use ssv_types::{Cluster, ClusterId, OperatorId};
 use ssz::Decode;
-use std::collections::{HashMap, HashSet};
-use std::marker::PhantomData;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use task_executor::{ShutdownReason, TaskExecutor};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio::sync::oneshot;
 use types::{Hash256, Slot};
 
 // The only allowed qbft committee sizes
@@ -39,70 +37,6 @@ impl CommitteeSize {
     }
 }
 
-// Represents a running qbft instance
-struct RunningInstance<T, D>
-where
-    T: SlotClock + 'static,
-    D: QbftDecidable<T>,
-{
-    // The qbft manager for this instance
-    manager: Arc<QbftManager<T>>,
-    completion_rx: oneshot::Receiver<Completed<D>>,
-}
-
-/// Configuration for an individual qbft test instance
-#[derive(Debug)]
-pub struct TestInstanceConfig<T, D>
-where
-    T: SlotClock + 'static,
-    D: QbftDecidable<T>,
-{
-    pub id: D::Id,
-    pub initial_data: D,
-}
-
-// Builder for constructing customized test instances
-pub struct TestInstanceConfigBuilder<T, D>
-where
-    T: SlotClock + 'static,
-    D: QbftDecidable<T>,
-{
-    id: Option<D::Id>,
-    initial_data: Option<D>,
-    _tmp_t: PhantomData<T>,
-}
-
-impl<T, D> TestInstanceConfigBuilder<T, D>
-where
-    T: SlotClock + 'static,
-    D: QbftDecidable<T>,
-{
-    pub fn new() -> Self {
-        TestInstanceConfigBuilder {
-            id: None,
-            initial_data: None,
-            _tmp_t: PhantomData,
-        }
-    }
-
-    pub fn with_data(mut self, data: D) -> Self {
-        self.initial_data = Some(data);
-        self
-    }
-
-    pub fn with_id(mut self, id: D::Id) -> Self {
-        self.id = Some(id);
-        self
-    }
-
-    pub fn build(self) -> TestInstanceConfig<T, D> {
-        TestInstanceConfig {
-            id: self.id.unwrap(),
-            initial_data: self.initial_data.unwrap(),
-        }
-    }
-}
-
 /// The main test coordinator that manages multiple QBFT instances
 pub struct QbftTester<T, D>
 where
@@ -111,20 +45,18 @@ where
 {
     // Senders to the processor
     senders: Senders,
-    // Track all of the running instances
-    instances: HashMap<D::Id, HashMap<OperatorId, RunningInstance<T, D>>>,
-    id: Option<D::Id>,
-    tmp: Vec<Arc<QbftManager<T>>>,
+    // Track mapping from operator id to the respective manager
     managers: HashMap<OperatorId, Arc<QbftManager<T>>>,
-    // Track consensus results
-    successful_instances: HashSet<D::Id>,
-    failed_instances: HashSet<D::Id>,
-    // Channel for QBFT network messages
     network_rx: UnboundedReceiver<Message>,
-    network_tx: UnboundedSender<Message>,
-    // Slot clock for timing
-    slot_clock: T,
+    result_rx: UnboundedReceiver<Result<Completed<D>, QbftError>>,
+    result_tx: UnboundedSender<Result<Completed<D>, QbftError>>,
+    // The size of the committee
     size: CommitteeSize,
+    // Mapping of the data hash to the data identifier. This is to send data to the proper instance
+    identifiers: HashMap<Hash256, D::Id>,
+    results: HashMap<Hash256, ConsensusResult>,
+    // The number of individual qbft instances that are running
+    num_running: u64,
 }
 
 impl<T, D> QbftTester<T, D>
@@ -142,6 +74,9 @@ where
         // out on the network_tx and they will be recieved by the network_rx to be "signed" and then
         // multicast broadcasted back into the instances for simulation
         let (network_tx, network_rx) = mpsc::unbounded_channel();
+
+        // Send and recieve the result of the instance
+        let (result_tx, result_rx) = mpsc::unbounded_channel();
 
         // Construct and save a manager for each operator in the committee. By having access to all
         // the managers in the committee, we can properly direct messages to the proper place and
@@ -162,27 +97,21 @@ where
 
         Self {
             senders: sender_queues,
-            id: None,
-            instances: HashMap::new(),
+            identifiers: HashMap::new(),
             managers,
-            tmp: Vec::new(),
-            successful_instances: HashSet::new(),
-            failed_instances: HashSet::new(),
+            result_tx,
+            result_rx,
             network_rx,
-            network_tx,
-            slot_clock,
-            size
+            size,
+            results: HashMap::new(),
+            num_running: 0,
         }
     }
 
     // Start a new full test instance for the provided configuration. This will start a new qbft
     // instance for each operator in the committee. This simulates distributed instances each
     // starting their own instance when they must reach consensus with the rest of the committee
-    pub async fn start_instance(
-        &mut self,
-        config: TestInstanceConfig<T, D>,
-    ) -> Result<(), QbftError> {
-
+    pub async fn start_instance(&mut self, all_data: Vec<(D, D::Id)>) -> Result<(), QbftError> {
         // Dummy cluster
         let cluster = Cluster {
             cluster_id: ClusterId([0; 32]),
@@ -193,89 +122,147 @@ where
             cluster_members: (1..=(self.size as u64)).map(OperatorId).collect(),
         };
 
+        for (data, data_id) in all_data {
+            // We need a unique way to identifiy the group of managers for a piece of data so we can
+            // direct messages to the right instance. We only have access to the Signed Message for this
+            // so the only identifier that we have is the hash of the data. Therefore, each instance
+            // needs to work wtih a different hash. We record the mapping of hash => data id
+            self.identifiers.insert(data.hash(), data_id.clone());
 
-        // Go through all of the managers. Spawn a new instance for the data and record it
-        for (id, manager) in &self.managers {
-            let manager_clone = manager.clone();
-            let cluster = cluster.clone();
-            let data = config.initial_data.clone();
-            let id = config.id.clone();
-            let _ = self.senders.permitless.send_async(
-                async move {
-                    let result = manager_clone.decide_instance(id, data, &cluster).await;
-                    println!("{:?}", result);
-                },
-                "qbft_instance starting",
-            );
+            let result = ConsensusResult::default();
+            self.results.insert(data.hash(), result);
 
-            // todo!() track some unique footprint
+
+            // Go through all of the managers. Spawn a new instance for the data and record it
+            for manager in self.managers.values() {
+                self.num_running += 1;
+
+                // clone data for task
+                let manager_clone = manager.clone();
+                let cluster = cluster.clone();
+                let data_clone = data.clone();
+                let id_clone = data_id.clone();
+                let tx_clone = self.result_tx.clone();
+
+                // decide the instance
+                let _ = self.senders.permitless.send_async(
+                    async move {
+                        let result = manager_clone
+                            .decide_instance(id_clone, data_clone, &cluster)
+                            .await;
+                        let _ = tx_clone.send(result);
+                    },
+                    "qbft_instance starting",
+                );
+            }
         }
+
         Ok(())
     }
 
-    // If I want to simulate running multipel instances
-    // Each instance needs some unique id, this is just to say like hash 10 -> idx 0xsdasdfasdf
-    // There will always be commit size managers
-    // We can run multiple consensus intances at once
-    // so just keep calling decide instance, but, i need some sort of id to differential betweent
-    // hem. also, how can I tell when they are all done? Soemthing like
-    // i also need to be able to reuse the instances, I dont want to create like 20managers. just
-    // num_commitee managers
-
     // When all the instances are spawned, handle all outgoing messages
-    pub async fn run_until_complete(&mut self) -> ConsensusResult {
-        while let Some(msg) = self.network_rx.recv().await {
-            // Extract operator ID and message content
-            let (sender_operator_id, unsigned_msg) = match msg {
-                Message::Propose(id, msg) => (id, msg),
-                Message::Prepare(id, msg) => (id, msg),
-                Message::Commit(id, msg) => (id, msg),
-                Message::RoundChange(id, msg) => (id, msg),
-            };
-
-            // First decode the QBFT message to get the instance identifier
-            let qbft_msg = match QbftMessage::from_ssz_bytes(unsigned_msg.ssv_message.data()) {
-                Ok(msg) => msg,
-                Err(_) => {
-                    return;
+    pub async fn run_until_complete(&mut self) -> Vec<ConsensusResult> {
+        loop {
+            tokio::select! {
+                // Try to recieve a network message
+                Some(qbft_message) = async { self.network_rx.try_recv().ok() } => {
+                    self.process_network_message(qbft_message);
+                },
+                // Try to see if a instance has completed
+                Some(completion) = async { self.result_rx.try_recv().ok() } => {
+                    self.handle_completion(completion);
+                    if self.finished() {
+                        return self.results.values().cloned().collect();
+                    }
                 }
-            };
-
-            // Create wrapped message
-            let signed_msg = SignedSSVMessage::new(
-                vec![vec![0; 96]], // Test signature
-                vec![*sender_operator_id],
-                unsigned_msg.ssv_message.clone(),
-                unsigned_msg.full_data,
-            )
-            .expect("Failed to create signed message");
-
-            let wrapped_msg = WrappedQbftMessage {
-                signed_message: signed_msg,
-                qbft_message: qbft_msg.clone(),
-            };
-
-            let id = self.id.clone().unwrap();
-            for manager in &self.tmp {
-                let _ = manager.receive_data::<D>(id.clone(), wrapped_msg.clone());
+                // Have to yield here. try_recv is greedy and will starve the runtime
+                else => {
+                    tokio::task::yield_now().await;
+                }
             }
         }
-        todo!()
     }
 
-    pub async fn handle_network_message(&mut self, msg: Message) {
+    // Once an instance has completed, we want to record what happened
+    pub fn handle_completion(&mut self, msg: Result<Completed<D>, QbftError>) {
+        self.num_running -= 1;
+        match msg {
+            Ok(completed) => match completed {
+                Completed::Success(value) => {
+                    let hash = value.hash();
+                    let results = self.results.get_mut(&hash).expect("This exists");
+                    results.successful += 1;
 
-        // broadcast this message to all of the other instances
+                    if results.successful >= results.min_for_consensus {
+                        results.reached_consensus = true;
+                    }
+                }
+                Completed::TimedOut => todo!(),
+            },
+            Err(e) => {println!("{:?}", e)}
+        }
+    }
+
+    // Check if all of the instances have finished running
+    pub fn finished(&self) -> bool {
+        self.num_running == 0
+    }
+
+    // Process and send a network message to the correct instance
+    fn process_network_message(&self, msg: Message) {
+        let (sender_operator_id, unsigned_msg) = match msg {
+            Message::Propose(id, msg) => (id, msg),
+            Message::Prepare(id, msg) => (id, msg),
+            Message::Commit(id, msg) => (id, msg),
+            Message::RoundChange(id, msg) => (id, msg),
+        };
+        // First decode the QBFT message to get the instance identifier
+        let qbft_msg = match QbftMessage::from_ssz_bytes(unsigned_msg.ssv_message.data()) {
+            Ok(msg) => msg,
+            Err(_) => todo!(),
+        };
+
+        // Create wrapped message
+        let signed_msg = SignedSSVMessage::new(
+            vec![vec![0; 96]], // Test signature
+            vec![*sender_operator_id],
+            unsigned_msg.ssv_message.clone(),
+            unsigned_msg.full_data,
+        )
+        .expect("Failed to create signed message");
+
+        let wrapped_msg = WrappedQbftMessage {
+            signed_message: signed_msg,
+            qbft_message: qbft_msg.clone(),
+        };
+
+        // Now we have a message ready to be sent back into the instance. Get the id
+        // corresponding to the message. and then all the managers that are running instances
+        // for this data
+        let data_id = self.identifiers.get(&qbft_msg.root).expect("Value exists");
+
+        // for each operator, send the message to the instance for the data
+        for id in 1..=(self.size as u64) {
+            let operator_id = OperatorId::from(id);
+            let manager = self.managers.get(&operator_id).unwrap();
+
+            let _ = manager.receive_data::<D>(data_id.clone(), wrapped_msg.clone());
+        }
     }
 }
 
+#[derive(Clone, Default)]
 pub struct ConsensusResult {
     reached_consensus: bool,
+    min_for_consensus: u64,
+    successful: u64,
+    failed: Vec<OperatorId>,
 }
 
 #[cfg(test)]
 mod manager_tests {
     use super::*;
+    use rand::Rng;
 
     // Provides test setup
     struct Setup {
@@ -283,10 +270,26 @@ mod manager_tests {
         _signal: async_channel::Sender<()>,
         _shutdown: futures::channel::mpsc::Sender<ShutdownReason>,
         clock: SystemTimeSlotClock,
-        data: BeaconVote,
-        id: CommitteeInstanceId,
     }
 
+    // Generate unique test data
+    fn generate_test_data() -> (BeaconVote, CommitteeInstanceId) {
+        // setup mock data
+        let id = CommitteeInstanceId {
+            committee: ClusterId([0; 32]),
+            instance_height: rand::thread_rng().gen_range(0..1000).into(),
+        };
+
+        let data = BeaconVote {
+            block_root: Hash256::random(),
+            source: types::Checkpoint::default(),
+            target: types::Checkpoint::default(),
+        };
+
+        (data, id)
+    }
+
+    // Setup env for the test
     fn setup_test() -> Setup {
         let env_filter = tracing_subscriber::EnvFilter::new("debug");
         tracing_subscriber::fmt().with_env_filter(env_filter).init();
@@ -310,25 +313,11 @@ mod manager_tests {
             slot_duration,
         );
 
-        // setup mock data
-        let id = CommitteeInstanceId {
-            committee: ClusterId([0; 32]),
-            instance_height: 10.into(),
-        };
-
-        let data = BeaconVote {
-            block_root: Hash256::default(),
-            source: types::Checkpoint::default(),
-            target: types::Checkpoint::default(),
-        };
-
         Setup {
             executor,
             _signal: signal,
             _shutdown: shutdown,
             clock,
-            data,
-            id,
         }
     }
 
@@ -342,21 +331,39 @@ mod manager_tests {
         let mut tester: QbftTester<SystemTimeSlotClock, BeaconVote> =
             QbftTester::new(setup.clock, setup.executor, CommitteeSize::Four);
 
-        // Create instance configuration data and then start the instance
-        let instance_config = TestInstanceConfigBuilder::new()
-            .with_data(setup.data)
-            .with_id(setup.id)
-            .build();
-
+        let data = vec![generate_test_data()];
         tester
-            .start_instance(instance_config)
+            .start_instance(data)
             .await
             .expect("Should start instance");
 
-        // Wait for it to run and get the result
-        let result = tester.run_until_complete().await;
-
+        // Wait for it to run and confirm all reached consensus
         // Confirm that we reached consensus
-        assert!(result.reached_consensus);
+        for res in tester.run_until_complete().await {
+            assert!(res.reached_consensus);
+        }
+    }
+
+    #[tokio::test]
+    // Test running concurrent instances and confirm that they reach consensus
+    async fn test_concurrent_runs() {
+        // Standard setup
+        let setup = setup_test();
+
+        // Setup the tester
+        let mut tester: QbftTester<SystemTimeSlotClock, BeaconVote> =
+            QbftTester::new(setup.clock, setup.executor, CommitteeSize::Four);
+
+        let data = vec![generate_test_data(), generate_test_data()];
+        tester
+            .start_instance(data)
+            .await
+            .expect("Should start instance");
+
+        // Wait for it to run and confirm all reached consensus
+        // Confirm that we reached consensus
+        for res in tester.run_until_complete().await {
+            assert!(res.reached_consensus);
+        }
     }
 }
