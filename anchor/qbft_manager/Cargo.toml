@@ -15,3 +15,7 @@ ssv_types = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 tracing = { workspace = true }
 types = { workspace = true }
+task_executor = { workspace = true }
+futures = { workspace = true }
+async-channel = { workspace = true }
+tracing-subscriber = { workspace = true }

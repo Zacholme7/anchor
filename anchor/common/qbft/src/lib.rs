@@ -213,6 +213,7 @@ where
                 return false;
             }
         };
+
         if !data.validate() {
             warn!(in = ?self.config.operator_id(), "Data failed validation");
             return false;
@@ -265,7 +266,7 @@ where
 
     // Handles the beginning of a round.
     fn start_round(&mut self) {
-        debug!(round = *self.current_round, "Starting new round");
+        debug!(self = ?self.config.operator_id(), round = *self.current_round, "Starting new round");
 
         // Initialise the instance state for the round
         self.state = InstanceState::AwaitingProposal;
@@ -281,7 +282,7 @@ where
                 .justify_round_change_quorum()
                 .unwrap_or_else(|| (self.start_data_hash, self.start_data.clone()));
 
-            debug!(operator_id = ?self.config.operator_id(), hash = ?data_hash, data = ?data, "Current leader proposing data");
+            debug!(self = ?self.config.operator_id(), hash = ?data_hash, data = ?data, "Current leader proposing data");
 
             // Send the initial proposal and then the following prepare
             self.send_proposal(data_hash, data);
@@ -358,13 +359,6 @@ where
             return;
         }
 
-        // Verify that the fulldata matches the data root of the qbft message data
-        let data_hash = wrapped_msg.signed_message.hash_fulldata();
-        if data_hash != wrapped_msg.qbft_message.root {
-            warn!(from = ?operator_id, self=?self.config.operator_id(), "Data roots do not match");
-            return;
-        }
-
         debug!(from = ?operator_id, in = ?self.config.operator_id(), state = ?self.state, "PROPOSE received");
 
         // Store the received propse message
@@ -379,7 +373,16 @@ where
         // We have previously verified that this data is able to be de-serialized. Store it now
         let data = D::from_ssz_bytes(wrapped_msg.signed_message.full_data())
             .expect("Data has already been validated");
-        self.data.insert(data_hash, data);
+
+        // Verify that the data root matches what was in the message
+        let data_hash = data.hash();
+        if data.hash() != wrapped_msg.qbft_message.root {
+            warn!(from = ?operator_id, self=?self.config.operator_id(), "Data roots do not match");
+            return;
+        }
+
+
+        self.data.insert(wrapped_msg.qbft_message.root, data);
 
         // Update state
         self.proposal_accepted_for_current_round = true;
@@ -464,11 +467,13 @@ where
 
             // Make sure the roots match, this doesnt maek sense, it does not even pertain to
             // the prepare message
+            /*
             let msg_fulldata_hashed = msg.signed_message.hash_fulldata();
             if msg_fulldata_hashed != max_prepared_msg.clone().expect("Confirmed to exist").root {
                 warn!("Highest prepared does not match proposed data");
                 return false;
             }
+            */
 
             // Validate each prepare message matches highest prepared round/value
             for signed_prepare in &msg.qbft_message.prepare_justification {
@@ -495,10 +500,12 @@ where
                     return false;
                 }
 
+                /*
                 if prepare.root != msg_fulldata_hashed {
                     warn!("Proposed data mismatch");
                     return false;
                 }
+                */
 
                 // verify the signature. TODO!()
             }
@@ -707,7 +714,7 @@ where
 
     // End the current round and move to the next one, if possible.
     pub fn end_round(&mut self) {
-        debug!(round = *self.current_round, "Incrementing round");
+        debug!(self = ?self.config.operator_id(), round = *self.current_round, "Incrementing round");
         let Some(next_round) = self.current_round.next() else {
             self.state = InstanceState::Complete;
             self.completed = Some(Completed::TimedOut);
@@ -826,7 +833,8 @@ where
             if matches!(self.state, InstanceState::AwaitingProposal) {
                 return self
                     .round_change_container
-                    .get_messages_for_round(self.current_round)
+                    .get_messages_for_round(self.current_round) // todo!()
+                    // does this need to be previous round??
                     .iter()
                     .map(|msg| msg.signed_message.clone())
                     .collect();
@@ -1006,7 +1014,7 @@ where
                 Completed::Success(hash) => {
                     let data = self.data.get(&hash).cloned();
                     if data.is_none() {
-                        error!("could not find finished data");
+                        error!(self = ?self.config.operator_id(), "could not find finished data");
                     }
                     data.map(Completed::Success)
                 }

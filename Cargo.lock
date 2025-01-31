@@ -1564,6 +1564,7 @@ dependencies = [
  "openssl",
  "parking_lot",
  "processor",
+ "qbft",
  "qbft_manager",
  "sensitive_url",
  "serde",
@@ -5756,15 +5757,19 @@ dependencies = [
 name = "qbft_manager"
 version = "0.1.0"
 dependencies = [
+ "async-channel",
  "dashmap",
  "ethereum_ssz 0.7.1",
  "ethereum_ssz_derive 0.7.1",
+ "futures",
  "processor",
  "qbft",
  "slot_clock",
  "ssv_types",
+ "task_executor",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "types",
 ]
 

@@ -50,7 +50,7 @@ impl MessageContainer {
         self.values_by_round
             .entry(round)
             .or_default()
-            .insert(msg.signed_message.hash_fulldata());
+            .insert(msg.qbft_message.root);
 
         true
     }
@@ -64,7 +64,7 @@ impl MessageContainer {
         let mut value_counts: HashMap<Hash256, usize> = HashMap::new();
         for msg in round_messages.values() {
             *value_counts
-                .entry(msg.signed_message.hash_fulldata())
+                .entry(msg.qbft_message.root)
                 .or_default() += 1;
         }
 
