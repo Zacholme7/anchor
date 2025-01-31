@@ -1,6 +1,7 @@
 use super::{
-    CommitteeInstanceId, Completed, QbftDecidable, QbftError, QbftManager, WrappedQbftMessage,
+    CommitteeInstanceId, Completed, QbftData, QbftDecidable, QbftError, QbftManager, WrappedQbftMessage,
 };
+use dashmap::DashMap;
 use processor::Senders;
 use qbft::Message;
 use slot_clock::{SlotClock, SystemTimeSlotClock};
@@ -47,16 +48,83 @@ where
     senders: Senders,
     // Track mapping from operator id to the respective manager
     managers: HashMap<OperatorId, Arc<QbftManager<T>>>,
+    // Used to recieve messages from the qbft instances
     network_rx: UnboundedReceiver<Message>,
+    // Channels for sending and receiving results once instances have been decided
     result_rx: UnboundedReceiver<Result<Completed<D>, QbftError>>,
     result_tx: UnboundedSender<Result<Completed<D>, QbftError>>,
     // The size of the committee
     size: CommitteeSize,
     // Mapping of the data hash to the data identifier. This is to send data to the proper instance
     identifiers: HashMap<Hash256, D::Id>,
+    // Mapping from data to the results of the consensus
     results: HashMap<Hash256, ConsensusResult>,
-    // The number of individual qbft instances that are running
+    // The number of individual qbft instances that are running at any given moment
     num_running: u64,
+    // Specific behavior for each operator on how they should behave during an instance
+    behavior: HashMap<Hash256, HashMap<OperatorId, OperatorBehavior>>,
+}
+
+// Descirbes the behavior of an operator
+#[derive(Clone)]
+pub struct OperatorBehavior {
+    // Id of the operator
+    operator_id: OperatorId,
+    // Whether this operator should drop messages instead of processing them
+    drop_messages: bool,
+    // If this operator is online or not
+    pub online: bool,
+}
+
+impl OperatorBehavior {
+    pub fn new(operator_id: OperatorId) -> Self {
+        Self {
+            online: true,
+            operator_id,
+            //active: true,
+            //message_delay: None,
+            //send_delay: None,
+            //send_malformed: false,
+            drop_messages: false,
+            //stop_at_round: None,
+        }
+    }
+
+    pub fn set_offline(mut self) -> Self {
+        self.online = false;
+        self
+    }
+
+    pub fn drop_messages(&mut self) {
+        self.drop_messages = true;
+    }
+
+    /*
+    /// Sets a delay for processing incoming messages
+    pub fn set_message_delay(&mut self, delay: Duration) {
+        self.message_delay = Some(delay);
+    }
+
+    /// Sets a delay for sending outgoing messages
+    pub fn set_send_delay(&mut self, delay: Duration) {
+        self.send_delay = Some(delay);
+    }
+
+    /// Configures the operator to stop participating at a specific round
+    pub fn stop_at_round(&mut self, round: u64) {
+        self.stop_at_round = Some(round);
+    }
+
+    /// Temporarily stops the operator from participating
+    pub fn pause(&mut self) {
+        self.active = false;
+    }
+
+    /// Resumes operator participation
+    pub fn resume(&mut self) {
+        self.active = true;
+    }
+    */
 }
 
 impl<T, D> QbftTester<T, D>
@@ -105,6 +173,7 @@ where
             size,
             results: HashMap::new(),
             num_running: 0,
+            behavior: HashMap::new(),
         }
     }
 
@@ -131,7 +200,6 @@ where
 
             let result = ConsensusResult::default();
             self.results.insert(data.hash(), result);
-
 
             // Go through all of the managers. Spawn a new instance for the data and record it
             for manager in self.managers.values() {
@@ -199,7 +267,9 @@ where
                 }
                 Completed::TimedOut => todo!(),
             },
-            Err(e) => {println!("{:?}", e)}
+            Err(e) => {
+                println!("{:?}", e)
+            }
         }
     }
 
@@ -246,8 +316,33 @@ where
             let operator_id = OperatorId::from(id);
             let manager = self.managers.get(&operator_id).unwrap();
 
+            // Go through behavior checks
+            let behavior = self.get_behavior(&qbft_msg.root, &operator_id);
+            if let Some(behavior) = behavior {
+                if !behavior.online {
+                    continue;
+                }
+            }
+
             let _ = manager.receive_data::<D>(data_id.clone(), wrapped_msg.clone());
         }
+    }
+
+    fn add_behavior(&mut self, root: Hash256, behavior: OperatorBehavior) {
+        self.behavior
+            .entry(root)
+            .or_default()
+            .insert(behavior.operator_id, behavior);
+    }
+
+    // See if specific behavior exists for the root and operator
+    fn get_behavior(&self, root: &Hash256, id: &OperatorId) -> Option<OperatorBehavior> {
+        if let Some(behavior_set) = self.behavior.get(root) {
+            if let Some(behavior) = behavior_set.get(id) {
+                return Some(behavior.clone());
+            }
+        }
+        None
     }
 }
 
@@ -329,7 +424,7 @@ mod manager_tests {
 
         // Setup the tester
         let mut tester: QbftTester<SystemTimeSlotClock, BeaconVote> =
-            QbftTester::new(setup.clock, setup.executor, CommitteeSize::Four);
+            QbftTester::new(setup.clock, setup.executor, CommitteeSize::Thirteen);
 
         let data = vec![generate_test_data()];
         tester
@@ -345,6 +440,29 @@ mod manager_tests {
     }
 
     #[tokio::test]
+    // Test one offline operator
+    async fn test_fault_operator() {
+        // Standard setup
+        let setup = setup_test();
+
+        // Setup the tester
+        let mut tester: QbftTester<SystemTimeSlotClock, BeaconVote> =
+            QbftTester::new(setup.clock, setup.executor, CommitteeSize::Four);
+
+
+        // Take operator 1 offline
+        let op3 = OperatorBehavior::new(OperatorId::from(3)).set_offline();
+        let data = generate_test_data();
+        tester.add_behavior(data.0.hash(), op3);
+
+        tester.start_instance(vec![data]).await.expect("should start instance");
+
+        for res in tester.run_until_complete().await {
+            assert!(res.reached_consensus);
+        }
+    }
+
+    #[tokio::test]
     // Test running concurrent instances and confirm that they reach consensus
     async fn test_concurrent_runs() {
         // Standard setup
@@ -353,6 +471,7 @@ mod manager_tests {
         // Setup the tester
         let mut tester: QbftTester<SystemTimeSlotClock, BeaconVote> =
             QbftTester::new(setup.clock, setup.executor, CommitteeSize::Four);
+
 
         let data = vec![generate_test_data(), generate_test_data()];
         tester
