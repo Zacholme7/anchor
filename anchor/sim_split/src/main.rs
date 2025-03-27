@@ -1,15 +1,17 @@
 use alloy::primitives::address;
 use alloy::primitives::Address;
+use base64::prelude::*;
 use database::NetworkDatabase;
+use database::{SqlStatement, SQL};
+use eth::parse_shares;
 use keysplit::{
     run_keysplitter, KeygenSubcommands, Keysplit, Manual, OperatorIds, SharedKeygenOptions,
 };
 use openssl::pkey::Public;
-use rusqlite::params;
-use eth::parse_shares;
 use openssl::rsa::Rsa;
-use database::{SQL, SqlStatement};
-use ssv_types::{OperatorId, ClusterId};
+use rusqlite::params;
+use ssv_types::parse_rsa;
+use ssv_types::{ClusterId, OperatorId};
 use std::fs;
 use std::path::Path;
 use std::str::FromStr;
@@ -51,23 +53,24 @@ struct Payload {
     sharesData: String,
 }
 
+
 fn main() {
-    for idx in 0..1000 {
-        let file = format!("validator_keystore-{}.json", idx);
-        let output = format!("validator_split-{}.json", idx);
+    for idx in 0..1 {
+        let file = format!("keystores/validator_keystore-{}.json", idx);
+        let output = format!("keyshares/validator_split-{}.json", idx);
 
         let options = SharedKeygenOptions {
             keystore_path: file,
-            password: "222".to_string(),
+            password: "222222222222222222222222222222222222222222222222222".to_string(),
             owner: Address::ZERO,
             output_path: output,
             operators: OperatorIds(vec![1, 2, 3, 4]),
         };
 
-        let op1 = Rsa::public_key_from_pem(OPERATOR1.as_bytes()).unwrap();
-        let op2 = Rsa::public_key_from_pem(OPERATOR2.as_bytes()).unwrap();
-        let op3 = Rsa::public_key_from_pem(OPERATOR3.as_bytes()).unwrap();
-        let op4 = Rsa::public_key_from_pem(OPERATOR4.as_bytes()).unwrap();
+        let op1 = parse_rsa(OPERATOR1).unwrap();
+        let op2 = parse_rsa(OPERATOR2).unwrap();
+        let op3 = parse_rsa(OPERATOR3).unwrap();
+        let op4 = parse_rsa(OPERATOR4).unwrap();
 
         let manual = Manual {
             shared: options,
@@ -81,13 +84,13 @@ fn main() {
         run_keysplitter(keysplit).unwrap()
     }
 
-    let op1 = Rsa::public_key_from_pem(OPERATOR1.as_bytes()).unwrap();
+    let op1 = parse_rsa(OPERATOR1).unwrap();
     let db_path = Path::new("anchor_db.sqlite");
 
     let db = NetworkDatabase::new(db_path, &op1).unwrap();
 
-    for idx in 0..1000 {
-        let file = format!("validator_split-{}.json", idx);
+    for idx in 0..1 {
+        let file = format!("keyshares/validator_split-{}.json", idx);
         let file_content = fs::read_to_string(file).unwrap();
 
         let keystore: Keystore = serde_json::from_str(&file_content).unwrap();
@@ -105,25 +108,31 @@ fn main() {
             0xb5, 0x3c, 0xe3, 0x0e,
         ];
 
-        let (_, shares) = parse_shares(shares_data, &operator_ids, &ClusterId(cluster_id), &public_key).unwrap();
+        let (_, shares) = parse_shares(
+            shares_data,
+            &operator_ids,
+            &ClusterId(cluster_id),
+            &public_key,
+        )
+        .unwrap();
 
         let mut conn = db.connection().unwrap();
         let tx = conn.transaction().unwrap();
 
-        tx.prepare_cached(SQL[&SqlStatement::InsertValidator]).unwrap()
+        tx.prepare_cached(SQL[&SqlStatement::InsertValidator])
+            .unwrap()
             .execute(params![
                 public_key.to_string(), // validator public key
-                cluster_id,              // cluster id
-                idx + 1,                 // validator index
-            ]).unwrap();
+                cluster_id,             // cluster id
+                idx + 1,                // validator index
+                0,
+            ])
+            .unwrap();
 
         for share in shares {
-            db.insert_share(
-                &tx,
-                &share,
-                &public_key
-            ).unwrap()
+            db.insert_share(&tx, &share, &public_key).unwrap()
         }
+        tx.commit().unwrap()
     }
 }
 

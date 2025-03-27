@@ -7532,6 +7532,7 @@ name = "sim-split"
 version = "0.1.0"
 dependencies = [
  "alloy",
+ "base64 0.22.1",
  "database",
  "eth",
  "hex",
