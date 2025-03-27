@@ -12,7 +12,7 @@ use types::{Address, PublicKeyBytes};
 
 pub use crate::error::DatabaseError;
 pub use crate::multi_index::{MultiIndexMap, *};
-use crate::sql_operations::{SqlStatement, SQL};
+pub use crate::sql_operations::{SqlStatement, SQL};
 pub use crate::state::NetworkState;
 
 mod cluster_operations;
@@ -184,7 +184,7 @@ impl NetworkDatabase {
     }
 
     // Open a new connection
-    fn connection(&self) -> Result<PoolConn, DatabaseError> {
+    pub fn connection(&self) -> Result<PoolConn, DatabaseError> {
         Ok(self.conn_pool.get()?)
     }
 

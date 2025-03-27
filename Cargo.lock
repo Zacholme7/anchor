@@ -7528,6 +7528,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "sim-split"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+ "database",
+ "eth",
+ "hex",
+ "keysplit",
+ "openssl",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "ssv_types",
+ "types",
+]
+
+[[package]]
 name = "slab"
 version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"

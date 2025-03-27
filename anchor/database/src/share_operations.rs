@@ -5,7 +5,7 @@ use types::PublicKeyBytes;
 
 /// Implements all Share related functionality on the database
 impl NetworkDatabase {
-    pub(crate) fn insert_share(
+    pub fn insert_share(
         &self,
         tx: &Transaction<'_>,
         share: &Share,

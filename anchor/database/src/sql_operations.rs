@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 
 // Wrappers around various SQL statements used for interacting with the db
 #[derive(Debug, Hash, Eq, PartialEq, Clone, Copy)]
-pub(crate) enum SqlStatement {
+pub enum SqlStatement {
     InsertOperator,  // Insert a new Operator in the database
     DeleteOperator,  // Delete an Operator from the database
     GetOperatorId,   // Get the ID of this operator from its public key
@@ -34,7 +34,7 @@ pub(crate) enum SqlStatement {
     BumpNonce,    // Bump the nonce value for an owner
 }
 
-pub(crate) static SQL: LazyLock<HashMap<SqlStatement, &'static str>> = LazyLock::new(|| {
+pub static SQL: LazyLock<HashMap<SqlStatement, &'static str>> = LazyLock::new(|| {
     let mut m = HashMap::new();
 
     // Operator
