@@ -3,7 +3,9 @@ use alloy::primitives::Address;
 use base64::prelude::*;
 use database::NetworkDatabase;
 use database::{SqlStatement, SQL};
+use rusqlite::types::Value;
 use eth::parse_shares;
+use types::Graffiti;
 use keysplit::{
     run_keysplitter, KeygenSubcommands, Keysplit, Manual, OperatorIds, SharedKeygenOptions,
 };
@@ -53,9 +55,8 @@ struct Payload {
     sharesData: String,
 }
 
-
 fn main() {
-    for idx in 0..1 {
+    for idx in 11..1000 {
         let file = format!("keystores/validator_keystore-{}.json", idx);
         let output = format!("keyshares/validator_split-{}.json", idx);
 
@@ -89,7 +90,7 @@ fn main() {
 
     let db = NetworkDatabase::new(db_path, &op1).unwrap();
 
-    for idx in 0..1 {
+    for idx in 10..1000 {
         let file = format!("keyshares/validator_split-{}.json", idx);
         let file_content = fs::read_to_string(file).unwrap();
 
@@ -107,6 +108,7 @@ fn main() {
             0x4a, 0x2e, 0x84, 0x61, 0x06, 0x97, 0x41, 0x90, 0xdd, 0xbf, 0x65, 0xc3, 0x5a, 0x04,
             0xb5, 0x3c, 0xe3, 0x0e,
         ];
+        let graff = Graffiti::default();
 
         let (_, shares) = parse_shares(
             shares_data,
@@ -118,21 +120,23 @@ fn main() {
 
         let mut conn = db.connection().unwrap();
         let tx = conn.transaction().unwrap();
+        let index: usize = idx + 1;
 
         tx.prepare_cached(SQL[&SqlStatement::InsertValidator])
             .unwrap()
             .execute(params![
                 public_key.to_string(), // validator public key
                 cluster_id,             // cluster id
-                idx + 1,                // validator index
-                0,
+                index,
+                Value::Blob(graff.0.to_vec())
             ])
             .unwrap();
 
         for share in shares {
             db.insert_share(&tx, &share, &public_key).unwrap()
         }
-        tx.commit().unwrap()
+        tx.commit().unwrap();
+        println!("finished: {:?}", idx);
     }
 }
 
