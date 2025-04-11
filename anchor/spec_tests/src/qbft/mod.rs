@@ -32,3 +32,7 @@ impl std::fmt::Display for QbftSpecTestType {
         }
     }
 }
+
+
+// Testing functions that we need public access to
+
