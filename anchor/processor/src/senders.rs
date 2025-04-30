@@ -16,19 +16,19 @@ pub struct Senders {
     /// the Tokio runtime. Is launched immediately and does not require capacity as defined by
     /// [`Config::max_workers`].
     pub permitless: Sender,
-    pub urgent_consensus: Sender,
+    pub crypto: Sender,
+    pub consensus: Sender,
     pub network: Sender,
-    pub duties: Sender,
-    pub maintenance: Sender
+    pub maintenance: Sender,
 }
 
 impl Senders {
     pub fn get(&self, queue: QueueKind) -> &Sender {
         match queue {
             QueueKind::Permitless => &self.permitless,
-            QueueKind::UrgentConsensus => &self.urgent_consensus,
+            QueueKind::Crypto => &self.crypto,
+            QueueKind::Consensus => &self.consensus,
             QueueKind::Network => &self.network,
-            QueueKind::Duties => &self.duties,
             QueueKind::Maintenance => &self.maintenance,
         }
     }

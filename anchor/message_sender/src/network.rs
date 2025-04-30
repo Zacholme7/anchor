@@ -44,7 +44,7 @@ impl<S: SlotClock + 'static, D: DutiesProvider> MessageSender for Arc<NetworkMes
 
         let sender = self.clone();
         self.processor
-            .urgent_consensus
+            .crypto
             .send_blocking(
                 move || {
                     let signature = match sender.sign(&message) {
@@ -83,7 +83,7 @@ impl<S: SlotClock + 'static, D: DutiesProvider> MessageSender for Arc<NetworkMes
 
         let sender = self.clone();
         self.processor
-            .urgent_consensus
+            .network
             .send_blocking(
                 move || {
                     sender.do_send(message, committee_id);

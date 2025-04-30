@@ -336,7 +336,7 @@ where
                 let tx_clone = result_tx.clone();
 
                 // decide the instance
-                let _ = self.senders.permitless.send_async(
+                let _ = self.senders.consensus.send_async(
                     async move {
                         // Operator is online, start the instance
                         let result = manager_clone

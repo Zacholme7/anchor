@@ -28,7 +28,7 @@ async fn test_max_workers() -> Result<(), Box<dyn Error>> {
     for _ in 0..3 {
         let start_sync = start_sync.clone();
         let continue_notify = continue_notify.clone();
-        sender_queues.urgent_consensus.send_async(
+        sender_queues.consensus.send_async(
             async move {
                 start_sync.wait().await;
                 continue_notify.notified().await;
@@ -63,7 +63,7 @@ async fn test_max_workers() -> Result<(), Box<dyn Error>> {
 
     let (did_run_tx, mut did_run_rx) = oneshot::channel();
     // but other queues should only run after we freed up space:
-    sender_queues.urgent_consensus.send_async(
+    sender_queues.consensus.send_async(
         async move {
             let _ = did_run_tx.send(());
         },

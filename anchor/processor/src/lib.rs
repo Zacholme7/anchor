@@ -62,13 +62,13 @@ pub enum Error {
 pub enum QueueKind {
     // Quick, lightweight operators
     Permitless,
+    // Cryptography related operations
+    Crypto,
     // Critical consensus operations
-    UrgentConsensus,
+    Consensus,
     // Tasks related to message construction and validaton
     Network,
-    // Validator Duties
-    Duties,
-    // Background maintenance tasks
+    // Maintenance & background tasks
     Maintenance,
 }
 
@@ -76,9 +76,9 @@ impl QueueKind {
     fn name(self) -> &'static str {
         match self {
             QueueKind::Permitless => "permitless",
-            QueueKind::UrgentConsensus => "urgent_consensus",
+            QueueKind::Crypto => "crypto",
+            QueueKind::Consensus => "consensus",
             QueueKind::Network => "network",
-            QueueKind::Duties => "duties",
             QueueKind::Maintenance => "maintenance",
         }
     }
@@ -86,9 +86,9 @@ impl QueueKind {
     fn default_size(self) -> usize {
         match self {
             QueueKind::Permitless => 1000,
-            QueueKind::UrgentConsensus => 1000,
+            QueueKind::Crypto => 1000,
+            QueueKind::Consensus => 1000,
             QueueKind::Network => 1000,
-            QueueKind::Duties => 1000,
             QueueKind::Maintenance => 1000,
         }
     }
@@ -111,7 +111,10 @@ impl FromStr for QueueKind {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s {
             "permitless" => QueueKind::Permitless,
-            "urgent_consensus" => QueueKind::UrgentConsensus,
+            "crypto" => QueueKind::Crypto,
+            "consensus" => QueueKind::Consensus,
+            "network" => QueueKind::Network,
+            "maintenance" => QueueKind::Maintenance,
             _ => return Err(()),
         })
     }
@@ -120,23 +123,23 @@ impl FromStr for QueueKind {
 /// Create a new processor and spawn it with the given executor. Returns the queue senders.
 pub fn spawn(config: Config, executor: TaskExecutor) -> Senders {
     let (permitless_tx, permitless_rx) = QueueKind::Permitless.create(&config);
-    let (urgent_consensus_tx, urgent_consensus_rx) = QueueKind::UrgentConsensus.create(&config);
+    let (crypto_tx, crypto_rx) = QueueKind::Crypto.create(&config);
+    let (consensus_tx, consensus_rx) = QueueKind::Consensus.create(&config);
     let (network_tx, network_rx) = QueueKind::Network.create(&config);
-    let (duties_tx, duties_rx) = QueueKind::Duties.create(&config);
     let (maintenance_tx, maintenance_rx) = QueueKind::Maintenance.create(&config);
 
     let senders = Senders {
         permitless: permitless_tx,
-        urgent_consensus: urgent_consensus_tx,
+        crypto: crypto_tx,
+        consensus: consensus_tx,
         network: network_tx,
-        duties: duties_tx,
         maintenance: maintenance_tx,
     };
     let receivers = Receivers {
         permitless: permitless_rx,
-        urgent_consensus: urgent_consensus_rx,
+        crypto: crypto_rx,
+        consensus: consensus_rx,
         network: network_rx,
-        duties: duties_rx,
         maintenance: maintenance_rx,
     };
 

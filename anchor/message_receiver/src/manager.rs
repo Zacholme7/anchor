@@ -61,7 +61,7 @@ impl<S: SlotClock + 'static, D: DutiesProvider> MessageReceiver
         message: Message,
     ) -> Result<(), crate::Error> {
         let receiver = self.clone();
-        self.processor.urgent_consensus.send_blocking(
+        self.processor.network.send_blocking(
             move || {
                 let span = debug_span!("message_receiver", msg=%message_id);
                 let _enter = span.enter();

@@ -128,7 +128,7 @@ impl QbftManager {
         // Start a long running task that will clean up old instances
         manager
             .processor
-            .permitless
+            .maintenance
             .send_async(Arc::clone(&manager).cleaner(slot_clock), QBFT_CLEANER_NAME)?;
 
         Ok(manager)
@@ -158,7 +158,7 @@ impl QbftManager {
         // new messages to the specific instance
         let message_id = D::message_id(&self.domain, &id);
         let sender = D::get_or_spawn_instance(self, id);
-        self.processor.urgent_consensus.send_immediate(
+        self.processor.consensus.send_immediate(
             move |drop_on_finish: DropOnFinish| {
                 // A message to initialize this instance
                 let _ = sender.send(QbftMessage {
@@ -240,7 +240,7 @@ impl QbftManager {
         data: WrappedQbftMessage,
     ) -> Result<(), QbftError> {
         let sender = D::get_or_spawn_instance(self, id);
-        self.processor.urgent_consensus.send_immediate(
+        self.processor.permitless.send_immediate(
             move |drop_on_finish: DropOnFinish| {
                 let _ = sender.send(QbftMessage {
                     kind: QbftMessageKind::NetworkMessage(data),
@@ -254,7 +254,7 @@ impl QbftManager {
 
     // Long running cleaner that will remove instances that are no longer relevant
     async fn cleaner(self: Arc<Self>, slot_clock: impl SlotClock) {
-        while !self.processor.permitless.is_closed() {
+        while !self.processor.maintenance.is_closed() {
             sleep(
                 slot_clock
                     .duration_to_next_slot()
@@ -290,7 +290,7 @@ pub trait QbftDecidable: QbftData<Hash = Hash256> + Send + Sync + 'static {
                 let (tx, rx) = mpsc::unbounded_channel();
                 let span = info_span!("qbft_instance", instance_id = ?entry.key());
                 let tx = entry.insert(tx);
-                let _ = manager.processor.permitless.send_async(
+                let _ = manager.processor.consensus.send_async(
                     Box::pin(qbft_instance(rx, manager.message_sender.clone()).instrument(span)),
                     QBFT_INSTANCE_NAME,
                 );

@@ -85,7 +85,7 @@ impl SignatureCollectorManager {
             committee_signatures: DashMap::new(),
         });
 
-        manager.processor.permitless.send_async(
+        manager.processor.maintenance.send_async(
             Arc::clone(&manager).cleaner(slot_clock),
             COLLECTOR_CLEANER_NAME,
         )?;
@@ -137,7 +137,7 @@ impl SignatureCollectorManager {
 
         // then, create the partial signature - and maybe send the message.
         let manager = self.clone();
-        self.processor.urgent_consensus.send_blocking(
+        self.processor.crypto.send_blocking(
             move || {
                 trace!(root = ?validator_signing_data.root, "Signing...");
                 // If we have no share, we can not actually sign the message, because we are running
@@ -332,7 +332,7 @@ impl SignatureCollectorManager {
                     sender: tx.clone(),
                     for_slot: slot,
                 });
-                let _ = self.processor.permitless.send_async(
+                let _ = self.processor.crypto.send_async(
                     Box::pin(signature_collector(rx).instrument(span)),
                     COLLECTOR_NAME,
                 );
@@ -347,7 +347,7 @@ impl SignatureCollectorManager {
     }
 
     async fn cleaner(self: Arc<Self>, slot_clock: impl SlotClock) {
-        while !self.processor.permitless.is_closed() {
+        while !self.processor.maintenance.is_closed() {
             sleep(
                 slot_clock
                     .duration_to_next_slot()
