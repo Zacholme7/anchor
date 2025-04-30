@@ -60,8 +60,16 @@ pub enum Error {
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum QueueKind {
+    // Quick, lightweight operators
     Permitless,
+    // Critical consensus operations
     UrgentConsensus,
+    // Tasks related to message construction and validaton
+    Network,
+    // Validator Duties
+    Duties,
+    // Background maintenance tasks
+    Maintenance,
 }
 
 impl QueueKind {
@@ -69,6 +77,9 @@ impl QueueKind {
         match self {
             QueueKind::Permitless => "permitless",
             QueueKind::UrgentConsensus => "urgent_consensus",
+            QueueKind::Network => "network",
+            QueueKind::Duties => "duties",
+            QueueKind::Maintenance => "maintenance",
         }
     }
 
@@ -76,6 +87,9 @@ impl QueueKind {
         match self {
             QueueKind::Permitless => 1000,
             QueueKind::UrgentConsensus => 1000,
+            QueueKind::Network => 1000,
+            QueueKind::Duties => 1000,
+            QueueKind::Maintenance => 1000,
         }
     }
 
@@ -107,14 +121,23 @@ impl FromStr for QueueKind {
 pub fn spawn(config: Config, executor: TaskExecutor) -> Senders {
     let (permitless_tx, permitless_rx) = QueueKind::Permitless.create(&config);
     let (urgent_consensus_tx, urgent_consensus_rx) = QueueKind::UrgentConsensus.create(&config);
+    let (network_tx, network_rx) = QueueKind::Network.create(&config);
+    let (duties_tx, duties_rx) = QueueKind::Duties.create(&config);
+    let (maintenance_tx, maintenance_rx) = QueueKind::Maintenance.create(&config);
 
     let senders = Senders {
         permitless: permitless_tx,
         urgent_consensus: urgent_consensus_tx,
+        network: network_tx,
+        duties: duties_tx,
+        maintenance: maintenance_tx,
     };
     let receivers = Receivers {
         permitless: permitless_rx,
         urgent_consensus: urgent_consensus_rx,
+        network: network_rx,
+        duties: duties_rx,
+        maintenance: maintenance_rx,
     };
 
     executor.spawn(processor(config, receivers, executor.clone()), "processor");

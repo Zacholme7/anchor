@@ -44,6 +44,9 @@ impl Receiver {
 pub struct Receivers {
     pub permitless: Receiver,
     pub urgent_consensus: Receiver,
+    pub network: Receiver,
+    pub duties: Receiver,
+    pub maintenance: Receiver,
 }
 
 impl Receivers {
@@ -72,6 +75,9 @@ impl Receivers {
         Some(select! {
             biased;
             Some(work_item) = self.urgent_consensus.recv() => work_item.with_permit(permit),
+            Some(work_item) = self.network.recv() => work_item.with_permit(permit),
+            Some(work_item) = self.duties.recv() => work_item.with_permit(permit),
+            Some(work_item) = self.maintenance.recv() => work_item.with_permit(permit),
 
             // Also try permitless queue, to fall back if no permit work is incoming.
             Some(work_item) = self.permitless.recv() => work_item,

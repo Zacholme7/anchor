@@ -17,6 +17,9 @@ pub struct Senders {
     /// [`Config::max_workers`].
     pub permitless: Sender,
     pub urgent_consensus: Sender,
+    pub network: Sender,
+    pub duties: Sender,
+    pub maintenance: Sender
 }
 
 impl Senders {
@@ -24,6 +27,9 @@ impl Senders {
         match queue {
             QueueKind::Permitless => &self.permitless,
             QueueKind::UrgentConsensus => &self.urgent_consensus,
+            QueueKind::Network => &self.network,
+            QueueKind::Duties => &self.duties,
+            QueueKind::Maintenance => &self.maintenance,
         }
     }
 }
