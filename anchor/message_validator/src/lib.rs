@@ -858,16 +858,14 @@ mod tests {
             let round_change_justification_vec: Vec<_> = self
                 .round_change_justification
                 .into_iter()
-                .map(|msg| msg.without_full_data())
-                .map(|msg| VariableList::from(msg.as_ssz_bytes()))
+                .map(|msg| VariableList::from(msg.encode_without_full_data()))
                 .collect();
             let round_change_justification = VariableList::from(round_change_justification_vec);
 
             let prepare_justification_vec: Vec<_> = self
                 .prepare_justification
                 .into_iter()
-                .map(|msg| msg.without_full_data())
-                .map(|msg| VariableList::from(msg.as_ssz_bytes()))
+                .map(|msg| VariableList::from(msg.encode_without_full_data()))
                 .collect();
             let prepare_justification = VariableList::from(prepare_justification_vec);
 

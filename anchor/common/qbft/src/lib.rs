@@ -16,6 +16,7 @@ use ssv_types::{
 use ssz::{Decode, Encode};
 use tracing::{debug, error, warn};
 use types::Hash256;
+use sha2::{Sha256, Digest};
 
 use crate::msg_container::MessageContainer;
 
@@ -494,7 +495,7 @@ where
             // The justification message is represented as a VariableList<u8> in the signed message,
             // deserialize this into a proper QbftMessage
             let Ok(typed_signed_round_change) =
-                SignedSSVMessage::from_ssz_bytes(signed_round_change)
+                SignedSSVMessage::from_ssz_bytes_without_full_data(signed_round_change)
             else {
                 warn!("Invalid Signed Round change encoded within a message");
                 return false;
@@ -562,7 +563,7 @@ where
             for signed_prepare in &msg.qbft_message.prepare_justification {
                 // The qbft message is represented as VariableList<u8> in the signed message,
                 // deserialize
-                let Ok(typed_signed_prepare) = SignedSSVMessage::from_ssz_bytes(signed_prepare)
+                let Ok(typed_signed_prepare) = SignedSSVMessage::from_ssz_bytes_without_full_data(signed_prepare)
                 else {
                     warn!("Invalid Signed Prepare encoded within a message");
                     return false;
@@ -876,7 +877,7 @@ where
     }
 
     // Get data for the qbft message
-    fn get_message_data(&self, msg_type: &QbftMessageType, data_hash: D::Hash) -> MessageData<D> {
+    fn get_message_data(&self, msg_type: &QbftMessageType, data_hash: D::Hash, prepare_justifications: &[SignedSSVMessage]) -> MessageData<D> {
         let full_data = if matches!(msg_type, QbftMessageType::Proposal) {
             self.data
                 .get(&data_hash)
@@ -893,6 +894,7 @@ where
             if let (Some(last_prepared_value), Some(last_prepared_round)) =
                 (self.last_prepared_value, self.last_prepared_round)
             {
+                // Previously prepared: root = last_prepared_value, data_round = last_prepared_round
                 return MessageData::new(
                     last_prepared_round.get() as u64,
                     self.current_round.get() as u64,
@@ -905,11 +907,53 @@ where
                             vec![]
                         }),
                 );
+            } else if !prepare_justifications.is_empty() && data_hash != Hash256::default() {
+                // For spec tests: if we have prepare justifications AND a StateValue (non-zero data_hash),
+                // extract the round from the first prepare justification (matching Go behavior)
+                // This matches Go's logic: data_round is set only when BOTH LastPreparedValue (StateValue) 
+                // and prepare justifications exist
+                use ssv_types::consensus::QbftMessage;
+                use ssz::Decode;
+                
+                if let Ok(qbft_msg) = QbftMessage::from_ssz_bytes(prepare_justifications[0].ssv_message().data()) {
+                    let prepare_round = qbft_msg.round;
+                    return MessageData::new(
+                        prepare_round as u64, // data_round = round from prepare justifications
+                        self.current_round.get() as u64,
+                        data_hash, // Use the effective_data_hash (from StateValue) for previously prepared
+                        vec![], // full_data = empty for non-prepared round change
+                    );
+                } else {
+                    warn!("Failed to decode QBFT message from prepare justifications");
+                }
             }
+            
+            // Not previously prepared and no valid prepare justifications: use default values
+            let root_hash = if data_hash != Hash256::default() {
+                data_hash // Use the effective_data_hash (from StateValue) for previously prepared
+            } else {
+                Hash256::default() // Use zero for not previously prepared
+            };
+            return MessageData::new(
+                0, // data_round = NoRound
+                self.current_round.get() as u64,
+                root_hash,
+                vec![], // full_data = empty for non-prepared round change
+            );
         }
 
         // Standard message data for Proposal, Prepare, and Commit
-        MessageData::new(0, self.current_round.get() as u64, data_hash, full_data)
+        // IMPORTANT: Different message types handle the root field differently:
+        // - Proposals: Use SHA256(data_hash) to match Go implementation
+        // - Prepare/Commit: Use raw data_hash (they reference the proposal root)
+        let root_hash = if matches!(msg_type, QbftMessageType::Proposal) {
+            // For proposals, compute SHA256 hash of the data to match Go implementation
+            Hash256::from_slice(&Sha256::digest(data_hash.as_slice()))
+        } else {
+            // For prepare/commit, use the raw data_hash (which is the proposal root)
+            data_hash
+        };
+        MessageData::new(0, self.current_round.get() as u64, root_hash, full_data)
     }
 
     // Construct a new unsigned message. This will be passed to the processor to be signed and then
@@ -922,7 +966,7 @@ where
         prepare_justification: Vec<SignedSSVMessage>,
         round: Option<Round>,
     ) -> UnsignedWrappedQbftMessage {
-        let data = self.get_message_data(&msg_type, data_hash);
+        let data = self.get_message_data(&msg_type, data_hash, &prepare_justification);
 
         let round = if let Some(round) = round {
             round
@@ -933,15 +977,19 @@ where
         // Clear full_data from justifications as these do not store full data.
         let round_change_justification_vec: Vec<VariableList<u8, _>> = round_change_justification
             .into_iter()
-            .map(|msg| msg.without_full_data())
-            .map(|msg| VariableList::from(msg.as_ssz_bytes()))
+            .map(|msg| VariableList::from(msg.encode_without_full_data()))
             .collect();
 
-        let prepare_justification_vec: Vec<VariableList<u8, _>> = prepare_justification
-            .into_iter()
-            .map(|msg| msg.without_full_data())
-            .map(|msg| VariableList::from(msg.as_ssz_bytes()))
-            .collect();
+        // For round change messages, don't include prepare justifications in the final message
+        // (they're only used to determine the data round, to match Go behavior)
+        let prepare_justification_vec: Vec<VariableList<u8, _>> = if matches!(msg_type, QbftMessageType::RoundChange) {
+            vec![] // Empty for round change messages
+        } else {
+            prepare_justification
+                .into_iter()
+                .map(|msg| VariableList::from(msg.encode_without_full_data()))
+                .collect()
+        };
 
         let round_change_justification = VariableList::from(round_change_justification_vec);
         let prepare_justification = VariableList::from(prepare_justification_vec);

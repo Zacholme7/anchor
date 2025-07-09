@@ -348,7 +348,7 @@ pub type SignatureList = VariableList<VariableList<u8, U256>, U13>;
 
 /// Represents a signed SSV Message with signatures, operator IDs, the message itself, and full
 /// data.
-#[derive(Encode, Decode, Clone, PartialEq, Eq, Deserialize, TreeHash)]
+#[derive(Clone, PartialEq, Eq, Deserialize, TreeHash)]
 pub struct SignedSSVMessage {
     #[serde(rename = "Signatures")]
     #[serde(deserialize_with = "deserialize_base64_signatures")]
@@ -363,6 +363,132 @@ pub struct SignedSSVMessage {
     #[serde(rename = "FullData")]
     #[serde(deserialize_with = "deserialize_base64_or_empty")]
     full_data: VariableList<u8, SSVMessageFullDataLen>,
+}
+
+// Custom SSZ implementation for SignedSSVMessage
+impl Encode for SignedSSVMessage {
+    fn is_ssz_fixed_len() -> bool {
+        false
+    }
+
+    fn ssz_bytes_len(&self) -> usize {
+        let mut len = 0;
+        len += 4; // For the offset table header
+        len += self.signatures.ssz_bytes_len();
+        len += self.operator_ids.ssz_bytes_len(); 
+        len += self.ssv_message.ssz_bytes_len();
+        len += self.full_data.ssz_bytes_len();
+        len += 4 * 4; // Offset table entries
+        len
+    }
+
+    fn ssz_append(&self, buf: &mut Vec<u8>) {
+        // Calculate offsets for variable-length fields
+        let offset_bytes = 4 * 4; // 4 fields * 4 bytes per offset
+        let mut offset = offset_bytes;
+        
+        // Write offset table
+        buf.extend_from_slice(&(offset as u32).to_le_bytes());
+        offset += self.signatures.ssz_bytes_len();
+        buf.extend_from_slice(&(offset as u32).to_le_bytes());
+        offset += self.operator_ids.ssz_bytes_len();
+        buf.extend_from_slice(&(offset as u32).to_le_bytes());
+        offset += self.ssv_message.ssz_bytes_len();
+        buf.extend_from_slice(&(offset as u32).to_le_bytes());
+        
+        // Write data
+        self.signatures.ssz_append(buf);
+        self.operator_ids.ssz_append(buf);
+        self.ssv_message.ssz_append(buf);
+        self.full_data.ssz_append(buf);
+    }
+}
+
+impl Decode for SignedSSVMessage {
+    fn is_ssz_fixed_len() -> bool {
+        false
+    }
+
+    fn ssz_fixed_len() -> usize {
+        0
+    }
+
+    fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
+        if bytes.len() < 16 {
+            return Err(DecodeError::InvalidByteLength { 
+                len: bytes.len(),
+                expected: 16,
+            });
+        }
+        
+        // Read offset table
+        let offset1 = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+        let offset2 = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
+        let offset3 = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
+        let offset4 = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+        
+        // Decode fields
+        let signatures = SignatureList::from_ssz_bytes(&bytes[offset1..offset2])?;
+        let operator_ids = VariableList::from_ssz_bytes(&bytes[offset2..offset3])?;
+        let ssv_message = SSVMessage::from_ssz_bytes(&bytes[offset3..offset4])?;
+        let full_data = VariableList::from_ssz_bytes(&bytes[offset4..])?;
+
+        Ok(Self {
+            signatures,
+            operator_ids,
+            ssv_message,
+            full_data,
+        })
+    }
+}
+
+
+impl SignedSSVMessage {
+    /// Encodes the SignedSSVMessage without the full_data field.
+    /// This matches the Go implementation's WithoutFullData().MarshalSSZ() behavior
+    /// used for QBFT justifications.
+    pub fn encode_without_full_data(&self) -> Vec<u8> {
+        // Create a temporary SignedSSVMessage with empty FullData, matching Go's WithoutFullData()
+        let without_full_data = Self {
+            signatures: self.signatures.clone(),
+            operator_ids: self.operator_ids.clone(),
+            ssv_message: self.ssv_message.clone(),
+            full_data: VariableList::empty(),
+        };
+        
+        // Use the standard SSZ encoding on the message with empty FullData
+        without_full_data.as_ssz_bytes()
+    }
+
+    /// Decodes a SignedSSVMessage from bytes that were encoded without full_data.
+    /// Sets full_data to empty VariableList.
+    pub fn from_ssz_bytes_without_full_data(bytes: &[u8]) -> Result<Self, DecodeError> {
+        if bytes.len() < 16 {
+            return Err(DecodeError::InvalidByteLength { 
+                len: bytes.len(),
+                expected: 16,
+            });
+        }
+        
+        // Read offset table (4 fields)
+        let offset1 = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+        let offset2 = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
+        let offset3 = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
+        let offset4 = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+        
+        // Decode fields
+        let signatures = SignatureList::from_ssz_bytes(&bytes[offset1..offset2])?;
+        let operator_ids = VariableList::from_ssz_bytes(&bytes[offset2..offset3])?;
+        let ssv_message = SSVMessage::from_ssz_bytes(&bytes[offset3..offset4])?;
+        // full_data is empty (offset4 points to end of buffer)
+
+        Ok(Self {
+            signatures,
+            operator_ids,
+            ssv_message,
+            full_data: VariableList::empty(),
+        })
+    }
 }
 
 #[cfg(feature = "arbitrary-fuzz")]
