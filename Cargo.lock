@@ -6385,10 +6385,13 @@ dependencies = [
  "ethereum_ssz_derive",
  "hex",
  "indexmap 2.9.0",
+ "openssl",
+ "parking_lot",
  "sha2 0.10.9",
  "ssv_types",
  "tracing",
  "tracing-subscriber",
+ "tree_hash",
  "types",
 ]
 

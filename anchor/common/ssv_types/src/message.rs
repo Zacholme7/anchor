@@ -375,7 +375,7 @@ impl Encode for SignedSSVMessage {
         let mut len = 0;
         len += 4; // For the offset table header
         len += self.signatures.ssz_bytes_len();
-        len += self.operator_ids.ssz_bytes_len(); 
+        len += self.operator_ids.ssz_bytes_len();
         len += self.ssv_message.ssz_bytes_len();
         len += self.full_data.ssz_bytes_len();
         len += 4 * 4; // Offset table entries
@@ -386,7 +386,7 @@ impl Encode for SignedSSVMessage {
         // Calculate offsets for variable-length fields
         let offset_bytes = 4 * 4; // 4 fields * 4 bytes per offset
         let mut offset = offset_bytes;
-        
+
         // Write offset table
         buf.extend_from_slice(&(offset as u32).to_le_bytes());
         offset += self.signatures.ssz_bytes_len();
@@ -395,7 +395,7 @@ impl Encode for SignedSSVMessage {
         buf.extend_from_slice(&(offset as u32).to_le_bytes());
         offset += self.ssv_message.ssz_bytes_len();
         buf.extend_from_slice(&(offset as u32).to_le_bytes());
-        
+
         // Write data
         self.signatures.ssz_append(buf);
         self.operator_ids.ssz_append(buf);
@@ -415,18 +415,18 @@ impl Decode for SignedSSVMessage {
 
     fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
         if bytes.len() < 16 {
-            return Err(DecodeError::InvalidByteLength { 
+            return Err(DecodeError::InvalidByteLength {
                 len: bytes.len(),
                 expected: 16,
             });
         }
-        
+
         // Read offset table
         let offset1 = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
         let offset2 = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
         let offset3 = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
         let offset4 = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
-        
+
         // Decode fields
         let signatures = SignatureList::from_ssz_bytes(&bytes[offset1..offset2])?;
         let operator_ids = VariableList::from_ssz_bytes(&bytes[offset2..offset3])?;
@@ -442,7 +442,6 @@ impl Decode for SignedSSVMessage {
     }
 }
 
-
 impl SignedSSVMessage {
     /// Encodes the SignedSSVMessage without the full_data field.
     /// This matches the Go implementation's WithoutFullData().MarshalSSZ() behavior
@@ -455,7 +454,7 @@ impl SignedSSVMessage {
             ssv_message: self.ssv_message.clone(),
             full_data: VariableList::empty(),
         };
-        
+
         // Use the standard SSZ encoding on the message with empty FullData
         without_full_data.as_ssz_bytes()
     }
@@ -464,18 +463,18 @@ impl SignedSSVMessage {
     /// Sets full_data to empty VariableList.
     pub fn from_ssz_bytes_without_full_data(bytes: &[u8]) -> Result<Self, DecodeError> {
         if bytes.len() < 16 {
-            return Err(DecodeError::InvalidByteLength { 
+            return Err(DecodeError::InvalidByteLength {
                 len: bytes.len(),
                 expected: 16,
             });
         }
-        
+
         // Read offset table (4 fields)
         let offset1 = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
         let offset2 = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
         let offset3 = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
         let offset4 = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
-        
+
         // Decode fields
         let signatures = SignatureList::from_ssz_bytes(&bytes[offset1..offset2])?;
         let operator_ids = VariableList::from_ssz_bytes(&bytes[offset2..offset3])?;

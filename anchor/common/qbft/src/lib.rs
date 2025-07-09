@@ -2,11 +2,12 @@ use std::{collections::HashMap, sync::Arc};
 
 // Re-Exports for Manager
 pub use config::{Config, ConfigBuilder};
-pub use error::ConfigBuilderError;
+pub use error::{ConfigBuilderError, TestConfig, TestError};
 pub use qbft_types::{
     Completed, ConsensusData, DefaultLeaderFunction, InstanceHeight, InstanceState, LeaderFunction,
     UnsignedWrappedQbftMessage, WrappedQbftMessage,
 };
+use sha2::{Digest, Sha256};
 use ssv_types::{
     OperatorId, Round, VariableList,
     consensus::{QbftData, QbftMessage, QbftMessageType, UnsignedSSVMessage},
@@ -16,7 +17,6 @@ use ssv_types::{
 use ssz::{Decode, Encode};
 use tracing::{debug, error, warn};
 use types::Hash256;
-use sha2::{Sha256, Digest};
 
 use crate::msg_container::MessageContainer;
 
@@ -24,6 +24,7 @@ mod config;
 mod error;
 mod msg_container;
 mod qbft_types;
+pub mod test_adapter;
 
 #[cfg(test)]
 mod tests;
@@ -563,7 +564,8 @@ where
             for signed_prepare in &msg.qbft_message.prepare_justification {
                 // The qbft message is represented as VariableList<u8> in the signed message,
                 // deserialize
-                let Ok(typed_signed_prepare) = SignedSSVMessage::from_ssz_bytes_without_full_data(signed_prepare)
+                let Ok(typed_signed_prepare) =
+                    SignedSSVMessage::from_ssz_bytes_without_full_data(signed_prepare)
                 else {
                     warn!("Invalid Signed Prepare encoded within a message");
                     return false;
@@ -877,7 +879,12 @@ where
     }
 
     // Get data for the qbft message
-    fn get_message_data(&self, msg_type: &QbftMessageType, data_hash: D::Hash, prepare_justifications: &[SignedSSVMessage]) -> MessageData<D> {
+    fn get_message_data(
+        &self,
+        msg_type: &QbftMessageType,
+        data_hash: D::Hash,
+        prepare_justifications: &[SignedSSVMessage],
+    ) -> MessageData<D> {
         let full_data = if matches!(msg_type, QbftMessageType::Proposal) {
             self.data
                 .get(&data_hash)
@@ -910,24 +917,26 @@ where
             } else if !prepare_justifications.is_empty() && data_hash != Hash256::default() {
                 // For spec tests: if we have prepare justifications AND a StateValue (non-zero data_hash),
                 // extract the round from the first prepare justification (matching Go behavior)
-                // This matches Go's logic: data_round is set only when BOTH LastPreparedValue (StateValue) 
+                // This matches Go's logic: data_round is set only when BOTH LastPreparedValue (StateValue)
                 // and prepare justifications exist
                 use ssv_types::consensus::QbftMessage;
                 use ssz::Decode;
-                
-                if let Ok(qbft_msg) = QbftMessage::from_ssz_bytes(prepare_justifications[0].ssv_message().data()) {
+
+                if let Ok(qbft_msg) =
+                    QbftMessage::from_ssz_bytes(prepare_justifications[0].ssv_message().data())
+                {
                     let prepare_round = qbft_msg.round;
                     return MessageData::new(
                         prepare_round as u64, // data_round = round from prepare justifications
                         self.current_round.get() as u64,
                         data_hash, // Use the effective_data_hash (from StateValue) for previously prepared
-                        vec![], // full_data = empty for non-prepared round change
+                        vec![],    // full_data = empty for non-prepared round change
                     );
                 } else {
                     warn!("Failed to decode QBFT message from prepare justifications");
                 }
             }
-            
+
             // Not previously prepared and no valid prepare justifications: use default values
             let root_hash = if data_hash != Hash256::default() {
                 data_hash // Use the effective_data_hash (from StateValue) for previously prepared
@@ -982,14 +991,15 @@ where
 
         // For round change messages, don't include prepare justifications in the final message
         // (they're only used to determine the data round, to match Go behavior)
-        let prepare_justification_vec: Vec<VariableList<u8, _>> = if matches!(msg_type, QbftMessageType::RoundChange) {
-            vec![] // Empty for round change messages
-        } else {
-            prepare_justification
-                .into_iter()
-                .map(|msg| VariableList::from(msg.encode_without_full_data()))
-                .collect()
-        };
+        let prepare_justification_vec: Vec<VariableList<u8, _>> =
+            if matches!(msg_type, QbftMessageType::RoundChange) {
+                vec![] // Empty for round change messages
+            } else {
+                prepare_justification
+                    .into_iter()
+                    .map(|msg| VariableList::from(msg.encode_without_full_data()))
+                    .collect()
+            };
 
         let round_change_justification = VariableList::from(round_change_justification_vec);
         let prepare_justification = VariableList::from(prepare_justification_vec);
@@ -1225,8 +1235,157 @@ where
             })
     }
 
+    /// Create a proposal message using real QBFT state and justifications
+    pub fn create_proposal(
+        &self,
+        data: Arc<D>,
+        round: Option<Round>,
+    ) -> Result<UnsignedWrappedQbftMessage, Box<dyn std::error::Error>> {
+        let data_hash = data.hash();
+        
+        // Store the data we're proposing
+        // Note: In a mutable context, this would be: self.data.insert(data_hash, data.clone());
+        // For now, we assume the data is already stored or will be handled by the caller
+        
+        // Get justifications using real QBFT logic
+        let round_change_justifications = self.get_round_change_justifications();
+        let (prepare_justifications, value_to_propose) = self.get_prepare_justifications();
+        
+        // Use the value from justifications if available, otherwise use provided data
+        let value_to_propose = value_to_propose.unwrap_or(data_hash);
+        
+        // Create the message using real QBFT logic
+        let mut message = self.new_unsigned_message(
+            QbftMessageType::Proposal,
+            value_to_propose,
+            round_change_justifications,
+            prepare_justifications,
+            round,
+        );
+        
+        // For proposals, use the original data as full_data (matching Go behavior)
+        message.unsigned_message.full_data = data.as_ssz_bytes();
+        
+        Ok(message)
+    }
+    
+    /// Create a prepare message for the given data hash and round
+    pub fn create_prepare(
+        &self,
+        data_hash: D::Hash,
+        round: Option<Round>,
+    ) -> Result<UnsignedWrappedQbftMessage, Box<dyn std::error::Error>> {
+        // Only send prepare if we've seen this data
+        if !self.data.contains_key(&data_hash) {
+            return Err(TestError::InvalidState("Attempted to prepare unknown data".to_string()).into());
+        }
+        
+        // Create prepare message - no justifications needed
+        let message = self.new_unsigned_message(
+            QbftMessageType::Prepare,
+            data_hash,
+            vec![],
+            vec![],
+            round,
+        );
+        
+        Ok(message)
+    }
+    
+    /// Create a commit message for the given data hash
+    pub fn create_commit(
+        &self,
+        data_hash: D::Hash,
+        round: Option<Round>,
+    ) -> Result<UnsignedWrappedQbftMessage, Box<dyn std::error::Error>> {
+        // Only send commit if we've seen this data
+        if !self.data.contains_key(&data_hash) {
+            return Err(TestError::InvalidState("Attempted to commit unknown data".to_string()).into());
+        }
+        
+        // Create commit message - no justifications needed
+        let message = self.new_unsigned_message(
+            QbftMessageType::Commit,
+            data_hash,
+            vec![],
+            vec![],
+            round,
+        );
+        
+        Ok(message)
+    }
+    
+    /// Create a round change message with optional state value (for previously prepared)
+    pub fn create_round_change(
+        &self,
+        state_value: Option<Vec<u8>>,
+        target_round: Option<Round>,
+    ) -> Result<UnsignedWrappedQbftMessage, Box<dyn std::error::Error>> {
+        // Determine the effective data hash based on state value
+        let effective_data_hash = if let Some(state_value_bytes) = &state_value {
+            // Use SHA256 of the StateValue as the root (previously prepared)
+            Hash256::from_slice(&Sha256::digest(state_value_bytes))
+        } else {
+            // Use zero hash for non-prepared round change
+            Hash256::default()
+        };
+        
+        // Get round change justifications (prepare messages when previously prepared)
+        let round_change_justifications = self.get_round_change_justifications();
+        
+        // Create the message
+        let mut message = self.new_unsigned_message(
+            QbftMessageType::RoundChange,
+            effective_data_hash,
+            round_change_justifications,
+            vec![], // No prepare justifications in final message
+            target_round,
+        );
+        
+        // Set full_data to the state value if provided
+        if let Some(state_value_bytes) = state_value {
+            message.unsigned_message.full_data = state_value_bytes;
+        } else {
+            message.unsigned_message.full_data = Vec::new();
+        }
+        
+        Ok(message)
+    }
+    
+    /// Add test-specific state manipulation methods
+    pub fn set_test_state(&mut self, last_prepared_round: Option<Round>, last_prepared_value: Option<D::Hash>) {
+        self.last_prepared_round = last_prepared_round;
+        self.last_prepared_value = last_prepared_value;
+    }
+    
+    /// Add test data to the QBFT instance
+    pub fn add_test_data(&mut self, data_hash: D::Hash, data: Arc<D>) {
+        self.data.insert(data_hash, data);
+    }
+    
+    /// Add test justifications to appropriate containers
+    pub fn add_test_justifications(&mut self, round: Round, messages: Vec<WrappedQbftMessage>) {
+        for message in messages {
+            let operator_id = message.signed_message.operator_ids()[0];
+            match message.qbft_message.qbft_message_type {
+                QbftMessageType::Prepare => {
+                    self.prepare_container.add_message(round, operator_id, &message);
+                }
+                QbftMessageType::RoundChange => {
+                    self.round_change_container.add_message(round, operator_id, &message);
+                }
+                QbftMessageType::Commit => {
+                    self.commit_container.add_message(round, operator_id, &message);
+                }
+                QbftMessageType::Proposal => {
+                    self.propose_container.add_message(round, operator_id, &message);
+                }
+            }
+        }
+    }
+
     // Expose the ability to create new unsigned messages for spec testing
-    //#[cfg(test)]
+    // This method handles all the spec test edge cases
     pub fn new_unsigned_message_spec(
         &self,
         msg_type: QbftMessageType,
@@ -1235,12 +1394,44 @@ where
         prepare_justification: Vec<SignedSSVMessage>,
         round: Option<Round>,
     ) -> UnsignedWrappedQbftMessage {
-        self.new_unsigned_message(
+        // For round change messages, determine the effective data hash based on StateValue
+        // - If StateValue is provided (data_hash != default), use it as root (previously prepared)
+        // - If StateValue is None (data_hash == default), use zero root (not previously prepared)
+        let effective_data_hash = if matches!(msg_type, QbftMessageType::RoundChange) {
+            if data_hash != Hash256::default() {
+                data_hash // Previously prepared: use StateValue hash as root
+            } else {
+                Hash256::default() // Not previously prepared: use zero root
+            }
+        } else {
+            data_hash
+        };
+
+        // Create the base message using core QBFT logic
+        let mut message = self.new_unsigned_message(
             msg_type,
-            data_hash,
+            effective_data_hash,
             round_change_justification,
             prepare_justification,
             round,
-        )
+        );
+
+        // Set message type-specific full_data
+        message.unsigned_message.full_data = match msg_type {
+            QbftMessageType::Proposal => {
+                // For proposals, use the Value field (32 bytes) to match Go behavior
+                data_hash.as_slice().to_vec()
+            }
+            QbftMessageType::RoundChange => {
+                // For round changes, use empty full_data (StateValue handled in root)
+                Vec::new()
+            }
+            _ => {
+                // For prepare/commit messages, use empty full_data
+                Vec::new()
+            }
+        };
+
+        message
     }
 }

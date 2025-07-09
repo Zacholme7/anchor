@@ -2,77 +2,57 @@ use openssl::pkey::{PKey, Private};
 use serde::Deserialize;
 use ssv_types::{IndexSet, OperatorId, Round, consensus::QbftMessageType, msgid::MessageId};
 use types::Hash256;
+use base64::Engine;
+use tree_hash::TreeHash;
+use sha2::{Sha256, Digest};
 
 use super::{SpecQbft, qbft_deserializers::*};
 use crate::{
     QbftSpecTestType, SpecTest, SpecTestType, qbft::SignedSSVMessage, utils::test_keys::TestKeySet,
 };
+use qbft::test_adapter::TestScenario;
 
 impl SpecTest for CreateMessageTest {
     fn name(&self) -> &str {
         &self.name
     }
 
-    // Run the test by constructing the message and verifying its correctness
     fn run(&self) -> bool {
-        let spec_qbft = self.spec_qbft.as_ref().expect("Setup has been called");
-        let key = self.signing_key.as_ref().expect("Setup has been called");
-        
-        // Validate justification data first
-        if let Err(_validation_error) = self.validate_justification_data() {
+        // Validate test data before running
+        if let Err(e) = self.validate_justification_data() {
+            eprintln!("Validation failed: {}", e);
             return false;
         }
-        let prepare_justifications = if let Some(prepare) = &self.prepare_justifications {
-            prepare.clone()
-        } else {
-            Vec::new()
+
+        // Set up QBFT instance
+        let mut spec_qbft = match self.create_qbft_instance() {
+            Ok(qbft) => qbft,
+            Err(e) => {
+                eprintln!("QBFT setup failed: {}", e);
+                return false;
+            }
         };
-        let round_change_justifications =
-            if let Some(round_change) = &self.round_change_justifications {
-                round_change.clone()
-            } else {
-                Vec::new()
-            };
 
-        // Create a new unsigned message. Have to create a new unsigned message to be received on
-        // the queue and then perform signing
-        let unsigned_message = spec_qbft.create_message_with_state_value(
-            self.create_type,
-            self.root,
-            self.round,
-            round_change_justifications.clone(),
-            prepare_justifications.clone(),
-            self.state_value.as_deref(),
-        );
+        // Configure test scenario
+        if let Err(e) = self.setup_test_scenario(&mut spec_qbft) {
+            eprintln!("Scenario setup failed: {}", e);
+            return false;
+        }
 
-        let signed_message = spec_qbft.sign(unsigned_message, key);
-        
-        // Compute the merkle root of the message and compare it to the expected_root
-        spec_qbft.verify_root(signed_message, self.expected_root)
+        // Create and verify message
+        match self.create_and_verify_message(&mut spec_qbft) {
+            Ok(success) => success,
+            Err(e) => {
+                eprintln!("Message creation failed: {}", e);
+                false
+            }
+        }
     }
 
     // Setup the qbft instance for constructing a new message
     fn setup(&mut self) {
-        let four_share_set = TestKeySet::four_share_set();
-        let committee: IndexSet<OperatorId> =
-            four_share_set.operator_keys.keys().cloned().collect();
-
-        // All test identifiers are [1,2,3,4]
-        let identifier = MessageId::for_spectest();
-
-        // All message creation testing code uses operator one as the message signer
-        let operator_one_private = four_share_set
-            .operator_keys
-            .get(&OperatorId::from(1))
-            .expect("Exists");
-        let operator_one_private =
-            PKey::from_rsa(operator_one_private.to_owned()).expect("Valid key");
-
-        let qbft = SpecQbft::new(committee, identifier);
-
-        // Complete the setup
-        self.spec_qbft = Some(qbft);
-        self.signing_key = Some(operator_one_private);
+        // Setup is now handled in run() method since we need mutable access
+        // This method is kept for compatibility with the test framework
     }
 
     fn test_type() -> SpecTestType {
@@ -133,6 +113,99 @@ pub struct CreateMessageTest {
 }
 
 impl CreateMessageTest {
+    /// Create and configure a QBFT instance for testing
+    fn create_qbft_instance(&self) -> Result<SpecQbft, String> {
+        let four_share_set = TestKeySet::four_share_set();
+        let committee: IndexSet<OperatorId> = four_share_set.operator_keys.keys().cloned().collect();
+        let identifier = MessageId::for_spectest();
+        
+        let operator_key = four_share_set
+            .operator_keys
+            .get(&OperatorId::from(1))
+            .ok_or("Operator key not found")?;
+            
+        let private_key = PKey::from_rsa(operator_key.to_owned())
+            .map_err(|e| format!("Failed to create private key: {}", e))?;
+
+        let mut spec_qbft = SpecQbft::new(committee, identifier);
+        spec_qbft.set_signing_key(private_key);
+        
+        Ok(spec_qbft)
+    }
+
+    /// Set up the test scenario with proper state and justifications
+    fn setup_test_scenario(&self, spec_qbft: &mut SpecQbft) -> Result<(), String> {
+        let (last_prepared_round, last_prepared_value) = self.extract_prepared_state()?;
+        
+        let scenario = TestScenario {
+            round: self.round.unwrap_or(1.into()),
+            last_prepared_round,
+            last_prepared_value,
+            round_change_justifications: Vec::new(), // Don't set in containers
+            prepare_justifications: Vec::new(),       // Don't set in containers
+        };
+        
+        spec_qbft.setup_test_scenario(scenario)
+            .map_err(|e| format!("Scenario setup error: {}", e))
+    }
+
+    /// Extract prepared state from test data
+    fn extract_prepared_state(&self) -> Result<(Option<Round>, Option<Hash256>), String> {
+        let Some(state_value) = &self.state_value else {
+            return Ok((None, None));
+        };
+
+        let decoded_state_value = base64::engine::general_purpose::STANDARD
+            .decode(state_value)
+            .map_err(|e| format!("Failed to decode state value: {}", e))?;
+            
+        let state_value_hash = Hash256::from_slice(&Sha256::digest(&decoded_state_value));
+        Ok((Some(self.round.unwrap_or(1.into())), Some(state_value_hash)))
+    }
+
+    /// Create message and verify its root
+    fn create_and_verify_message(&self, spec_qbft: &mut SpecQbft) -> Result<bool, String> {
+        let state_value = self.state_value.as_ref()
+            .and_then(|sv| base64::engine::general_purpose::STANDARD.decode(sv).ok());
+            
+        let round_change_justifications = self.round_change_justifications.as_deref().unwrap_or(&[]).to_vec();
+        let prepare_justifications = self.prepare_justifications.as_deref().unwrap_or(&[]).to_vec();
+
+        let signed_message = spec_qbft
+            .create_message(
+                self.create_type,
+                self.root,
+                self.round,
+                state_value,
+                round_change_justifications,
+                prepare_justifications,
+            )
+            .map_err(|e| format!("Message creation failed: {}", e))?;
+
+        let root_matches = spec_qbft.verify_root(signed_message.clone(), self.expected_root);
+        
+        if !root_matches {
+            self.log_verification_failure(&signed_message);
+        }
+        
+        Ok(root_matches)
+    }
+
+    /// Log detailed information about root verification failures
+    fn log_verification_failure(&self, signed_message: &SignedSSVMessage) {
+        eprintln!("Root verification failed for test: {}", self.name);
+        eprintln!("Expected root: {:?}", self.expected_root);
+        eprintln!("Actual root: {:?}", signed_message.tree_hash_root());
+        
+        // Additional debugging for specific test types
+        if self.name.contains("create proposal") && !self.name.contains("previously prepared") {
+            eprintln!("Message details for proposal test:");
+            eprintln!("  SSV Message: {:?}", signed_message.ssv_message());
+            eprintln!("  Full data length: {}", signed_message.full_data().len());
+            eprintln!("  Signatures: {:?}", signed_message.signatures());
+            eprintln!("  Operator IDs: {:?}", signed_message.operator_ids());
+        }
+    }
 
     /// Validate that justifications have expected format
     fn validate_justification_data(&self) -> Result<(), String> {
@@ -143,19 +216,25 @@ impl CreateMessageTest {
                     return Err(format!("Round change justification {i} has no signatures"));
                 }
                 if justification.operator_ids().is_empty() {
-                    return Err(format!("Round change justification {i} has no operator IDs"));
+                    return Err(format!(
+                        "Round change justification {i} has no operator IDs"
+                    ));
                 }
-                
+
                 // Check if full_data is base64 decodable (if not empty)
                 if !justification.full_data().is_empty() {
                     let full_data = justification.full_data();
-                    if full_data.len() > 100 { // Reasonable max size check
-                        return Err(format!("Round change justification {i} has unexpectedly large full_data: {} bytes", full_data.len()));
+                    if full_data.len() > 100 {
+                        // Reasonable max size check
+                        return Err(format!(
+                            "Round change justification {i} has unexpectedly large full_data: {} bytes",
+                            full_data.len()
+                        ));
                     }
                 }
             }
         }
-        
+
         // Validate prepare justifications
         if let Some(ref prepare_justifications) = self.prepare_justifications {
             for (i, justification) in prepare_justifications.iter().enumerate() {
@@ -165,18 +244,21 @@ impl CreateMessageTest {
                 if justification.operator_ids().is_empty() {
                     return Err(format!("Prepare justification {i} has no operator IDs"));
                 }
-                
+
                 // Check if full_data is reasonable
                 if !justification.full_data().is_empty() {
                     let full_data = justification.full_data();
-                    if full_data.len() > 100 { // Reasonable max size check
-                        return Err(format!("Prepare justification {i} has unexpectedly large full_data: {} bytes", full_data.len()));
+                    if full_data.len() > 100 {
+                        // Reasonable max size check
+                        return Err(format!(
+                            "Prepare justification {i} has unexpectedly large full_data: {} bytes",
+                            full_data.len()
+                        ));
                     }
                 }
             }
         }
-        
+
         Ok(())
     }
-
 }
