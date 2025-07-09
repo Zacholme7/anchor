@@ -1,6 +1,5 @@
 mod controller;
 mod create_message;
-mod field_validator;
 mod message_processing;
 mod qbft_message;
 mod round_robin;
@@ -9,7 +8,7 @@ mod timeout;
 use std::{collections::VecDeque, sync::Arc};
 
 pub use create_message::CreateMessageTest;
-use base64;
+use base64::Engine;
 use openssl::{
     hash::MessageDigest,
     pkey::{PKey, Private},
@@ -22,11 +21,11 @@ use qbft::{
 use serde::{Deserialize, Deserializer};
 use ssv_types::{
     IndexSet, OperatorId, Round,
-    consensus::{BeaconVote, QbftMessage, QbftMessageType},
+    consensus::{BeaconVote, QbftMessageType},
     message::SignedSSVMessage,
     msgid::MessageId,
 };
-use ssz::{Encode, Decode};
+use ssz::Encode;
 pub use timeout::TimeoutTest;
 use tree_hash::TreeHash;
 use types::Hash256;
@@ -54,28 +53,6 @@ pub type ExplicitSendFn = Arc<RwLock<VecDeque<UnsignedWrappedQbftMessage>>>;
 
 // Wrapper type around a QBFT instance that allows us to crate spec testing specific functions
 pub struct SpecQbft(pub ExplicitQbft);
-/// Extract proposal data from justifications if available.
-/// Returns the full_data from the first justification that contains data.
-fn extract_proposal_data_from_justifications(
-    round_change_justifications: &[SignedSSVMessage],
-    prepare_justifications: &[SignedSSVMessage],
-) -> Option<Vec<u8>> {
-    // Check round change justifications first
-    for justification in round_change_justifications {
-        if !justification.full_data().is_empty() {
-            return Some(justification.full_data().to_vec());
-        }
-    }
-    
-    // Check prepare justifications
-    for justification in prepare_justifications {
-        if !justification.full_data().is_empty() {
-            return Some(justification.full_data().to_vec());
-        }
-    }
-    
-    None
-}
 
 impl SpecQbft {
     // Construct a wrapped qbft instance
@@ -134,13 +111,6 @@ impl SpecQbft {
         prepare_justifications: Vec<SignedSSVMessage>,
         state_value: Option<&str>,
     ) -> UnsignedWrappedQbftMessage {
-        println!("\n🏗️ QBFT CREATE_MESSAGE:");
-        println!("Message Type: {:?}", message_type);
-        println!("Data Hash: {}", hex::encode(data_hash));
-        println!("Round: {:?}", round);
-        println!("RC Justifications: {}", round_change_justifications.len());
-        println!("Prep Justifications: {}", prepare_justifications.len());
-        
         // For round change messages, check if we should use the "previously prepared" logic
         // The logic depends ONLY on StateValue:
         // 1. If StateValue is provided, use SHA256(StateValue) as the root (previously prepared)
@@ -148,45 +118,20 @@ impl SpecQbft {
         // PrepareJustifications are marshaled into the message but don't affect the root
         let effective_data_hash = if matches!(message_type, QbftMessageType::RoundChange) {
             if let Some(state_value_str) = state_value {
-                println!("🔄 RoundChange with StateValue - using SHA256(StateValue) as root (previously prepared)");
-                if let Ok(state_value_bytes) = base64::decode(state_value_str) {
-                    println!("StateValue decoded: {} bytes, hex: {}", state_value_bytes.len(), hex::encode(&state_value_bytes));
+                if let Ok(state_value_bytes) = base64::engine::general_purpose::STANDARD.decode(state_value_str) {
                     // Use SHA256 of the StateValue as the root
                     Hash256::from_slice(&Sha256::digest(&state_value_bytes))
                 } else {
-                    println!("❌ Failed to decode StateValue as base64, using zero root");
                     Hash256::default()
                 }
             } else {
-                println!("🔄 RoundChange without StateValue - using zero root (not previously prepared)");
                 // Use zero hash for non-prepared round change (regardless of justifications)
                 Hash256::default()
             }
         } else {
             data_hash
         };
-        
-        // For proposals, determine the correct full_data based on justifications
-        let _proposal_data = if matches!(message_type, QbftMessageType::Proposal) {
-            // If justifications contain full_data, use it (this is the 27-byte Go test data)
-            println!("🔍 Extracting proposal data from justifications...");
-            let data = extract_proposal_data_from_justifications(
-                &round_change_justifications,
-                &prepare_justifications,
-            );
-            if let Some(ref data) = data {
-                println!("✅ Extracted {} bytes of proposal data", data.len());
-                println!("Data hex: {}", hex::encode(data));
-            } else {
-                println!("❌ No proposal data found in justifications");
-            }
-            data
-        } else {
-            println!("ℹ️ Not a proposal, no justification data extraction needed");
-            None
-        };
 
-        println!("📞 Calling QBFT new_unsigned_message_spec...");
         let mut message = self.0.new_unsigned_message_spec(
             message_type,
             effective_data_hash,
@@ -195,40 +140,26 @@ impl SpecQbft {
             round,
         );
 
-        println!("✅ Got unsigned message from QBFT");
-        println!("Initial full_data size: {} bytes", message.unsigned_message.full_data.len());
-
         // Set the correct full_data based on message type and justifications
         if matches!(message_type, QbftMessageType::Proposal) {
-            println!("🎯 Setting full_data for Proposal message...");
             // IMPORTANT: To match Go behavior, use the Value field (32 bytes) for proposals
             // instead of extracting from justifications. This is what Go does in CreateProposal.
-            println!("Using Value field as full_data (to match Go): {} bytes", data_hash.as_slice().len());
             message.unsigned_message.full_data = data_hash.as_slice().to_vec();
         } else if matches!(message_type, QbftMessageType::RoundChange) {
             // For round change messages, use StateValue as full_data if it exists
             if let Some(state_value_str) = state_value {
-                if let Ok(state_value_bytes) = base64::decode(state_value_str) {
-                    println!("🔄 Setting full_data to StateValue for RoundChange: {} bytes", state_value_bytes.len());
+                if let Ok(state_value_bytes) = base64::engine::general_purpose::STANDARD.decode(state_value_str) {
                     message.unsigned_message.full_data = state_value_bytes;
                 } else {
-                    println!("🔄 Setting empty full_data for RoundChange (StateValue decode failed)");
                     message.unsigned_message.full_data = Vec::new();
                 }
             } else {
-                println!("🔄 Setting empty full_data for RoundChange (no StateValue)");
                 message.unsigned_message.full_data = Vec::new();
             }
         } else {
             // For other non-proposal messages, leave full_data empty
-            println!("🔄 Setting empty full_data for non-proposal message");
             message.unsigned_message.full_data = Vec::new();
         };
-        
-        println!("Final full_data size: {} bytes", message.unsigned_message.full_data.len());
-        if !message.unsigned_message.full_data.is_empty() {
-            println!("Final full_data hex: {}", hex::encode(&message.unsigned_message.full_data));
-        }
 
         message
     }
@@ -240,13 +171,7 @@ impl SpecQbft {
         unsigned: UnsignedWrappedQbftMessage,
         private_key: &PKey<Private>,
     ) -> SignedSSVMessage {
-        println!("\n🔐 SIGNING PROCESS:");
-        println!("SSV Message to sign: {} bytes", unsigned.unsigned_message.ssv_message.as_ssz_bytes().len());
-        println!("Full data to include: {} bytes", unsigned.unsigned_message.full_data.len());
-        
         let serialized = unsigned.unsigned_message.ssv_message.as_ssz_bytes();
-        println!("Serialized SSV message for signing: {} bytes", serialized.len());
-        println!("Serialized hex (first 50 bytes): {}", hex::encode(&serialized[..serialized.len().min(50)]));
         
         // For spec tests, use deterministic signing to match Go test utilities behavior
         // Go test utilities use rsa.SignPKCS1v15(nil, ...) which is deterministic
@@ -258,28 +183,14 @@ impl SpecQbft {
             signer.update(&serialized).expect("Serialized data is valid");
             signer.sign_to_vec().expect("Signature is valid")
         };
-        
-        println!("Generated signature: {} bytes", signature.len());
-        println!("Signature hex (first 20 bytes): {}", hex::encode(&signature[..signature.len().min(20)]));
 
-        println!("🏗️ Creating SignedSSVMessage with:");
-        println!("  Signatures: 1 signature of {} bytes", signature.len());
-        println!("  OperatorIds: [1]");
-        println!("  SSVMessage: {} bytes", unsigned.unsigned_message.ssv_message.as_ssz_bytes().len());
-        println!("  FullData: {} bytes", unsigned.unsigned_message.full_data.len());
-
-        let result = SignedSSVMessage::new_from_vecs(
+        SignedSSVMessage::new_from_vecs(
             vec![signature.try_into().expect("Signature should be 256 bytes")],
             vec![OperatorId::from(1)], // todo!() do we pass this in??
             unsigned.unsigned_message.ssv_message,
             unsigned.unsigned_message.full_data,
         )
-        .expect("Data is valid");
-        
-        println!("✅ SignedSSVMessage created");
-        println!("Final signed message SSZ size: {} bytes", result.as_ssz_bytes().len());
-        
-        result
+        .expect("Data is valid")
     }
 
     // Deterministic RSA signing for spec tests to match Go test utilities behavior
