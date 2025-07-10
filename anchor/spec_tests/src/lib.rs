@@ -87,6 +87,7 @@ static TEST_LOADERS: LazyLock<Loaders> = register_test_loaders!(
     // ----------
     TimeoutTest,
     CreateMessageTest,
+    QbftMessageTest,
     RoundRobinTest,
     // Types tests
     // -----------
@@ -156,12 +157,14 @@ fn run_tests(test_type: SpecTestType) -> bool {
                         // The variant might exactly match the chunk, or it might be contained in
                         // the chunk
                         let contains_prefix = {
+                            let mut found = false;
                             for chunk in split {
                                 if chunk.contains(&variant) {
-                                    return true;
+                                    found = true;
+                                    break;
                                 }
                             }
-                            false
+                            found
                         };
 
                         if is_encoding {
@@ -169,7 +172,13 @@ fn run_tests(test_type: SpecTestType) -> bool {
                             // conatins "EncodingTest"
                             contains_prefix & name.contains("EncodingTest")
                         } else {
-                            contains_prefix & !name.contains("EncodingTest")
+                            // Special case: For MsgSpecTest, exclude CreateMsgSpecTest
+                            let exclude_create = if variant == "MsgSpecTest" {
+                                !name.contains("CreateMsgSpecTest")
+                            } else {
+                                true
+                            };
+                            contains_prefix & !name.contains("EncodingTest") & exclude_create
                         }
                     })
                     .unwrap_or(false);
@@ -214,6 +223,13 @@ mod spec_tests {
         fn test_qbft_create() {
             assert!(run_tests(SpecTestType::Qbft(
                 QbftSpecTestType::CreateMessage
+            )))
+        }
+
+        #[test]
+        fn test_qbft_message() {
+            assert!(run_tests(SpecTestType::Qbft(
+                QbftSpecTestType::QbftMessage
             )))
         }
 
