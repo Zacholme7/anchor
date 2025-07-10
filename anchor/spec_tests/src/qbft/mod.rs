@@ -6,6 +6,7 @@ mod round_robin;
 mod timeout;
 
 pub use create_message::CreateMessageTest;
+pub use round_robin::RoundRobinTest;
 use qbft::{
     test_adapter::{QbftTestAdapter, TestScenario},
     TestConfig,
