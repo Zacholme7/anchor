@@ -718,9 +718,7 @@ pub mod qbft_deserializers {
     }
 
     /// Deserialize u64 into Optional Round
-    pub fn deserialize_u64_into_round<'de, D>(
-        deserializer: D,
-    ) -> Result<Option<Round>, D::Error>
+    pub fn deserialize_u64_into_round<'de, D>(deserializer: D) -> Result<Option<Round>, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -741,9 +739,10 @@ pub mod qbft_deserializers {
         D: Deserializer<'de>,
     {
         let member = CommitteeMemberJson::deserialize(deserializer)?;
-        
+
         // Convert to internal structure
-        let committee_operators: Vec<OperatorInfo> = member.committee
+        let committee_operators: Vec<OperatorInfo> = member
+            .committee
             .into_iter()
             .map(|op| OperatorInfo {
                 operator_id: OperatorId::from(op.operator_id),

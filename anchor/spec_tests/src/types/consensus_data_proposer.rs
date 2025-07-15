@@ -18,6 +18,10 @@ use crate::{
 pub struct ConsensusDataProposerTest {
     #[serde(rename = "Name")]
     pub name: String,
+    #[serde(rename = "Type")]
+    pub test_type: String,
+    #[serde(rename = "Documentation")]
+    pub documentation: String,
     #[serde(rename = "Blinded")]
     pub blinded: bool,
     #[serde(rename = "DataCd", deserialize_with = "deserialize_base64_to_bytes")]

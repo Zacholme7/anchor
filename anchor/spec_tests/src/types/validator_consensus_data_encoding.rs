@@ -14,6 +14,10 @@ use crate::{
 pub struct ValidatorConsensusDataEncodingTest {
     #[serde(rename = "Name")]
     pub name: String,
+    #[serde(rename = "Type")]
+    pub test_type: String,
+    #[serde(rename = "Documentation")]
+    pub documentation: String,
     #[serde(rename = "Data", deserialize_with = "deserialize_base64_to_bytes")]
     pub data: Vec<u8>,
     #[serde(

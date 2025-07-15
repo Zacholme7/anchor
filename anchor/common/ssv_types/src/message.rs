@@ -97,20 +97,38 @@ impl TreeHash for MsgType {
     }
 
     fn tree_hash_packed_encoding(&self) -> PackedEncoding {
-        let value = self.clone() as u64;
-        value.tree_hash_packed_encoding()
+        let value = self.clone() as u32;
+        // TreeHash for u32 should pad to 8 bytes for consistency with Go's uint64 SSZ encoding
+        // but use 4-byte native encoding for the SSZ bytes
+        let value_u64 = value as u64;
+        value_u64.tree_hash_packed_encoding()
     }
 
     fn tree_hash_packing_factor() -> usize {
-        u64::tree_hash_packing_factor()
+        u32::tree_hash_packing_factor()
     }
 
     fn tree_hash_root(&self) -> Hash256 {
-        let value = self.clone() as u64;
-        value.tree_hash_root()
+        let value = self.clone() as u32;
+        // TreeHash for u32 should pad to 8 bytes for consistency
+        let value_u64 = value as u64;
+        value_u64.tree_hash_root()
     }
 }
 
+impl TryFrom<u32> for MsgType {
+    type Error = DecodeError;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(MsgType::SSVConsensusMsgType),
+            1 => Ok(MsgType::SSVPartialSignatureMsgType),
+            _ => Err(DecodeError::NoMatchingVariant),
+        }
+    }
+}
+
+// Keep u64 compatibility for deserialization
 impl TryFrom<u64> for MsgType {
     type Error = DecodeError;
 
@@ -123,8 +141,9 @@ impl TryFrom<u64> for MsgType {
     }
 }
 
-const U64_SIZE: usize = 8; // u64 is 8 bytes
+const U32_SIZE: usize = 4; // u32 is 4 bytes - matches Go implementation
 
+// Change to u64 for consistency with Go's uint64
 impl Encode for MsgType {
     fn is_ssz_fixed_len() -> bool {
         true
@@ -139,11 +158,11 @@ impl Encode for MsgType {
     }
 
     fn ssz_fixed_len() -> usize {
-        U64_SIZE
+        8 // Changed to 8 bytes for u64
     }
 
     fn ssz_bytes_len(&self) -> usize {
-        U64_SIZE
+        8
     }
 }
 
@@ -153,7 +172,7 @@ impl Decode for MsgType {
     }
 
     fn ssz_fixed_len() -> usize {
-        U64_SIZE
+        8
     }
 
     fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
@@ -902,7 +921,7 @@ mod tests {
     fn test_msgtype_encode_decode() {
         let msg_type = MsgType::SSVConsensusMsgType;
         let encoded = msg_type.as_ssz_bytes();
-        assert_eq!(encoded.len(), U64_SIZE);
+        assert_eq!(encoded.len(), 8);
         let decoded = MsgType::from_ssz_bytes(&encoded).unwrap();
         assert_eq!(decoded, msg_type);
 
@@ -923,7 +942,7 @@ mod tests {
 
     #[test]
     fn test_msgtype_invalid_bytes_length() {
-        let bytes = vec![0u8; U64_SIZE - 1]; // One byte short
+        let bytes = vec![0u8; 8 - 1]; // One byte short
 
         let result = MsgType::from_ssz_bytes(&bytes);
 

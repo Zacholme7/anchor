@@ -1,0 +1,247 @@
+use qbft::TestError;
+use serde::Deserialize;
+use ssv_types::{OperatorId, Round, message::SignedSSVMessage};
+use std::collections::HashMap;
+use types::Hash256;
+
+/// Unified decided state for all QBFT test scenarios
+#[derive(Debug, Clone)]
+pub struct DecidedState {
+    pub decided_count: u64,
+    pub decided_value: Option<Vec<u8>>,
+}
+
+/// Unified timer state for all QBFT test scenarios
+#[derive(Debug, Clone)]
+pub struct TimerState {
+    pub timeouts: u64,
+    pub current_round: Round,
+}
+
+/// Validation result with comprehensive error information
+#[derive(Debug, Clone)]
+pub struct ValidationResult {
+    pub is_valid: bool,
+    pub errors: Vec<String>, // Store error strings instead of ValidationFailure
+    pub warnings: Vec<String>,
+}
+
+/// Unified processing result for message operations
+#[derive(Debug, Clone)]
+pub struct ProcessingResult {
+    pub consensus_reached: bool,
+    pub messages_sent: Vec<SignedSSVMessage>,
+    pub validation_result: ValidationResult,
+    pub go_error_messages: Vec<String>, // Pre-mapped for test assertions
+}
+
+/// Internal adapter state tracking
+#[derive(Debug, Clone)]
+pub struct AdapterState {
+    pub current_height: u64,
+    pub instance_height: u64,
+    pub instance_started: bool,
+    pub decided_count: u64,
+    pub decided_value: Option<Vec<u8>>,
+    pub timeout_count: u64,
+    pub prepared_state: Option<(Round, Hash256)>,
+    pub justifications: Vec<SignedSSVMessage>,
+}
+
+/// Request structure for message creation
+#[derive(Debug, Clone)]
+pub struct MessageCreationRequest {
+    pub msg_type: ssv_types::consensus::QbftMessageType,
+    pub data_hash: Hash256,
+    pub round: Option<Round>,
+    pub state_value: Option<Vec<u8>>,
+    pub round_change_justifications: Vec<SignedSSVMessage>,
+    pub prepare_justifications: Vec<SignedSSVMessage>,
+}
+
+/// Configuration for test scenario setup
+#[derive(Debug, Clone)]
+pub struct ScenarioConfig {
+    pub round: Option<Round>,
+    pub prepared_state: Option<(Round, Hash256)>,
+    pub justifications: Vec<SignedSSVMessage>,
+}
+
+/// Configuration for adapter creation
+#[derive(Debug, Clone)]
+pub struct AdapterConfig {
+    pub instance_height: u64,
+    pub current_height: u64,
+    pub committee_size: usize,
+    pub quorum_threshold: usize,
+    pub max_rounds: u64,
+}
+
+/// Unified error type for all adapter operations
+#[derive(Debug, thiserror::Error)]
+pub enum AdapterError {
+    #[error("QBFT error: {0}")]
+    Qbft(#[from] TestError),
+    #[error("Validation failed: {0}")]
+    Validation(String),
+    #[error("Invalid state: {0}")]
+    InvalidState(String),
+    #[error("Configuration error: {0}")]
+    Config(String),
+    #[error("Message creation failed: {0}")]
+    MessageCreation(String),
+    #[error("OpenSSL error: {0}")]
+    OpenSsl(#[from] openssl::error::ErrorStack),
+    #[error("Base64 decode error: {0}")]
+    Base64Decode(#[from] base64::DecodeError),
+}
+
+// Legacy spec test types (kept for JSON deserialization)
+#[derive(Debug, Clone, Deserialize)]
+pub struct SpecTestCommitteeMember {
+    #[serde(rename = "OperatorID")]
+    pub operator_id: OperatorId,
+    #[serde(rename = "CommitteeID")]
+    pub committee_id: Vec<u8>,
+    #[serde(rename = "SSVOperatorPubKey")]
+    pub ssv_operator_pub_key: String,
+    #[serde(rename = "FaultyNodes")]
+    pub faulty_nodes: u64,
+    #[serde(rename = "Committee")]
+    pub committee: Vec<SpecTestOperator>,
+    #[serde(rename = "DomainType")]
+    pub domain_type: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SpecTestOperator {
+    #[serde(rename = "OperatorID")]
+    pub operator_id: u64,
+    #[serde(rename = "SSVOperatorPubKey")]
+    pub ssv_operator_pub_key: String,
+}
+
+impl Default for AdapterState {
+    fn default() -> Self {
+        Self {
+            current_height: 0,
+            instance_height: 0,
+            instance_started: false,
+            decided_count: 0,
+            decided_value: None,
+            timeout_count: 0,
+            prepared_state: None,
+            justifications: Vec::new(),
+        }
+    }
+}
+
+/// Test context for error mapping and scenario management
+#[derive(Debug, Clone)]
+pub struct TestContext {
+    pub test_name: String,
+    pub test_type: TestType,
+    pub expected_errors: Vec<String>,
+    pub error_mapping_context: HashMap<String, String>,
+}
+
+/// Test type enumeration for context-aware processing
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub enum TestType {
+    Controller,
+    MessageCreation,
+    QbftMessage,
+    RoundRobin,
+}
+
+/// Comprehensive result for test scenarios
+#[derive(Debug, Clone)]
+pub struct ScenarioResult {
+    pub scenario_id: String,
+    pub processing_result: ProcessingResult,
+    pub decided_state: DecidedState,
+    pub timer_state: Option<TimerState>,
+    pub validation_errors: Vec<String>, // Store error strings instead of ValidationFailure
+    pub go_formatted_errors: Vec<String>,
+}
+
+impl Default for AdapterConfig {
+    fn default() -> Self {
+        Self {
+            instance_height: 0,
+            current_height: 0,
+            committee_size: 4,
+            quorum_threshold: 3,
+            max_rounds: 100,
+        }
+    }
+}
+
+impl Default for TestContext {
+    fn default() -> Self {
+        Self {
+            test_name: "default".to_string(),
+            test_type: TestType::Controller,
+            expected_errors: Vec::new(),
+            error_mapping_context: HashMap::new(),
+        }
+    }
+}
+
+impl TestContext {
+    pub fn new(test_name: String, test_type: TestType) -> Self {
+        Self {
+            test_name,
+            test_type,
+            expected_errors: Vec::new(),
+            error_mapping_context: HashMap::new(),
+        }
+    }
+
+    pub fn with_expected_errors(mut self, errors: Vec<String>) -> Self {
+        self.expected_errors = errors;
+        self
+    }
+
+    pub fn scenario_id(&self) -> String {
+        format!("{}_{:?}", self.test_name, self.test_type)
+    }
+
+    pub fn default_controller() -> Self {
+        Self {
+            test_name: "controller_test".to_string(),
+            test_type: TestType::Controller,
+            expected_errors: Vec::new(),
+            error_mapping_context: HashMap::new(),
+        }
+    }
+
+    pub fn default_message_creation() -> Self {
+        Self {
+            test_name: "message_creation_test".to_string(),
+            test_type: TestType::MessageCreation,
+            expected_errors: Vec::new(),
+            error_mapping_context: HashMap::new(),
+        }
+    }
+
+    pub fn default_validation() -> Self {
+        Self {
+            test_name: "validation_test".to_string(),
+            test_type: TestType::QbftMessage,
+            expected_errors: Vec::new(),
+            error_mapping_context: HashMap::new(),
+        }
+    }
+}
+
+impl TestType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TestType::Controller => "controller",
+            TestType::MessageCreation => "message_creation",
+            TestType::QbftMessage => "qbft_message",
+            TestType::RoundRobin => "round_robin",
+        }
+    }
+}

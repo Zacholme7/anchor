@@ -25,14 +25,14 @@
 ## Solution Overview
 
 ### Approach
-Refactor the QBFT spec tests by extracting common components into shared modules, consolidating deserializers, and creating a clean facade over existing validation infrastructure. Break down the monolithic adapter into focused modules while preserving all test functionality.
+Refactor the QBFT spec tests by leveraging existing `common/` infrastructure (`ssv_types`, `qbft`, `message_validator`), consolidating deserializers, and focusing on spec test execution logic. Eliminate duplicate type definitions by using existing robust types and focus effort on Go test compatibility.
 
 ### Key Components
-1. **Shared Type Definitions**: Extract `CommitteeMember`, `Operator`, and configuration types to common module
+1. **Leverage Existing Types**: Use `ssv_types::CommitteeInfo`, `qbft::TestConfig`, `qbft::Qbft` instead of custom types
 2. **Consolidated Deserializers**: Move all QBFT deserializers to `utils/deserializers.rs` framework
-3. **Unified Error Handling**: Use existing `ValidationFailure` types and `thiserror` patterns
-4. **Modular Test Adapter**: Break down `UnifiedTestAdapter` into focused modules
-5. **Shared Test Utilities**: Create reusable committee setup, key management, and test builders
+3. **Use Existing QBFT Implementation**: Use `qbft::Qbft` for message creation and consensus logic
+4. **Simplified Test Adapter**: Thin wrapper over existing `qbft::Qbft` and `ValidationAdapter`
+5. **Focus on Spec Test Logic**: Concentrate on JSON parsing, test execution, and Go compatibility
 
 ### Architecture Diagram
 ```

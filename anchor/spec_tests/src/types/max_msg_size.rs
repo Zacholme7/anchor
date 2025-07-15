@@ -14,6 +14,10 @@ use crate::{
 pub struct MaxMsgSizeTest {
     #[serde(rename = "Name")]
     pub name: String,
+    #[serde(rename = "Type")]
+    pub test_type: String,
+    #[serde(rename = "Documentation")]
+    pub documentation: String,
     // Use generic Json value since object differs for test
     #[serde(rename = "Object")]
     pub object: serde_json::Value,

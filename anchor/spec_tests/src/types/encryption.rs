@@ -11,6 +11,10 @@ use crate::{
 pub struct EncryptionSpecTest {
     #[serde(rename = "Name")]
     pub name: String,
+    #[serde(rename = "Type")]
+    pub test_type: String,
+    #[serde(rename = "Documentation")]
+    pub documentation: String,
     #[serde(rename = "SKPem", deserialize_with = "deserialize_base64_to_bytes")]
     pub sk_pem: Vec<u8>,
     #[serde(rename = "PKPem", deserialize_with = "deserialize_base64_to_bytes")]

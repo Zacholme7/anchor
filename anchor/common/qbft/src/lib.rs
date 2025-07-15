@@ -1333,33 +1333,23 @@ where
         state_value: Option<Vec<u8>>,
         target_round: Option<Round>,
     ) -> Result<UnsignedWrappedQbftMessage, Box<dyn std::error::Error>> {
-        // Determine the effective data hash based on state value
         let effective_data_hash = if let Some(state_value_bytes) = &state_value {
-            // Use SHA256 of the StateValue as the root (previously prepared)
             Hash256::from_slice(&Sha256::digest(state_value_bytes))
         } else {
-            // Use zero hash for non-prepared round change
             Hash256::default()
         };
 
-        // Get round change justifications (prepare messages when previously prepared)
         let round_change_justifications = self.get_round_change_justifications();
 
-        // Create the message
         let mut message = self.new_unsigned_message(
             QbftMessageType::RoundChange,
             effective_data_hash,
             round_change_justifications,
-            vec![], // No prepare justifications in final message
+            vec![],
             target_round,
         );
 
-        // Set full_data to the state value if provided
-        if let Some(state_value_bytes) = state_value {
-            message.unsigned_message.full_data = state_value_bytes;
-        } else {
-            message.unsigned_message.full_data = Vec::new();
-        }
+        message.unsigned_message.full_data = Vec::new();
 
         Ok(message)
     }

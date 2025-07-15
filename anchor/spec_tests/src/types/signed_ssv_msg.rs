@@ -11,13 +11,13 @@ use ssz::Encode;
 use crate::{SpecTest, SpecTestType, types::TypesSpecTestType};
 
 // Intermediate test-specific SignedSSVMessage that can handle null SSVMessage
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TestSignedSSVMessage {
     #[serde(rename = "Signatures")]
     pub signatures: Vec<String>,
     #[serde(rename = "OperatorIDs")]
-    pub operator_ids: Vec<OperatorId>,
+    pub operator_ids: Option<Vec<OperatorId>>,
     #[serde(rename = "SSVMessage")]
     pub ssv_message: Option<SSVMessage>,
     #[serde(rename = "FullData")]
@@ -30,6 +30,10 @@ pub struct TestSignedSSVMessage {
 pub struct SignedSSVMessageTest {
     #[serde(rename = "Name")]
     pub name: String,
+    #[serde(rename = "Type")]
+    pub test_type: String,
+    #[serde(rename = "Documentation")]
+    pub documentation: String,
     #[serde(rename = "Messages")]
     pub messages: Vec<TestSignedSSVMessage>,
     #[serde(rename = "ExpectedError")]
@@ -142,7 +146,7 @@ impl SignedSSVMessageTest {
         // Create our SignedSSVMessage
         SignedSSVMessage::new_from_vecs(
             signatures,
-            test_msg.operator_ids.clone(),
+            test_msg.operator_ids.clone().unwrap_or_default(),
             ssv_message.clone(),
             Vec::new(),
         )

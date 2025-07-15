@@ -14,6 +14,10 @@ use crate::{
 pub struct PartialSigMsgSpecTest {
     #[serde(rename = "Name")]
     pub name: String,
+    #[serde(rename = "Type")]
+    pub test_type: String,
+    #[serde(rename = "Documentation")]
+    pub documentation: String,
     #[serde(rename = "Messages")]
     pub messages: Vec<PartialSignatureMessages>,
     #[serde(

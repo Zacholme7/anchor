@@ -11,6 +11,10 @@ use crate::{
 pub struct ValidatorConsensusDataTest {
     #[serde(rename = "Name")]
     pub name: String,
+    #[serde(rename = "Type")]
+    pub test_type: String,
+    #[serde(rename = "Documentation")]
+    pub documentation: String,
     #[serde(rename = "ConsensusData")]
     pub consensus_data: Value,
     #[serde(rename = "ExpectedError")]
