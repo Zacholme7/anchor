@@ -34,11 +34,13 @@ use tokio::{sync::watch::Receiver, time::sleep};
 use tracing::{error, trace};
 use types::{Epoch, Slot};
 
-use crate::{
-    consensus_message::validate_consensus_message,
-    duty_state::{DutyState, OperatorState},
-    partial_signature::validate_partial_signature_message,
+pub use crate::consensus_message::{
+    minimal_validate_consensus_message, validate_consensus_message,
+    validate_consensus_message_semantics,
 };
+pub use crate::duty_state::DutyState;
+
+use crate::{duty_state::OperatorState, partial_signature::validate_partial_signature_message};
 
 const VALIDATOR_CLEANER_NAME: &str = "validator_cleaner";
 
@@ -252,7 +254,7 @@ pub enum Error {
     Processor(#[from] ::processor::Error),
 }
 
-struct ValidationContext<'a, S> {
+pub struct ValidationContext<'a, S> {
     pub signed_ssv_message: &'a SignedSSVMessage,
     pub role: Role, // Small value type can remain owned
     pub committee_info: &'a CommitteeInfo,
@@ -748,7 +750,7 @@ pub fn sync_committee_period(
         .as_u64())
 }
 
-pub(crate) fn compute_quorum_size(committee_size: usize) -> usize {
+pub fn compute_quorum_size(committee_size: usize) -> usize {
     let f = get_f(committee_size);
     f * 2 + 1
 }

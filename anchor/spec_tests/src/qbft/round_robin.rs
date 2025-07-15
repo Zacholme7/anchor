@@ -1,9 +1,11 @@
-use serde::{Deserialize, Serialize};
-use ssv_types::{OperatorId, Round, IndexSet};
 use qbft::{DefaultLeaderFunction, InstanceHeight, LeaderFunction};
+use serde::{Deserialize, Serialize};
+use ssv_types::{IndexSet, OperatorId, Round};
 
-use crate::{QbftSpecTestType, SpecTest, SpecTestType};
-use crate::utils::deserializers::type_parse::deserialize_base64_to_bytes;
+use crate::{
+    QbftSpecTestType, SpecTest, SpecTestType,
+    utils::deserializers::type_parse::deserialize_base64_to_bytes,
+};
 
 /// Round Robin test structure matching the JSON format from the spec tests
 #[derive(Debug, Serialize, Deserialize)]
@@ -55,7 +57,9 @@ impl SpecTest for RoundRobinTest {
 
     fn run(&self) -> bool {
         // Create committee from share committee members (maintains insertion order)
-        let committee: IndexSet<OperatorId> = self.share.committee
+        let committee: IndexSet<OperatorId> = self
+            .share
+            .committee
             .iter()
             .map(|op| op.operator_id)
             .collect();
@@ -68,10 +72,11 @@ impl SpecTest for RoundRobinTest {
             let height = InstanceHeight::from(self.heights[i] as usize);
             let round = Round::from(self.rounds[i]);
             let expected_proposer = self.proposers[i];
-            
+
             // Check if the expected proposer is indeed the leader for this height/round
-            let is_leader = leader_fn.leader_function(&expected_proposer, round, height, &committee);
-            
+            let is_leader =
+                leader_fn.leader_function(&expected_proposer, round, height, &committee);
+
             if !is_leader {
                 eprintln!(
                     "Round robin test failed for {}: height={}, round={}, expected_proposer={}, committee={:?}",

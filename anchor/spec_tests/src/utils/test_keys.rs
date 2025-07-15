@@ -44,6 +44,7 @@ impl TestingSigner {
     }
 }
 
+#[derive(Clone)]
 pub struct TestKeySet {
     pub secret_key: SecretKey,
     pub public_key: PublicKeyBytes,

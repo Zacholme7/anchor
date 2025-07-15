@@ -85,8 +85,8 @@ type Loaders = HashMap<SpecTestType, fn(&str) -> Box<dyn SpecTest>>;
 static TEST_LOADERS: LazyLock<Loaders> = register_test_loaders!(
     // Qbft tests
     // ----------
-    TimeoutTest,
     CreateMessageTest,
+    ControllerTest,
     QbftMessageTest,
     RoundRobinTest,
     // Types tests
@@ -214,12 +214,6 @@ mod spec_tests {
         use super::*;
 
         #[test]
-        #[ignore]
-        fn test_qbft_timeout() {
-            assert!(run_tests(SpecTestType::Qbft(QbftSpecTestType::Timeout)))
-        }
-
-        #[test]
         fn test_qbft_create() {
             assert!(run_tests(SpecTestType::Qbft(
                 QbftSpecTestType::CreateMessage
@@ -227,17 +221,18 @@ mod spec_tests {
         }
 
         #[test]
+        fn test_qbft_controller() {
+            assert!(run_tests(SpecTestType::Qbft(QbftSpecTestType::Controller)))
+        }
+
+        #[test]
         fn test_qbft_message() {
-            assert!(run_tests(SpecTestType::Qbft(
-                QbftSpecTestType::QbftMessage
-            )))
+            assert!(run_tests(SpecTestType::Qbft(QbftSpecTestType::QbftMessage)))
         }
 
         #[test]
         fn test_qbft_round_robin() {
-            assert!(run_tests(SpecTestType::Qbft(
-                QbftSpecTestType::RoundRobin
-            )))
+            assert!(run_tests(SpecTestType::Qbft(QbftSpecTestType::RoundRobin)))
         }
     }
 

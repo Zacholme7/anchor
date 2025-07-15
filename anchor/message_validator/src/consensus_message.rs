@@ -16,7 +16,7 @@ use crate::{
     validate_slot_time, verify_message_signatures,
 };
 
-pub(crate) fn validate_consensus_message(
+pub fn validate_consensus_message(
     validation_context: ValidationContext<impl SlotClock>,
     duty_state: &mut DutyState,
     duty_provider: Arc<impl DutiesProvider>,
@@ -60,7 +60,31 @@ pub(crate) fn validate_consensus_message(
     Ok(ValidatedSSVMessage::QbftMessage(consensus_message))
 }
 
-pub(crate) fn validate_consensus_message_semantics(
+/// Minimal validation that matches Go controller test expectations
+/// Only validates: 1) Message decodability, 2) Identifier matching
+pub fn minimal_validate_consensus_message(
+    signed_ssv_message: &SignedSSVMessage,
+) -> Result<QbftMessage, ValidationFailure> {
+    // 1. Decode message to QbftMessage
+    let consensus_message =
+        match QbftMessage::from_ssz_bytes(signed_ssv_message.ssv_message().data()) {
+            Ok(msg) => msg,
+            Err(err) => return Err(ValidationFailure::UndecodableMessageData(err)),
+        };
+
+    // 2. Validate identifier match (only check Go controller tests do)
+    if consensus_message.identifier != VariableList::from(signed_ssv_message.ssv_message().msg_id())
+    {
+        return Err(ValidationFailure::MismatchedIdentifier {
+            got: hex::encode(&*consensus_message.identifier),
+            want: hex::encode(signed_ssv_message.ssv_message().msg_id()),
+        });
+    }
+
+    Ok(consensus_message)
+}
+
+pub fn validate_consensus_message_semantics(
     signed_ssv_message: &SignedSSVMessage,
     consensus_message: &QbftMessage,
     committee_info: &CommitteeInfo,

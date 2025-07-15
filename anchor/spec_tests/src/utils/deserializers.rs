@@ -670,3 +670,136 @@ pub mod arbitrary_object_parse {
         })
     }
 }
+
+/// QBFT-specific deserializers module for parsing QBFT test data
+pub mod qbft_deserializers {
+    use serde::{Deserialize, Deserializer, de::Error};
+    use ssv_types::{OperatorId, Round, consensus::QbftMessageType};
+    use types::Hash256;
+
+    /// Deserialize string into QbftMessageType
+    pub fn deserialize_qbft_message_type<'de, D>(
+        deserializer: D,
+    ) -> Result<QbftMessageType, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.as_str() {
+            "createProposal" => Ok(QbftMessageType::Proposal),
+            "CreatePrepare" => Ok(QbftMessageType::Prepare),
+            "CreateCommit" => Ok(QbftMessageType::Commit),
+            "CreateRoundChange" => Ok(QbftMessageType::RoundChange),
+            _ => Err(Error::custom(format!(
+                "Invalid message type: '{s}'. Valid options: createProposal, CreatePrepare, CreateCommit, CreateRoundChange"
+            ))),
+        }
+    }
+
+    /// Deserialize Value field (byte array) into Hash256 root
+    /// The Value field contains the actual data bytes that need to be treated as the root
+    pub fn deserialize_value_into_root<'de, D>(deserializer: D) -> Result<Hash256, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes = <Vec<u8>>::deserialize(deserializer)?;
+
+        if bytes.len() != 32 {
+            return Err(Error::custom(format!(
+                "Invalid Value length: {} bytes (expected 32 for Hash256)",
+                bytes.len()
+            )));
+        }
+
+        // For spec tests, we use the bytes directly as the hash instead of hashing them
+        // This is because the QBFT message root field should contain these exact bytes
+        // which matches what the Go implementation puts in the root field
+        Ok(Hash256::from_slice(bytes.as_slice()))
+    }
+
+    /// Deserialize u64 into Optional Round
+    pub fn deserialize_u64_into_round<'de, D>(
+        deserializer: D,
+    ) -> Result<Option<Round>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let round = <u64>::deserialize(deserializer)?;
+
+        if round == 0 {
+            Ok(None)
+        } else {
+            Ok(Some(round.into()))
+        }
+    }
+
+    /// Deserialize committee member structure from JSON
+    pub fn deserialize_committee_member<'de, D>(
+        deserializer: D,
+    ) -> Result<CommitteeMemberInfo, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let member = CommitteeMemberJson::deserialize(deserializer)?;
+        
+        // Convert to internal structure
+        let committee_operators: Vec<OperatorInfo> = member.committee
+            .into_iter()
+            .map(|op| OperatorInfo {
+                operator_id: OperatorId::from(op.operator_id),
+                ssv_operator_pub_key: op.ssv_operator_pub_key,
+            })
+            .collect();
+
+        Ok(CommitteeMemberInfo {
+            operator_id: OperatorId::from(member.operator_id),
+            committee_id: member.committee_id,
+            ssv_operator_pub_key: member.ssv_operator_pub_key,
+            faulty_nodes: member.faulty_nodes,
+            committee: committee_operators,
+            domain_type: member.domain_type,
+        })
+    }
+
+    /// Committee member structure for JSON deserialization
+    #[derive(Deserialize)]
+    struct CommitteeMemberJson {
+        #[serde(rename = "OperatorID")]
+        operator_id: u64,
+        #[serde(rename = "CommitteeID")]
+        committee_id: Vec<u8>,
+        #[serde(rename = "SSVOperatorPubKey")]
+        ssv_operator_pub_key: String,
+        #[serde(rename = "FaultyNodes")]
+        faulty_nodes: u64,
+        #[serde(rename = "Committee")]
+        committee: Vec<OperatorJson>,
+        #[serde(rename = "DomainType")]
+        domain_type: [u8; 4],
+    }
+
+    /// Operator structure for JSON deserialization
+    #[derive(Deserialize)]
+    struct OperatorJson {
+        #[serde(rename = "OperatorID")]
+        operator_id: u64,
+        #[serde(rename = "SSVOperatorPubKey")]
+        ssv_operator_pub_key: String,
+    }
+
+    /// Committee member information structure
+    pub struct CommitteeMemberInfo {
+        pub operator_id: OperatorId,
+        pub committee_id: Vec<u8>,
+        pub ssv_operator_pub_key: String,
+        pub faulty_nodes: u64,
+        pub committee: Vec<OperatorInfo>,
+        pub domain_type: [u8; 4],
+    }
+
+    /// Operator information structure
+    pub struct OperatorInfo {
+        pub operator_id: OperatorId,
+        pub ssv_operator_pub_key: String,
+    }
+}
