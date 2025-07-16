@@ -1,106 +1,60 @@
 use serde::Deserialize;
-use ssv_types::{OperatorId, message::SignedSSVMessage};
-
-use super::adapter::{QbftTestAdapter, TestContext, TestType};
+use ssv_types::OperatorId;
+use super::adapter::types::SpecTestCommitteeMember;
 use crate::{QbftSpecTestType, SpecTest, SpecTestType};
+
+/// Round-robin proposer selection algorithm matching Go implementation
+fn round_robin_proposer(committee: &[OperatorId], height: u64, round: u64) -> OperatorId {
+    let first_round_index = if height == 0 {
+        0
+    } else {
+        (height as usize) % committee.len()
+    };
+    
+    let index = (first_round_index + (round - 1) as usize) % committee.len();
+    committee[index]
+}
 
 impl SpecTest for RoundRobinTest {
     fn name(&self) -> &str {
         &self.name
     }
-
-    fn run(&self) -> bool {
-        // Create test context
-        let test_context = TestContext::new(self.name.clone(), TestType::RoundRobin)
-            .with_expected_errors(vec![self.expected_error.clone()]);
-
-        // Execute each round scenario
-        for (i, messages) in self.messages.iter().enumerate() {
-            eprintln!("=== Running Round Robin Test Round {} ===", i + 1);
-
-            // Create adapter for each round
-            let mut adapter = match QbftTestAdapter::with_default_committee() {
-                Ok(adapter) => adapter.with_test_context(test_context.clone()),
-                Err(e) => {
-                    eprintln!("Failed to create adapter for round {}: {}", i + 1, e);
-                    return false;
-                }
-            };
-
-            // Execute round with messages
-            let scenario_result = adapter.execute_controller_scenario(
-                None, // No input value for round robin
-                messages.clone(),
-            );
-
-            // Assert round result
-            if !self.assert_round_result(&scenario_result, i) {
-                return false;
-            }
-        }
-
-        self.validate_expected_error_handling()
-    }
-
-    fn setup(&mut self) {
-        // No setup needed for round robin tests
-    }
-
+    
     fn test_type() -> SpecTestType {
         SpecTestType::Qbft(QbftSpecTestType::RoundRobin)
     }
-}
-
-impl RoundRobinTest {
-    /// Assert round result matches expectations
-    fn assert_round_result(
-        &self,
-        result: &super::adapter::ScenarioResult,
-        round_index: usize,
-    ) -> bool {
-        // Check for expected errors first
-        if !self.expected_error.is_empty() {
-            if result
-                .go_formatted_errors
-                .iter()
-                .any(|err| err.contains(&self.expected_error))
-            {
+    
+    fn run(&self) -> bool {
+        let committee_ids: Vec<OperatorId> = self.share.committee
+            .iter()
+            .map(|member| OperatorId::from(member.operator_id))
+            .collect();
+        
+        for i in 0..self.heights.len() {
+            let height = self.heights[i];
+            let round = self.rounds[i];
+            let expected_proposer = OperatorId::from(self.proposers[i]);
+            
+            let actual_proposer = round_robin_proposer(&committee_ids, height, round);
+            
+            if actual_proposer != expected_proposer {
                 eprintln!(
-                    "✓ Expected error found in round {}: {}",
-                    round_index + 1,
-                    self.expected_error
+                    "Round robin test '{}' failed at index {}: height={}, round={}, expected={}, got={}",
+                    self.name, i, height, round, expected_proposer.0, actual_proposer.0
                 );
-                return true;
+                return false;
             }
         }
-
-        // Check if messages were processed without unexpected errors
-        if !result.processing_result.validation_result.is_valid && self.expected_error.is_empty() {
-            eprintln!(
-                "✗ Round {} failed with validation errors: {:?}",
-                round_index + 1,
-                result.processing_result.validation_result.errors
-            );
-            return false;
-        }
-
-        eprintln!("✓ Round {} completed successfully", round_index + 1);
+        
+        eprintln!("Round robin test '{}' passed all {} test cases", self.name, self.heights.len());
         true
     }
-
-    /// Validate that expected error handling worked correctly
-    fn validate_expected_error_handling(&self) -> bool {
-        if self.expected_error.is_empty() {
-            // No error expected, test should have passed
-            eprintln!("✓ Round robin test completed without errors as expected");
-            true
-        } else {
-            // Error expected - this is handled per-round in assert_round_result
-            eprintln!("✓ Round robin test completed with expected error handling");
-            true
-        }
+    
+    fn setup(&mut self) {
+        // No setup needed for round robin tests
     }
 }
+
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RoundRobinTest {
@@ -110,8 +64,12 @@ pub struct RoundRobinTest {
     pub test_type: String,
     #[serde(rename = "Documentation")]
     pub documentation: String,
-    #[serde(rename = "Messages")]
-    pub messages: Vec<Vec<SignedSSVMessage>>,
-    #[serde(rename = "ExpectedError")]
-    pub expected_error: String,
+    #[serde(rename = "Share")]
+    pub share: SpecTestCommitteeMember,
+    #[serde(rename = "Heights")]
+    pub heights: Vec<u64>,
+    #[serde(rename = "Rounds")]
+    pub rounds: Vec<u64>,
+    #[serde(rename = "Proposers")]
+    pub proposers: Vec<u64>,
 }

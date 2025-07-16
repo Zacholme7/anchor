@@ -1,6 +1,5 @@
 use super::types::{TestContext, TestType};
-use message_validator::ValidationFailure;
-use qbft::TestError;
+use message_validator::ValidationFailure;\nuse qbft::TestError;
 use std::collections::HashMap;
 
 /// Centralized error mapper for ValidationFailure to Go error strings
@@ -46,13 +45,20 @@ impl ErrorMapper {
     }
 
     /// Map QBFT-specific errors to Go format
-    pub fn map_qbft_error_to_go(&self, error: &TestError) -> String {
+    pub fn map_qbft_error_to_go(&self, error: &qbft::TestError) -> String {
         match error {
-            TestError::InvalidState(msg) => format!("invalid state: {}", msg),
-            TestError::MessageCreationFailed(msg) => format!("message creation failed: {}", msg),
-            TestError::JustificationError(msg) => format!("justification error: {}", msg),
-            TestError::SigningError(msg) => format!("signing error: {}", msg),
-            TestError::ScenarioSetupError(msg) => format!("scenario setup error: {}", msg),
+            qbft::TestError::InvalidState(msg) => format!("invalid state: {}", msg),
+            qbft::TestError::InvalidMessage(msg) => format!("invalid message: {}", msg),
+            qbft::TestError::InvalidRound(round) => format!("invalid round: {}", round),
+            qbft::TestError::InvalidOperator(op) => format!("invalid operator: {}", op),
+            qbft::TestError::InvalidSignature(msg) => format!("invalid signature: {}", msg),
+            qbft::TestError::InvalidData(msg) => format!("invalid data: {}", msg),
+            qbft::TestError::InvalidIdentifier(msg) => "message identifier is invalid".to_string(),
+            qbft::TestError::InvalidMessageType => "message type is invalid".to_string(),
+            qbft::TestError::InvalidSize { actual, expected } => {
+                format!("incorrect size: got {}, expected {}", actual, expected)
+            },
+            _ => error.to_string(),
         }
     }
 

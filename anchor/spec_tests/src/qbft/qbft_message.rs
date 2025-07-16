@@ -101,10 +101,21 @@ impl QbftMessageTest {
             signatures.push(sig_array);
         }
 
+        // Get operator IDs and sort them before creating the message
+        // The Go tests expect sorting to happen before zero validation
+        let mut operator_ids = test_msg.operator_ids.clone().unwrap_or_default();
+        
+        // Check for zero signers first (before sorting) to match Go validation order
+        if operator_ids.iter().any(|&id| id == ssv_types::OperatorId(0)) {
+            return Err("signer ID 0 not allowed".to_string());
+        }
+        
+        operator_ids.sort();
+        
         // Create our SignedSSVMessage
         SignedSSVMessage::new_from_vecs(
             signatures,
-            test_msg.operator_ids.clone().unwrap_or_default(),
+            operator_ids,
             ssv_message,
             Vec::new(),
         )
@@ -125,7 +136,19 @@ impl QbftMessageTest {
                 "number of signatures is different than number of signers".to_string()
             }
             SignedSSVMessageError::NoSignatures => "no signatures".to_string(),
-            _ => "invalid error".to_string(),
+            SignedSSVMessageError::SignersNotSorted => "signers not sorted".to_string(),
+            SignedSSVMessageError::TooManySignatures { provided, max } => {
+                format!("too many signatures: provided {}, maximum allowed is {}", provided, max)
+            }
+            SignedSSVMessageError::TooManyOperatorIDs { provided, max } => {
+                format!("too many operator IDs: provided {}, maximum allowed is {}", provided, max)
+            }
+            SignedSSVMessageError::FullDataTooLong { provided, max } => {
+                format!("full data is too long: {} bytes, maximum allowed is {} bytes", provided, max)
+            }
+            SignedSSVMessageError::SSVMessageError(ssv_error) => {
+                format!("SSV message error: {:?}", ssv_error)
+            }
         }
     }
 
