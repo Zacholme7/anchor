@@ -1,6 +1,7 @@
 use super::types::{TestContext, TestType};
 use message_validator::ValidationFailure;
 use qbft::TestError;
+use ssv_types::message::SignedSSVMessageError;
 use std::collections::HashMap;
 
 /// Centralized error mapper for ValidationFailure to Go error strings
@@ -24,7 +25,9 @@ impl ErrorMapper {
     pub fn map_validation_error_to_go(&self, error: &ValidationFailure) -> String {
         match error {
             // Critical message validation errors that need exact Go format
-            ValidationFailure::MismatchedIdentifier { .. } => "message identifier is invalid".to_string(),
+            ValidationFailure::MismatchedIdentifier { .. } => {
+                "message identifier is invalid".to_string()
+            }
             ValidationFailure::UnknownQBFTMessageType => "message type is invalid".to_string(),
             ValidationFailure::NoSigners => "no signers".to_string(),
             ValidationFailure::DuplicatedSigner => "duplicated signer".to_string(),
@@ -34,12 +37,14 @@ impl ErrorMapper {
             ValidationFailure::EmptyData => "empty data".to_string(),
             ValidationFailure::UndecodableMessageData(_) => "undecodable message data".to_string(),
             ValidationFailure::SignatureVerification => "signature verification failed".to_string(),
-            ValidationFailure::SignatureVerificationFailed { .. } => "signature verification failed".to_string(),
+            ValidationFailure::SignatureVerificationFailed { .. } => {
+                "signature verification failed".to_string()
+            }
             ValidationFailure::WrongRSASignatureSize => "wrong signature size".to_string(),
             ValidationFailure::NilSSVMessage => "nil SSVMessage".to_string(),
             ValidationFailure::InvalidHash => "invalid hash".to_string(),
             ValidationFailure::FullDataHash => "full data hash".to_string(),
-            
+
             // Default to existing mapping for other errors
             _ => self.map_validation_failure(error),
         }
@@ -53,6 +58,44 @@ impl ErrorMapper {
             TestError::JustificationError(msg) => format!("justification error: {}", msg),
             TestError::SigningError(msg) => format!("signing error: {}", msg),
             TestError::ScenarioSetupError(msg) => format!("scenario setup error: {}", msg),
+        }
+    }
+
+    /// Map SignedSSVMessage creation errors to Go format
+    pub fn map_signed_ssv_error_to_go(
+        &self,
+        error: &ssv_types::message::SignedSSVMessageError,
+    ) -> String {
+        match error {
+            SignedSSVMessageError::NoSigners => "no signers".to_string(),
+            SignedSSVMessageError::ZeroSigner => "signer ID 0 not allowed".to_string(),
+            SignedSSVMessageError::DuplicatedSigner => "non unique signer".to_string(),
+            SignedSSVMessageError::SignersAndSignaturesWithDifferentLength => {
+                "number of signatures is different than number of signers".to_string()
+            }
+            SignedSSVMessageError::NoSignatures => "no signatures".to_string(),
+            SignedSSVMessageError::SignersNotSorted => "signers not sorted".to_string(),
+            SignedSSVMessageError::TooManySignatures { provided, max } => {
+                format!(
+                    "too many signatures: provided {}, maximum allowed is {}",
+                    provided, max
+                )
+            }
+            SignedSSVMessageError::TooManyOperatorIDs { provided, max } => {
+                format!(
+                    "too many operator IDs: provided {}, maximum allowed is {}",
+                    provided, max
+                )
+            }
+            SignedSSVMessageError::FullDataTooLong { provided, max } => {
+                format!(
+                    "full data is too long: {} bytes, maximum allowed is {} bytes",
+                    provided, max
+                )
+            }
+            SignedSSVMessageError::SSVMessageError(ssv_error) => {
+                format!("SSV message error: {:?}", ssv_error)
+            }
         }
     }
 
@@ -71,10 +114,12 @@ impl ErrorMapper {
                 } else {
                     validation_error.clone()
                 }
-            },
+            }
             super::AdapterError::InvalidState(msg) => format!("invalid state: {}", msg),
             super::AdapterError::Config(msg) => format!("config error: {}", msg),
-            super::AdapterError::MessageCreation(msg) => format!("message creation failed: {}", msg),
+            super::AdapterError::MessageCreation(msg) => {
+                format!("message creation failed: {}", msg)
+            }
             super::AdapterError::OpenSsl(msg) => format!("openssl error: {}", msg),
             super::AdapterError::Base64Decode(msg) => format!("base64 decode error: {}", msg),
         }
@@ -268,13 +313,19 @@ impl ErrorMapper {
                 // Enhanced pattern matching for exact Go error format
                 if error_str.contains("MismatchedIdentifier") || error_str.contains("identifier") {
                     "message identifier is invalid".to_string()
-                } else if error_str.contains("UnknownQBFTMessageType") || error_str.contains("message type") {
+                } else if error_str.contains("UnknownQBFTMessageType")
+                    || error_str.contains("message type")
+                {
                     "message type is invalid".to_string()
                 } else if error_str.contains("NoSigners") || error_str.starts_with("no signers") {
                     "no signers".to_string()
-                } else if error_str.contains("DuplicatedSigner") || error_str.starts_with("duplicated signer") {
+                } else if error_str.contains("DuplicatedSigner")
+                    || error_str.starts_with("duplicated signer")
+                {
                     "duplicated signer".to_string()
-                } else if error_str.contains("SignerNotInCommittee") || error_str.starts_with("signer not in committee") {
+                } else if error_str.contains("SignerNotInCommittee")
+                    || error_str.starts_with("signer not in committee")
+                {
                     "signer not in committee".to_string()
                 } else if error_str.contains("ZeroSigner") || error_str.starts_with("zero signer") {
                     "zero signer".to_string()
@@ -282,17 +333,26 @@ impl ErrorMapper {
                     "zero round".to_string()
                 } else if error_str.contains("EmptyData") || error_str.starts_with("empty data") {
                     "empty data".to_string()
-                } else if error_str.contains("UndecodableMessageData") || error_str.contains("undecodable") {
+                } else if error_str.contains("UndecodableMessageData")
+                    || error_str.contains("undecodable")
+                {
                     "undecodable message data".to_string()
-                } else if error_str.contains("SignatureVerification") || error_str.contains("signature") {
+                } else if error_str.contains("SignatureVerification")
+                    || error_str.contains("signature")
+                {
                     "signature verification failed".to_string()
-                } else if error_str.contains("WrongRSASignatureSize") || error_str.contains("signature size") {
+                } else if error_str.contains("WrongRSASignatureSize")
+                    || error_str.contains("signature size")
+                {
                     "wrong signature size".to_string()
-                } else if error_str.contains("NilSSVMessage") || error_str.starts_with("nil SSVMessage") {
+                } else if error_str.contains("NilSSVMessage")
+                    || error_str.starts_with("nil SSVMessage")
+                {
                     "nil SSVMessage".to_string()
                 } else if error_str.contains("InvalidHash") || error_str.contains("invalid hash") {
                     "invalid hash".to_string()
-                } else if error_str.contains("FullDataHash") || error_str.contains("full data hash") {
+                } else if error_str.contains("FullDataHash") || error_str.contains("full data hash")
+                {
                     "full data hash".to_string()
                 } else {
                     // Fallback to using the error string as-is
@@ -466,4 +526,13 @@ pub fn map_with_test_context(
     let context = super::TestContext::new(test_name.to_string(), test_type);
     let mapper = ErrorMapper::new(context);
     mapper.map_validation_failure(failure)
+}
+
+/// Direct mapping function for SignedSSVMessage errors to Go format
+pub fn map_signed_ssv_error_to_go_format(
+    error: &ssv_types::message::SignedSSVMessageError,
+) -> String {
+    let context = super::TestContext::new("default".to_string(), TestType::QbftMessage);
+    let mapper = ErrorMapper::new(context);
+    mapper.map_signed_ssv_error_to_go(error)
 }

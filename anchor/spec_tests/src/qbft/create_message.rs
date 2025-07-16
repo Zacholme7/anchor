@@ -50,19 +50,27 @@ impl SpecTest for CreateMessageTest {
     }
 
     fn run(&self) -> bool {
-        
         // Debug: Log prepare justifications from JSON deserialization
-        eprintln!("🔍 DEBUG [{}]: JSON prepare_justifications count: {}", 
-                 self.name, 
-                 self.prepare_justifications.as_ref().map(|pj| pj.len()).unwrap_or(0));
+        eprintln!(
+            "🔍 DEBUG [{}]: JSON prepare_justifications count: {}",
+            self.name,
+            self.prepare_justifications
+                .as_ref()
+                .map(|pj| pj.len())
+                .unwrap_or(0)
+        );
         if let Some(ref prepare_justifications) = self.prepare_justifications {
             for (i, pj) in prepare_justifications.iter().enumerate() {
                 let operator_ids = pj.operator_ids();
-                eprintln!("🔍 DEBUG [{}]: PrepareJustification[{}] operator_ids: {:?}", 
-                         self.name, i, operator_ids.iter().map(|id| id.0).collect::<Vec<_>>());
+                eprintln!(
+                    "🔍 DEBUG [{}]: PrepareJustification[{}] operator_ids: {:?}",
+                    self.name,
+                    i,
+                    operator_ids.iter().map(|id| id.0).collect::<Vec<_>>()
+                );
             }
         }
-        
+
         // Create test context
         let test_context = TestContext::new(self.name.clone(), TestType::MessageCreation)
             .with_expected_errors(vec![self.expected_error.clone()]);
@@ -78,9 +86,12 @@ impl SpecTest for CreateMessageTest {
 
         // Setup scenario if needed
         let prepare_justifications = self.prepare_justifications.clone().unwrap_or_default();
-        eprintln!("🔍 DEBUG [{}]: Passing {} prepare justifications to setup_message_creation_scenario", 
-                 self.name, prepare_justifications.len());
-        
+        eprintln!(
+            "🔍 DEBUG [{}]: Passing {} prepare justifications to setup_message_creation_scenario",
+            self.name,
+            prepare_justifications.len()
+        );
+
         if let Err(e) = adapter.setup_message_creation_scenario(
             self.round.map(Round::from),
             self.state_value.clone(),
@@ -142,10 +153,13 @@ impl CreateMessageTest {
     /// Create message creation request from test data
     fn create_message_request(&self) -> MessageCreationRequest {
         let prepare_justifications = self.prepare_justifications.clone().unwrap_or_default();
-        
-        eprintln!("🔍 DEBUG [{}]: create_message_request() - prepare_justifications count: {}", 
-                 self.name, prepare_justifications.len());
-        
+
+        eprintln!(
+            "🔍 DEBUG [{}]: create_message_request() - prepare_justifications count: {}",
+            self.name,
+            prepare_justifications.len()
+        );
+
         MessageCreationRequest {
             msg_type: self.msg_type,
             data_hash: self.get_data_hash(),
@@ -192,7 +206,7 @@ impl CreateMessageTest {
 
         // Validate root hash if expected
         let actual_root = created_message.tree_hash_root();
-        
+
         if actual_root != self.expected_root {
             eprintln!(
                 "✗ Root hash mismatch: expected {:?}, got {:?}",

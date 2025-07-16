@@ -8,14 +8,17 @@ use qbft::{
 };
 use sha2::{Digest, Sha256};
 use ssv_types::{
-    IndexSet, OperatorId, Round, consensus::{BeaconVote, RoundChangeLength, JustificationLength}, message::SignedSSVMessage, msgid::MessageId,
+    IndexSet, OperatorId, Round,
+    consensus::{BeaconVote, JustificationLength, RoundChangeLength},
+    message::SignedSSVMessage,
+    msgid::MessageId,
 };
 use ssz::Encode;
 use std::{collections::VecDeque, sync::Arc};
-use types::{Hash256, VariableList};
 use types::typenum::U13;
+use types::{Hash256, VariableList};
 
-use super::error_mapping::ErrorMapper;
+use super::error_mapping::{ErrorMapper, map_signed_ssv_error_to_go_format};
 use super::types::*;
 use super::validation::*;
 use crate::utils::test_keys::TestKeySet;
@@ -317,7 +320,7 @@ impl QbftTestAdapter {
     }
 
     /// Execute validation scenario with enhanced validation checks
-    pub fn execute_validation_scenario(&mut self, message: SignedSSVMessage) -> ScenarioResult {
+    pub fn execute_validation_scenario(&self, message: SignedSSVMessage) -> ScenarioResult {
         let context = self
             .test_context
             .clone()
@@ -345,7 +348,11 @@ impl QbftTestAdapter {
     }
 
     /// Enhanced validation with comprehensive checks for identifiers, sizes, and message types
-    fn validate_message_enhanced(&self, message: &SignedSSVMessage, context: &TestContext) -> ValidationResult {
+    fn validate_message_enhanced(
+        &self,
+        message: &SignedSSVMessage,
+        context: &TestContext,
+    ) -> ValidationResult {
         let mut errors = Vec::new();
         let mut warnings = Vec::new();
 
@@ -522,7 +529,7 @@ impl QbftTestAdapter {
                 if justification.is_empty() {
                     return Err("malformed round change justifications".to_string());
                 }
-                
+
                 // Try to decode the justification as a SignedSSVMessage
                 // If it fails with size issues, return "incorrect size"
                 match ssv_types::message::SignedSSVMessage::from_ssz_bytes(justification) {
@@ -542,7 +549,7 @@ impl QbftTestAdapter {
                 if justification.is_empty() {
                     return Err("malformed prepare justifications".to_string());
                 }
-                
+
                 // Try to decode the justification as a SignedSSVMessage
                 // If it fails with size issues, return "incorrect size"
                 match ssv_types::message::SignedSSVMessage::from_ssz_bytes(justification) {
@@ -699,15 +706,18 @@ impl QbftTestAdapter {
         use ssv_types::consensus::QbftMessage;
         use ssv_types::message::{MsgType, SSVMessage, SignedSSVMessage};
         use ssz::Encode;
-        use types::VariableList;
         use tree_hash::TreeHash;
+        use types::VariableList;
 
         // Debug output removed for cleaner results
 
         // Get the round, defaulting to 1 if not specified (round 0 is invalid)
         let round: u64 = request.round.unwrap_or(1.into()).into();
-        eprintln!("DEBUG: request.round = {:?}, final round = {}", request.round, round);
-        
+        eprintln!(
+            "DEBUG: request.round = {:?}, final round = {}",
+            request.round, round
+        );
+
         // Use provided identifier bytes if available, otherwise use default message ID
         let id_bytes = if let Some(bytes) = identifier_bytes {
             bytes
@@ -721,18 +731,22 @@ impl QbftTestAdapter {
         // Set data_round based on message type and state
         // For most message types, data_round should be 0 (NoRound)
         // Only for round change messages with prepared state should it be set
-        
+
         let data_round = match request.msg_type {
             ssv_types::consensus::QbftMessageType::RoundChange => {
                 // FIXED: data_round should reflect the prepared state round when previously prepared
                 // From Go execution trace: prepared state uses data_round = 1 (the prepared round)
-                let has_prepared_state = !request.prepare_justifications.is_empty() || request.state_value.is_some();
-                
+                let has_prepared_state =
+                    !request.prepare_justifications.is_empty() || request.state_value.is_some();
+
                 if has_prepared_state {
                     // In prepared state - set data_round to the round we were prepared in
                     // For spec tests, this is typically round 1
                     let prepared_round = 1; // The round we were previously prepared in
-                    eprintln!("DEBUG DataRound: RoundChange setting to prepared round: {} (current round: {})", prepared_round, round);
+                    eprintln!(
+                        "DEBUG DataRound: RoundChange setting to prepared round: {} (current round: {})",
+                        prepared_round, round
+                    );
                     prepared_round
                 } else {
                     eprintln!("DEBUG DataRound: RoundChange setting to 0 (no prepared state)");
@@ -741,14 +755,17 @@ impl QbftTestAdapter {
             }
             ssv_types::consensus::QbftMessageType::Proposal => {
                 // PROPOSAL LOGIC: Proposals might also need special data_round when previously prepared
-                let has_prepared_state = !request.prepare_justifications.is_empty() || 
-                                        !request.round_change_justifications.is_empty() || 
-                                        request.state_value.is_some();
-                
+                let has_prepared_state = !request.prepare_justifications.is_empty()
+                    || !request.round_change_justifications.is_empty()
+                    || request.state_value.is_some();
+
                 if has_prepared_state {
                     // Proposal with prepared state - might need data_round = prepared round
                     let prepared_round = 1; // The round we were previously prepared in
-                    eprintln!("DEBUG DataRound: Proposal setting to prepared round: {} (current round: {})", prepared_round, round);
+                    eprintln!(
+                        "DEBUG DataRound: Proposal setting to prepared round: {} (current round: {})",
+                        prepared_round, round
+                    );
                     prepared_round
                 } else {
                     eprintln!("DEBUG DataRound: Proposal setting to 0 (no prepared state)");
@@ -766,7 +783,7 @@ impl QbftTestAdapter {
             // For a 4-node committee, quorum is 3 (⅔ + 1)
             let committee_size = self.committee.len();
             let quorum_threshold = (committee_size * 2) / 3 + 1; // ⌊(2n)/3⌋ + 1
-            
+
             // Count unique signers across all justifications
             let mut unique_signers = std::collections::HashSet::new();
             for justification in justifications {
@@ -774,10 +791,14 @@ impl QbftTestAdapter {
                     unique_signers.insert(operator_id);
                 }
             }
-            
-            eprintln!("DEBUG RUST: Quorum check - committee_size: {}, quorum_threshold: {}, unique_signers: {}", 
-                     committee_size, quorum_threshold, unique_signers.len());
-            
+
+            eprintln!(
+                "DEBUG RUST: Quorum check - committee_size: {}, quorum_threshold: {}, unique_signers: {}",
+                committee_size,
+                quorum_threshold,
+                unique_signers.len()
+            );
+
             unique_signers.len() >= quorum_threshold
         };
 
@@ -785,18 +806,29 @@ impl QbftTestAdapter {
         let (round_change_justification, prepare_justification) = match request.msg_type {
             ssv_types::consensus::QbftMessageType::Proposal => {
                 // Proposals can have both types of justifications
-                let rc_just = if !request.round_change_justifications.is_empty() && has_quorum(&request.round_change_justifications) {
+                let rc_just = if !request.round_change_justifications.is_empty()
+                    && has_quorum(&request.round_change_justifications)
+                {
                     // Convert SignedSSVMessage to bytes for justifications
                     let mut rc_bytes: Vec<VariableList<u8, RoundChangeLength>> = Vec::new();
                     for (i, msg) in request.round_change_justifications.iter().enumerate() {
                         let encoded = msg.encode_without_full_data();
-                        eprintln!("DEBUG RUST: RoundChangeJustification[{}]: {} bytes: {}", i, encoded.len(), hex::encode(&encoded));
+                        eprintln!(
+                            "DEBUG RUST: RoundChangeJustification[{}]: {} bytes: {}",
+                            i,
+                            encoded.len(),
+                            hex::encode(&encoded)
+                        );
                         let var_list =
                             VariableList::new(encoded).unwrap_or_else(|_| VariableList::empty());
                         rc_bytes.push(var_list);
                     }
-                    eprintln!("DEBUG RUST: RoundChangeJustifications total: {} items (quorum met)", rc_bytes.len());
-                    VariableList::<VariableList<u8, RoundChangeLength>, U13>::new(rc_bytes).unwrap_or_else(|_| VariableList::empty())
+                    eprintln!(
+                        "DEBUG RUST: RoundChangeJustifications total: {} items (quorum met)",
+                        rc_bytes.len()
+                    );
+                    VariableList::<VariableList<u8, RoundChangeLength>, U13>::new(rc_bytes)
+                        .unwrap_or_else(|_| VariableList::empty())
                 } else {
                     if !request.round_change_justifications.is_empty() {
                         eprintln!("DEBUG RUST: RoundChangeJustifications filtered out - no quorum");
@@ -804,17 +836,28 @@ impl QbftTestAdapter {
                     VariableList::empty()
                 };
 
-                let prep_just = if !request.prepare_justifications.is_empty() && has_quorum(&request.prepare_justifications) {
+                let prep_just = if !request.prepare_justifications.is_empty()
+                    && has_quorum(&request.prepare_justifications)
+                {
                     let mut prep_bytes: Vec<VariableList<u8, JustificationLength>> = Vec::new();
                     for (i, msg) in request.prepare_justifications.iter().enumerate() {
                         let encoded = msg.encode_without_full_data();
-                        eprintln!("DEBUG RUST: PrepareJustification[{}]: {} bytes: {}", i, encoded.len(), hex::encode(&encoded));
+                        eprintln!(
+                            "DEBUG RUST: PrepareJustification[{}]: {} bytes: {}",
+                            i,
+                            encoded.len(),
+                            hex::encode(&encoded)
+                        );
                         let var_list =
                             VariableList::new(encoded).unwrap_or_else(|_| VariableList::empty());
                         prep_bytes.push(var_list);
                     }
-                    eprintln!("DEBUG RUST: PrepareJustifications total: {} items (quorum met)", prep_bytes.len());
-                    VariableList::<VariableList<u8, JustificationLength>, U13>::new(prep_bytes).unwrap_or_else(|_| VariableList::empty())
+                    eprintln!(
+                        "DEBUG RUST: PrepareJustifications total: {} items (quorum met)",
+                        prep_bytes.len()
+                    );
+                    VariableList::<VariableList<u8, JustificationLength>, U13>::new(prep_bytes)
+                        .unwrap_or_else(|_| VariableList::empty())
                 } else {
                     if !request.prepare_justifications.is_empty() {
                         eprintln!("DEBUG RUST: PrepareJustifications filtered out - no quorum");
@@ -826,20 +869,33 @@ impl QbftTestAdapter {
             }
             ssv_types::consensus::QbftMessageType::RoundChange => {
                 // Round change messages can have prepare justifications, but only if they meet quorum
-                let prep_just = if !request.prepare_justifications.is_empty() && has_quorum(&request.prepare_justifications) {
+                let prep_just = if !request.prepare_justifications.is_empty()
+                    && has_quorum(&request.prepare_justifications)
+                {
                     let mut prep_bytes: Vec<VariableList<u8, JustificationLength>> = Vec::new();
                     for (i, msg) in request.prepare_justifications.iter().enumerate() {
                         let encoded = msg.encode_without_full_data();
-                        eprintln!("DEBUG RUST: RoundChange PrepareJustification[{}]: {} bytes: {}", i, encoded.len(), hex::encode(&encoded));
+                        eprintln!(
+                            "DEBUG RUST: RoundChange PrepareJustification[{}]: {} bytes: {}",
+                            i,
+                            encoded.len(),
+                            hex::encode(&encoded)
+                        );
                         let var_list =
                             VariableList::new(encoded).unwrap_or_else(|_| VariableList::empty());
                         prep_bytes.push(var_list);
                     }
-                    eprintln!("DEBUG RUST: RoundChange PrepareJustifications total: {} items (quorum met)", prep_bytes.len());
-                    VariableList::<VariableList<u8, JustificationLength>, U13>::new(prep_bytes).unwrap_or_else(|_| VariableList::empty())
+                    eprintln!(
+                        "DEBUG RUST: RoundChange PrepareJustifications total: {} items (quorum met)",
+                        prep_bytes.len()
+                    );
+                    VariableList::<VariableList<u8, JustificationLength>, U13>::new(prep_bytes)
+                        .unwrap_or_else(|_| VariableList::empty())
                 } else {
                     if !request.prepare_justifications.is_empty() {
-                        eprintln!("DEBUG RUST: RoundChange PrepareJustifications filtered out - no quorum");
+                        eprintln!(
+                            "DEBUG RUST: RoundChange PrepareJustifications filtered out - no quorum"
+                        );
                     }
                     VariableList::empty()
                 };
@@ -857,13 +913,16 @@ impl QbftTestAdapter {
         let root = match request.msg_type {
             ssv_types::consensus::QbftMessageType::RoundChange => {
                 // FIXED LOGIC: If we have ANY prepare justifications OR state_value, we are in previously prepared state
-                let has_prepared_state = !request.prepare_justifications.is_empty() || request.state_value.is_some();
-                
-                eprintln!("DEBUG ROOT: has_prepared_state={}, justifications_count={}, state_value_len={:?}", 
-                         has_prepared_state, 
-                         request.prepare_justifications.len(),
-                         request.state_value.as_ref().map(|sv| sv.len()));
-                
+                let has_prepared_state =
+                    !request.prepare_justifications.is_empty() || request.state_value.is_some();
+
+                eprintln!(
+                    "DEBUG ROOT: has_prepared_state={}, justifications_count={}, state_value_len={:?}",
+                    has_prepared_state,
+                    request.prepare_justifications.len(),
+                    request.state_value.as_ref().map(|sv| sv.len())
+                );
+
                 if has_prepared_state {
                     // We are in previously prepared state - use prepared value hash
                     if let Some(state_value) = request.state_value.as_ref() {
@@ -874,9 +933,16 @@ impl QbftTestAdapter {
                     } else {
                         // Use the TestingQBFTFullData hash which is what the Go implementation uses
                         use sha2::{Digest, Sha256};
-                        let testing_qbft_full_data = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9];
-                        let prepared_value_hash = Hash256::from_slice(&Sha256::digest(&testing_qbft_full_data));
-                        eprintln!("DEBUG ROOT: Using TestingQBFTFullData hash: {:?}", prepared_value_hash);
+                        let testing_qbft_full_data = vec![
+                            1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6,
+                            7, 8, 9,
+                        ];
+                        let prepared_value_hash =
+                            Hash256::from_slice(&Sha256::digest(&testing_qbft_full_data));
+                        eprintln!(
+                            "DEBUG ROOT: Using TestingQBFTFullData hash: {:?}",
+                            prepared_value_hash
+                        );
                         prepared_value_hash
                     }
                 } else {
@@ -887,40 +953,58 @@ impl QbftTestAdapter {
             }
             ssv_types::consensus::QbftMessageType::Proposal => {
                 // PROPOSAL LOGIC: Proposals also need special root calculation
-                let has_prepared_state = !request.prepare_justifications.is_empty() || 
-                                        !request.round_change_justifications.is_empty() || 
-                                        request.state_value.is_some();
-                
-                eprintln!("DEBUG ROOT: Proposal has_prepared_state={}, rc_justifications={}, prep_justifications={}, state_value_len={:?}", 
-                         has_prepared_state, 
-                         request.round_change_justifications.len(),
-                         request.prepare_justifications.len(),
-                         request.state_value.as_ref().map(|sv| sv.len()));
-                
+                let has_prepared_state = !request.prepare_justifications.is_empty()
+                    || !request.round_change_justifications.is_empty()
+                    || request.state_value.is_some();
+
+                eprintln!(
+                    "DEBUG ROOT: Proposal has_prepared_state={}, rc_justifications={}, prep_justifications={}, state_value_len={:?}",
+                    has_prepared_state,
+                    request.round_change_justifications.len(),
+                    request.prepare_justifications.len(),
+                    request.state_value.as_ref().map(|sv| sv.len())
+                );
+
                 if has_prepared_state {
                     // Proposal with prepared state - use prepared value hash
                     if let Some(state_value) = request.state_value.as_ref() {
                         use sha2::{Digest, Sha256};
                         let state_hash = Hash256::from_slice(&Sha256::digest(state_value));
-                        eprintln!("DEBUG ROOT: Proposal using state_value hash: {:?}", state_hash);
+                        eprintln!(
+                            "DEBUG ROOT: Proposal using state_value hash: {:?}",
+                            state_hash
+                        );
                         state_hash
                     } else {
                         // Use the TestingQBFTFullData hash
                         use sha2::{Digest, Sha256};
-                        let testing_qbft_full_data = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9];
-                        let prepared_value_hash = Hash256::from_slice(&Sha256::digest(&testing_qbft_full_data));
-                        eprintln!("DEBUG ROOT: Proposal using TestingQBFTFullData hash: {:?}", prepared_value_hash);
+                        let testing_qbft_full_data = vec![
+                            1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6,
+                            7, 8, 9,
+                        ];
+                        let prepared_value_hash =
+                            Hash256::from_slice(&Sha256::digest(&testing_qbft_full_data));
+                        eprintln!(
+                            "DEBUG ROOT: Proposal using TestingQBFTFullData hash: {:?}",
+                            prepared_value_hash
+                        );
                         prepared_value_hash
                     }
                 } else {
                     // Proposal with no prepared state - use data hash
-                    eprintln!("DEBUG ROOT: Proposal using data_hash (no prepared state): {:?}", request.data_hash);
+                    eprintln!(
+                        "DEBUG ROOT: Proposal using data_hash (no prepared state): {:?}",
+                        request.data_hash
+                    );
                     request.data_hash
                 }
             }
             _ => {
                 // For other message types (Prepare, Commit), use the data hash
-                eprintln!("DEBUG ROOT: Using data_hash for other message type: {:?}", request.data_hash);
+                eprintln!(
+                    "DEBUG ROOT: Using data_hash for other message type: {:?}",
+                    request.data_hash
+                );
                 request.data_hash
             }
         };
@@ -928,27 +1012,38 @@ impl QbftTestAdapter {
         // Calculate FullData based on whether justifications will actually be included in final message
         let will_include_prepare_justifications = match request.msg_type {
             ssv_types::consensus::QbftMessageType::RoundChange => {
-                !request.prepare_justifications.is_empty() && has_quorum(&request.prepare_justifications)
+                !request.prepare_justifications.is_empty()
+                    && has_quorum(&request.prepare_justifications)
             }
             ssv_types::consensus::QbftMessageType::Proposal => {
-                !request.prepare_justifications.is_empty() && has_quorum(&request.prepare_justifications)
+                !request.prepare_justifications.is_empty()
+                    && has_quorum(&request.prepare_justifications)
             }
-            _ => false
+            _ => false,
         };
 
         let full_data_for_later = match request.msg_type {
             ssv_types::consensus::QbftMessageType::RoundChange => {
                 // FIXED LOGIC: FullData follows the same prepared state logic as root calculation
-                let has_prepared_state = !request.prepare_justifications.is_empty() || request.state_value.is_some();
-                
+                let has_prepared_state =
+                    !request.prepare_justifications.is_empty() || request.state_value.is_some();
+
                 if has_prepared_state {
                     // We are in previously prepared state - include FullData
                     if let Some(state_value) = request.state_value.as_ref() {
-                        eprintln!("DEBUG FullData: Using state_value because in prepared state, len={}", state_value.len());
+                        eprintln!(
+                            "DEBUG FullData: Using state_value because in prepared state, len={}",
+                            state_value.len()
+                        );
                         state_value.clone()
                     } else {
-                        eprintln!("DEBUG FullData: Using test data because in prepared state but no state_value");
-                        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+                        eprintln!(
+                            "DEBUG FullData: Using test data because in prepared state but no state_value"
+                        );
+                        vec![
+                            1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6,
+                            7, 8, 9,
+                        ]
                     }
                 } else {
                     eprintln!("DEBUG FullData: Using empty because not in prepared state");
@@ -959,11 +1054,21 @@ impl QbftTestAdapter {
                 // PROPOSAL LOGIC: FullData behavior might be different for proposals
                 // Check if this proposal includes prepared value data
                 if let Some(state_value) = request.state_value.as_ref() {
-                    eprintln!("DEBUG FullData: Proposal using state_value, len={}", state_value.len());
+                    eprintln!(
+                        "DEBUG FullData: Proposal using state_value, len={}",
+                        state_value.len()
+                    );
                     state_value.clone()
-                } else if !request.prepare_justifications.is_empty() || !request.round_change_justifications.is_empty() {
-                    eprintln!("DEBUG FullData: Proposal using test data because has justifications");
-                    vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+                } else if !request.prepare_justifications.is_empty()
+                    || !request.round_change_justifications.is_empty()
+                {
+                    eprintln!(
+                        "DEBUG FullData: Proposal using test data because has justifications"
+                    );
+                    vec![
+                        1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7,
+                        8, 9,
+                    ]
                 } else {
                     eprintln!("DEBUG FullData: Proposal using empty (no state)");
                     vec![]
@@ -974,8 +1079,11 @@ impl QbftTestAdapter {
                 vec![]
             }
         };
-        eprintln!("DEBUG FullData: Final FullData len={}", full_data_for_later.len());
-        
+        eprintln!(
+            "DEBUG FullData: Final FullData len={}",
+            full_data_for_later.len()
+        );
+
         // Create QBFT message based on type
         eprintln!("DEBUG: Creating QBFT message with:");
         eprintln!("  - msg_type: {:?}", request.msg_type);
@@ -984,9 +1092,15 @@ impl QbftTestAdapter {
         eprintln!("  - identifier: {:?}", identifier);
         eprintln!("  - root: {:?}", root);
         eprintln!("  - data_round: {}", data_round);
-        eprintln!("  - round_change_justification: {} items", round_change_justification.len());
-        eprintln!("  - prepare_justification: {} items", prepare_justification.len());
-        
+        eprintln!(
+            "  - round_change_justification: {} items",
+            round_change_justification.len()
+        );
+        eprintln!(
+            "  - prepare_justification: {} items",
+            prepare_justification.len()
+        );
+
         // Create QBFT message with justifications included when provided
         let qbft_message = QbftMessage {
             qbft_message_type: request.msg_type,
@@ -1001,7 +1115,7 @@ impl QbftTestAdapter {
 
         // Create SSV message with QBFT data
         let data_bytes = qbft_message.as_ssz_bytes();
-        
+
         let data_list = VariableList::new(data_bytes)
             .map_err(|e| AdapterError::MessageCreation(format!("Invalid data: {:?}", e)))?;
 
@@ -1015,34 +1129,43 @@ impl QbftTestAdapter {
             .map_err(|e| {
                 AdapterError::MessageCreation(format!("Failed to create SSV message: {:?}", e))
             })?;
-        
 
         // Create signed message with proper RSA signature using TestKeySet
         use crate::utils::test_keys::TestKeySet;
-        use openssl::sign::Signer;
         use openssl::hash::MessageDigest;
         use openssl::pkey::PKey;
-        
+        use openssl::sign::Signer;
+
         let test_keys = TestKeySet::four_share_set();
-        let signing_key = test_keys.operator_keys.get(&self.operator_id)
-            .ok_or_else(|| AdapterError::MessageCreation(format!("No key found for operator {}", self.operator_id.0)))?;
-        
+        let signing_key = test_keys
+            .operator_keys
+            .get(&self.operator_id)
+            .ok_or_else(|| {
+                AdapterError::MessageCreation(format!(
+                    "No key found for operator {}",
+                    self.operator_id.0
+                ))
+            })?;
+
         // Convert RSA key to PKey for signing
-        let pkey = PKey::from_rsa(signing_key.clone())
-            .map_err(|e| AdapterError::MessageCreation(format!("Failed to convert RSA key: {:?}", e)))?;
-        
+        let pkey = PKey::from_rsa(signing_key.clone()).map_err(|e| {
+            AdapterError::MessageCreation(format!("Failed to convert RSA key: {:?}", e))
+        })?;
+
         // Create the message bytes to sign (SSV message)
         let message_bytes = ssv_message.as_ssz_bytes();
-        
+
         // Sign the message using RSA-SHA256
-        let mut signer = Signer::new(MessageDigest::sha256(), &pkey)
-            .map_err(|e| AdapterError::MessageCreation(format!("Failed to create signer: {:?}", e)))?;
-        signer.update(&message_bytes)
-            .map_err(|e| AdapterError::MessageCreation(format!("Failed to update signer: {:?}", e)))?;
-        let signature_bytes = signer.sign_to_vec()
+        let mut signer = Signer::new(MessageDigest::sha256(), &pkey).map_err(|e| {
+            AdapterError::MessageCreation(format!("Failed to create signer: {:?}", e))
+        })?;
+        signer.update(&message_bytes).map_err(|e| {
+            AdapterError::MessageCreation(format!("Failed to update signer: {:?}", e))
+        })?;
+        let signature_bytes = signer
+            .sign_to_vec()
             .map_err(|e| AdapterError::MessageCreation(format!("Failed to sign: {:?}", e)))?;
-        
-        
+
         let signature = VariableList::new(signature_bytes)
             .map_err(|e| AdapterError::MessageCreation(format!("Invalid signature: {:?}", e)))?;
         let signatures = VariableList::new(vec![signature])
@@ -1053,32 +1176,47 @@ impl QbftTestAdapter {
         let full_data = VariableList::new(full_data_for_later)
             .map_err(|e| AdapterError::MessageCreation(format!("Invalid full data: {:?}", e)))?;
 
-        
+        let signed_message =
+            SignedSSVMessage::new(signatures, operator_ids, ssv_message, full_data).map_err(
+                |e| {
+                    let go_error = map_signed_ssv_error_to_go_format(&e);
+                    AdapterError::MessageCreation(go_error)
+                },
+            )?;
 
-        let signed_message = SignedSSVMessage::new(
-            signatures,
-            operator_ids,
-            ssv_message,
-            full_data,
-        )
-        .map_err(|e| {
-            AdapterError::MessageCreation(format!("Failed to create signed message: {:?}", e))
-        })?;
-        
         // Debug the complete message structure before hashing
         eprintln!("DEBUG RUST: Complete SignedSSVMessage structure:");
-        eprintln!("  - signatures.len(): {}", signed_message.signatures().len());
-        eprintln!("  - operator_ids.len(): {}", signed_message.operator_ids().len());
-        eprintln!("  - ssv_message.msg_type: {:?}", signed_message.ssv_message().msg_type());
-        eprintln!("  - ssv_message.msg_id: {:?}", signed_message.ssv_message().msg_id());
-        eprintln!("  - ssv_message.data.len(): {}", signed_message.ssv_message().data().len());
+        eprintln!(
+            "  - signatures.len(): {}",
+            signed_message.signatures().len()
+        );
+        eprintln!(
+            "  - operator_ids.len(): {}",
+            signed_message.operator_ids().len()
+        );
+        eprintln!(
+            "  - ssv_message.msg_type: {:?}",
+            signed_message.ssv_message().msg_type()
+        );
+        eprintln!(
+            "  - ssv_message.msg_id: {:?}",
+            signed_message.ssv_message().msg_id()
+        );
+        eprintln!(
+            "  - ssv_message.data.len(): {}",
+            signed_message.ssv_message().data().len()
+        );
         eprintln!("  - full_data.len(): {}", signed_message.full_data().len());
-        
+
         // Debug individual field bytes for detailed comparison
         eprintln!("DEBUG RUST: Individual field bytes:");
         let sig_bytes = signed_message.signatures().as_ssz_bytes();
-        eprintln!("  - signatures bytes: {} bytes: {}", sig_bytes.len(), hex::encode(&sig_bytes));
-        
+        eprintln!(
+            "  - signatures bytes: {} bytes: {}",
+            sig_bytes.len(),
+            hex::encode(&sig_bytes)
+        );
+
         // Debug operator IDs manually since slice doesn't implement Encode
         let op_ids = signed_message.operator_ids();
         eprintln!("  - operator_ids count: {}", op_ids.len());
@@ -1086,43 +1224,101 @@ impl QbftTestAdapter {
             eprintln!("    - operator_id[{}]: {}", i, op_id.0);
         }
         let ssv_msg_bytes = signed_message.ssv_message().as_ssz_bytes();
-        eprintln!("  - ssv_message bytes: {} bytes: {}", ssv_msg_bytes.len(), hex::encode(&ssv_msg_bytes));
+        eprintln!(
+            "  - ssv_message bytes: {} bytes: {}",
+            ssv_msg_bytes.len(),
+            hex::encode(&ssv_msg_bytes)
+        );
         let full_data = signed_message.full_data();
-        eprintln!("  - full_data bytes: {} bytes: {}", full_data.len(), hex::encode(&full_data));
-        
+        eprintln!(
+            "  - full_data bytes: {} bytes: {}",
+            full_data.len(),
+            hex::encode(&full_data)
+        );
+
         // Debug the SSV message internal structure
         eprintln!("DEBUG RUST: SSV message internal structure:");
         let msg_type_bytes = signed_message.ssv_message().msg_type().as_ssz_bytes();
-        eprintln!("  - msg_type bytes: {} bytes: {}", msg_type_bytes.len(), hex::encode(&msg_type_bytes));
+        eprintln!(
+            "  - msg_type bytes: {} bytes: {}",
+            msg_type_bytes.len(),
+            hex::encode(&msg_type_bytes)
+        );
         let msg_id_bytes = signed_message.ssv_message().msg_id().as_ssz_bytes();
-        eprintln!("  - msg_id bytes: {} bytes: {}", msg_id_bytes.len(), hex::encode(&msg_id_bytes));
+        eprintln!(
+            "  - msg_id bytes: {} bytes: {}",
+            msg_id_bytes.len(),
+            hex::encode(&msg_id_bytes)
+        );
         let data = signed_message.ssv_message().data();
-        eprintln!("  - data bytes: {} bytes: {}", data.len(), hex::encode(&data));
-        
+        eprintln!(
+            "  - data bytes: {} bytes: {}",
+            data.len(),
+            hex::encode(&data)
+        );
+
         // Debug the QBFT message structure within the data
         eprintln!("DEBUG RUST: QBFT message structure (within SSV data):");
         let qbft_type_bytes = qbft_message.qbft_message_type.as_ssz_bytes();
-        eprintln!("  - qbft_message_type bytes: {} bytes: {}", qbft_type_bytes.len(), hex::encode(&qbft_type_bytes));
+        eprintln!(
+            "  - qbft_message_type bytes: {} bytes: {}",
+            qbft_type_bytes.len(),
+            hex::encode(&qbft_type_bytes)
+        );
         let height_bytes = qbft_message.height.as_ssz_bytes();
-        eprintln!("  - height bytes: {} bytes: {}", height_bytes.len(), hex::encode(&height_bytes));
+        eprintln!(
+            "  - height bytes: {} bytes: {}",
+            height_bytes.len(),
+            hex::encode(&height_bytes)
+        );
         let round_bytes = qbft_message.round.as_ssz_bytes();
-        eprintln!("  - round bytes: {} bytes: {}", round_bytes.len(), hex::encode(&round_bytes));
+        eprintln!(
+            "  - round bytes: {} bytes: {}",
+            round_bytes.len(),
+            hex::encode(&round_bytes)
+        );
         let identifier_bytes = qbft_message.identifier.as_ssz_bytes();
-        eprintln!("  - identifier bytes: {} bytes: {}", identifier_bytes.len(), hex::encode(&identifier_bytes));
+        eprintln!(
+            "  - identifier bytes: {} bytes: {}",
+            identifier_bytes.len(),
+            hex::encode(&identifier_bytes)
+        );
         let root_bytes = qbft_message.root.as_ssz_bytes();
-        eprintln!("  - root bytes: {} bytes: {}", root_bytes.len(), hex::encode(&root_bytes));
+        eprintln!(
+            "  - root bytes: {} bytes: {}",
+            root_bytes.len(),
+            hex::encode(&root_bytes)
+        );
         let data_round_bytes = qbft_message.data_round.as_ssz_bytes();
-        eprintln!("  - data_round bytes: {} bytes: {}", data_round_bytes.len(), hex::encode(&data_round_bytes));
+        eprintln!(
+            "  - data_round bytes: {} bytes: {}",
+            data_round_bytes.len(),
+            hex::encode(&data_round_bytes)
+        );
         let rc_just_bytes = qbft_message.round_change_justification.as_ssz_bytes();
-        eprintln!("  - round_change_justification bytes: {} bytes: {}", rc_just_bytes.len(), hex::encode(&rc_just_bytes));
+        eprintln!(
+            "  - round_change_justification bytes: {} bytes: {}",
+            rc_just_bytes.len(),
+            hex::encode(&rc_just_bytes)
+        );
         let prep_just_bytes = qbft_message.prepare_justification.as_ssz_bytes();
-        eprintln!("  - prepare_justification bytes: {} bytes: {}", prep_just_bytes.len(), hex::encode(&prep_just_bytes));
-        
+        eprintln!(
+            "  - prepare_justification bytes: {} bytes: {}",
+            prep_just_bytes.len(),
+            hex::encode(&prep_just_bytes)
+        );
+
         // Debug the complete SSZ encoding
         let complete_ssz = signed_message.as_ssz_bytes();
-        eprintln!("DEBUG RUST: Complete SSZ encoded message: {} bytes", complete_ssz.len());
-        eprintln!("DEBUG RUST: Complete SSZ hex: {}", hex::encode(&complete_ssz));
-        
+        eprintln!(
+            "DEBUG RUST: Complete SSZ encoded message: {} bytes",
+            complete_ssz.len()
+        );
+        eprintln!(
+            "DEBUG RUST: Complete SSZ hex: {}",
+            hex::encode(&complete_ssz)
+        );
+
         // Debug the tree hash root calculation
         let final_hash = signed_message.tree_hash_root();
         eprintln!("DEBUG RUST: Final hash calculated: {:?}", final_hash);

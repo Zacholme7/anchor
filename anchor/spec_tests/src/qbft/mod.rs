@@ -8,7 +8,7 @@ mod round_robin;
 // mod validation_facade;
 
 // Export adapter module for clean interface
-pub use adapter::unified::QbftTestAdapter;
+pub use adapter::error_mapping::map_signed_ssv_error_to_go_format;
 
 // Export test types
 pub use controller_test::ControllerTest;

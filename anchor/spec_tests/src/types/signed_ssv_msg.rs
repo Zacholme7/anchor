@@ -4,11 +4,13 @@ use operator_key::public;
 use serde::Deserialize;
 use ssv_types::{
     OperatorId,
-    message::{SSVMessage, SignedSSVMessage, SignedSSVMessageError},
+    message::{SSVMessage, SignedSSVMessage},
 };
 use ssz::Encode;
 
-use crate::{SpecTest, SpecTestType, types::TypesSpecTestType};
+use crate::{
+    SpecTest, SpecTestType, qbft::map_signed_ssv_error_to_go_format, types::TypesSpecTestType,
+};
 
 // Intermediate test-specific SignedSSVMessage that can handle null SSVMessage
 #[derive(Debug, Clone, Deserialize)]
@@ -150,20 +152,7 @@ impl SignedSSVMessageTest {
             ssv_message.clone(),
             Vec::new(),
         )
-        .map_err(|e| self.error_to_string(&e))
-    }
-
-    fn error_to_string(&self, error: &SignedSSVMessageError) -> String {
-        match error {
-            SignedSSVMessageError::NoSigners => "no signers".to_string(),
-            SignedSSVMessageError::ZeroSigner => "signer ID 0 not allowed".to_string(),
-            SignedSSVMessageError::DuplicatedSigner => "non unique signer".to_string(),
-            SignedSSVMessageError::SignersAndSignaturesWithDifferentLength => {
-                "number of signatures is different than number of signers".to_string()
-            }
-            SignedSSVMessageError::NoSignatures => "no signatures".to_string(),
-            _ => "invalid error".to_string(),
-        }
+        .map_err(|e| map_signed_ssv_error_to_go_format(&e))
     }
 
     fn check_expected_error(&self, error_msg: &str) -> bool {

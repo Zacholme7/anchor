@@ -1,60 +1,9 @@
-use serde::Deserialize;
-use ssv_types::OperatorId;
 use super::adapter::types::SpecTestCommitteeMember;
 use crate::{QbftSpecTestType, SpecTest, SpecTestType};
-
-/// Round-robin proposer selection algorithm matching Go implementation
-fn round_robin_proposer(committee: &[OperatorId], height: u64, round: u64) -> OperatorId {
-    let first_round_index = if height == 0 {
-        0
-    } else {
-        (height as usize) % committee.len()
-    };
-    
-    let index = (first_round_index + (round - 1) as usize) % committee.len();
-    committee[index]
-}
-
-impl SpecTest for RoundRobinTest {
-    fn name(&self) -> &str {
-        &self.name
-    }
-    
-    fn test_type() -> SpecTestType {
-        SpecTestType::Qbft(QbftSpecTestType::RoundRobin)
-    }
-    
-    fn run(&self) -> bool {
-        let committee_ids: Vec<OperatorId> = self.share.committee
-            .iter()
-            .map(|member| OperatorId::from(member.operator_id))
-            .collect();
-        
-        for i in 0..self.heights.len() {
-            let height = self.heights[i];
-            let round = self.rounds[i];
-            let expected_proposer = OperatorId::from(self.proposers[i]);
-            
-            let actual_proposer = round_robin_proposer(&committee_ids, height, round);
-            
-            if actual_proposer != expected_proposer {
-                eprintln!(
-                    "Round robin test '{}' failed at index {}: height={}, round={}, expected={}, got={}",
-                    self.name, i, height, round, expected_proposer.0, actual_proposer.0
-                );
-                return false;
-            }
-        }
-        
-        eprintln!("Round robin test '{}' passed all {} test cases", self.name, self.heights.len());
-        true
-    }
-    
-    fn setup(&mut self) {
-        // No setup needed for round robin tests
-    }
-}
-
+use indexmap::IndexSet;
+use qbft::{DefaultLeaderFunction, InstanceHeight, LeaderFunction};
+use serde::Deserialize;
+use ssv_types::{OperatorId, Round};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RoundRobinTest {
@@ -72,4 +21,57 @@ pub struct RoundRobinTest {
     pub rounds: Vec<u64>,
     #[serde(rename = "Proposers")]
     pub proposers: Vec<u64>,
+}
+
+/// Round-robin proposer selection algorithm using DefaultLeaderFunction
+fn round_robin_proposer(committee: &[OperatorId], height: u64, round: u64) -> OperatorId {
+    let leader_fn = DefaultLeaderFunction::default();
+    let committee_set: IndexSet<OperatorId> = committee.iter().copied().collect();
+    let round = Round::from(round);
+    let instance_height = InstanceHeight::from(height as usize);
+
+    // Find the proposer by testing each committee member
+    for member in committee {
+        if leader_fn.leader_function(member, round, instance_height, &committee_set) {
+            return *member;
+        }
+    }
+    unreachable!("One committee member must be the leader")
+}
+
+impl SpecTest for RoundRobinTest {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn setup(&mut self) {
+        // No-op
+    }
+
+    fn run(&self) -> bool {
+        let committee_ids: Vec<OperatorId> = self
+            .share
+            .committee
+            .iter()
+            .map(|member| OperatorId::from(member.operator_id))
+            .collect();
+
+        for i in 0..self.heights.len() {
+            let height = self.heights[i];
+            let round = self.rounds[i];
+            let expected_proposer = OperatorId::from(self.proposers[i]);
+
+            let actual_proposer = round_robin_proposer(&committee_ids, height, round);
+
+            if actual_proposer != expected_proposer {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn test_type() -> SpecTestType {
+        SpecTestType::Qbft(QbftSpecTestType::RoundRobin)
+    }
 }

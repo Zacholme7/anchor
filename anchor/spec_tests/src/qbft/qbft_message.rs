@@ -4,24 +4,63 @@ use ssv_types::message::SignedSSVMessage;
 use super::adapter::{QbftTestAdapter, TestContext, TestType};
 use crate::{QbftSpecTestType, SpecTest, SpecTestType, types::TestSignedSSVMessage};
 
+#[derive(Deserialize)]
+pub struct QbftMessageTest {
+    #[serde(rename = "Name")]
+    pub name: String,
+    #[serde(rename = "Type")]
+    pub test_type: String,
+    #[serde(rename = "Documentation")]
+    pub documentation: String,
+    #[serde(rename = "Messages")]
+    pub messages: Vec<TestSignedSSVMessage>,
+    #[serde(rename = "ExpectedError")]
+    pub expected_error: String,
+
+    // Setup state fields (not serialized from JSON)
+    #[serde(skip)]
+    pub test_context: Option<TestContext>,
+    #[serde(skip)]
+    pub adapter: Option<Box<QbftTestAdapter>>,
+    #[serde(skip)]
+    pub setup_error: Option<String>,
+}
+
 impl SpecTest for QbftMessageTest {
     fn name(&self) -> &str {
         &self.name
     }
 
-    fn run(&self) -> bool {
-        // Create test context
+    fn setup(&mut self) {
+        // Create test context and qbft adapter
         let test_context = TestContext::new(self.name.clone(), TestType::QbftMessage)
             .with_expected_errors(self.expected_errors());
-
-        // Create adapter for validation testing with default committee
-        let mut adapter = match QbftTestAdapter::with_default_committee() {
-            Ok(adapter) => adapter.with_test_context(test_context),
+        let adapter = match QbftTestAdapter::with_default_committee() {
+            Ok(adapter) => adapter.with_test_context(test_context.clone()),
             Err(e) => {
-                eprintln!("Failed to create adapter: {}", e);
-                return false;
+                self.setup_error = Some(format!("Failed to create adapter: {}", e));
+                return;
             }
         };
+
+        // Store successful setup
+        self.test_context = Some(test_context);
+        self.adapter = Some(Box::new(adapter));
+    }
+
+    fn run(&self) -> bool {
+        // Validate setup was successful
+        if !self.is_setup_valid() {
+            if let Some(error) = self.get_setup_error() {
+                eprintln!("Setup failed: {}", error);
+            } else {
+                eprintln!("Setup not called or incomplete - please call setup() before run()");
+            }
+            return false;
+        }
+
+        // Get pre-created adapter (safe to unwrap after validation)
+        let adapter = self.adapter.as_ref().unwrap().as_ref();
 
         // Try to create the signed message
         let scenario_result = match self.create_signed_message() {
@@ -44,10 +83,6 @@ impl SpecTest for QbftMessageTest {
 
         // Assert validation result
         self.assert_validation_result(&scenario_result)
-    }
-
-    fn setup(&mut self) {
-        // No setup needed for message validation tests
     }
 
     fn test_type() -> SpecTestType {
@@ -104,57 +139,44 @@ impl QbftMessageTest {
         // Get operator IDs and sort them before creating the message
         // The Go tests expect sorting to happen before zero validation
         let mut operator_ids = test_msg.operator_ids.clone().unwrap_or_default();
-        
+
         // Check for zero signers first (before sorting) to match Go validation order
-        if operator_ids.iter().any(|&id| id == ssv_types::OperatorId(0)) {
+        if operator_ids
+            .iter()
+            .any(|&id| id == ssv_types::OperatorId(0))
+        {
             return Err("signer ID 0 not allowed".to_string());
         }
-        
-        operator_ids.sort();
-        
-        // Create our SignedSSVMessage
-        SignedSSVMessage::new_from_vecs(
-            signatures,
-            operator_ids,
-            ssv_message,
-            Vec::new(),
-        )
-        .map_err(|e| self.map_signed_ssv_error_to_go_string(&e))
-    }
 
-    /// Map SignedSSVMessage errors to Go error strings
-    fn map_signed_ssv_error_to_go_string(
-        &self,
-        error: &ssv_types::message::SignedSSVMessageError,
-    ) -> String {
-        use ssv_types::message::SignedSSVMessageError;
-        match error {
-            SignedSSVMessageError::NoSigners => "no signers".to_string(),
-            SignedSSVMessageError::ZeroSigner => "signer ID 0 not allowed".to_string(),
-            SignedSSVMessageError::DuplicatedSigner => "non unique signer".to_string(),
-            SignedSSVMessageError::SignersAndSignaturesWithDifferentLength => {
-                "number of signatures is different than number of signers".to_string()
-            }
-            SignedSSVMessageError::NoSignatures => "no signatures".to_string(),
-            SignedSSVMessageError::SignersNotSorted => "signers not sorted".to_string(),
-            SignedSSVMessageError::TooManySignatures { provided, max } => {
-                format!("too many signatures: provided {}, maximum allowed is {}", provided, max)
-            }
-            SignedSSVMessageError::TooManyOperatorIDs { provided, max } => {
-                format!("too many operator IDs: provided {}, maximum allowed is {}", provided, max)
-            }
-            SignedSSVMessageError::FullDataTooLong { provided, max } => {
-                format!("full data is too long: {} bytes, maximum allowed is {} bytes", provided, max)
-            }
-            SignedSSVMessageError::SSVMessageError(ssv_error) => {
-                format!("SSV message error: {:?}", ssv_error)
-            }
-        }
+        operator_ids.sort();
+
+        // Create our SignedSSVMessage
+        SignedSSVMessage::new_from_vecs(signatures, operator_ids, ssv_message, Vec::new()).map_err(
+            |e| {
+                use crate::qbft::adapter::error_mapping::map_signed_ssv_error_to_go_format;
+                map_signed_ssv_error_to_go_format(&e)
+            },
+        )
     }
 
     /// Get expected errors from test
     fn expected_errors(&self) -> Vec<String> {
         vec![self.expected_error.clone()]
+    }
+
+    /// Check if setup was successful and all required objects are available
+    fn is_setup_valid(&self) -> bool {
+        self.setup_error.is_none() && self.test_context.is_some() && self.adapter.is_some()
+    }
+
+    /// Get setup error message if any
+    fn get_setup_error(&self) -> Option<&String> {
+        self.setup_error.as_ref()
+    }
+
+    /// Check if setup needs to be called (or re-called)
+    fn needs_setup(&self) -> bool {
+        !self.is_setup_valid()
     }
 
     /// Assert validation result
@@ -198,18 +220,4 @@ impl QbftMessageTest {
         eprintln!("✓ Message validation passed as expected");
         true
     }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct QbftMessageTest {
-    #[serde(rename = "Name")]
-    pub name: String,
-    #[serde(rename = "Type")]
-    pub test_type: String,
-    #[serde(rename = "Documentation")]
-    pub documentation: String,
-    #[serde(rename = "Messages")]
-    pub messages: Vec<TestSignedSSVMessage>,
-    #[serde(rename = "ExpectedError")]
-    pub expected_error: String,
 }
