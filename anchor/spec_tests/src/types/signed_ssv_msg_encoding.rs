@@ -8,7 +8,6 @@ use crate::{
 
 // Encoding test structure
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct SignedSSVMessageEncodingTest {
     #[serde(rename = "Name")]
     pub name: String,

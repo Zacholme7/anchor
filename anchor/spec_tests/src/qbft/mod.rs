@@ -122,7 +122,7 @@ impl SpecQbft {
     }
 }
 
-#[derive(Eq, PartialEq, Hash, Debug)]
+#[derive(Eq, PartialEq, Hash, Debug, Clone)]
 pub(crate) enum QbftSpecTestType {
     Timeout,
     QbftMessage,

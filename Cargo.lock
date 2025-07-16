@@ -7782,6 +7782,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "serde_with",
  "sha2 0.10.9",
  "ssz_types",
  "thiserror 2.0.12",

@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use ssz::{Decode, DecodeError, Encode};
 use ssz_derive::{Decode, Encode};
 use tree_hash::{PackedEncoding, TreeHash, TreeHashType};
@@ -14,7 +14,7 @@ use crate::{OperatorId, ValidatorIndex};
 /// Calculated as 1000 + 512 = 1512
 pub type PartialSignatureMessagesLen = Sum<U1000, U512>;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(from = "u64", into = "u64")]
 #[cfg_attr(feature = "arbitrary-fuzz", derive(arbitrary::Arbitrary))]
 pub enum PartialSignatureKind {
@@ -119,7 +119,7 @@ impl TreeHash for PartialSignatureKind {
 }
 
 // A partial signature specific message
-#[derive(Clone, Debug, PartialEq, Encode, Decode, TreeHash, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Encode, Decode, TreeHash, Deserialize, Serialize)]
 pub struct PartialSignatureMessages {
     #[serde(rename = "Type")]
     pub kind: PartialSignatureKind,
@@ -129,7 +129,7 @@ pub struct PartialSignatureMessages {
     pub messages: VariableList<PartialSignatureMessage, PartialSignatureMessagesLen>,
 }
 
-#[derive(Clone, Debug, PartialEq, Encode, Decode, TreeHash, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Encode, Decode, TreeHash, Deserialize, Serialize)]
 pub struct PartialSignatureMessage {
     #[serde(
         rename = "PartialSignature",

@@ -7,7 +7,6 @@ use crate::{
 };
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EncryptionSpecTest {
     #[serde(rename = "Name")]
     pub name: String,

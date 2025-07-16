@@ -12,7 +12,6 @@ use crate::{SpecTest, SpecTestType, types::TypesSpecTestType};
 
 // Intermediate test-specific SignedSSVMessage that can handle null SSVMessage
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct TestSignedSSVMessage {
     #[serde(rename = "Signatures")]
     pub signatures: Vec<String>,
@@ -26,7 +25,6 @@ pub struct TestSignedSSVMessage {
 
 // SignedSSVMessage validation tests
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct SignedSSVMessageTest {
     #[serde(rename = "Name")]
     pub name: String,

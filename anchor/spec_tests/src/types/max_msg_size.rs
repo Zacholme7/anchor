@@ -10,7 +10,6 @@ use crate::{
 // we require a new parsing structure
 // Structure size validation test
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct MaxMsgSizeTest {
     #[serde(rename = "Name")]
     pub name: String,

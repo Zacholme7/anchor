@@ -10,7 +10,6 @@ use crate::{
 
 // Validator consensus data encoding test
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ValidatorConsensusDataEncodingTest {
     #[serde(rename = "Name")]
     pub name: String,

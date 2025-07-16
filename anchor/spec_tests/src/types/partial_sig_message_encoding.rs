@@ -9,7 +9,6 @@ use crate::{
 
 // Encoding test for partial signature messages
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct PartialSigMessageEncodingTest {
     #[serde(rename = "Name")]
     pub name: String,

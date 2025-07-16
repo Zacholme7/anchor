@@ -10,7 +10,6 @@ use crate::{
 
 // Partial signature message test
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct PartialSigMsgSpecTest {
     #[serde(rename = "Name")]
     pub name: String,

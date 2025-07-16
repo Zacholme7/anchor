@@ -1,8 +1,12 @@
 #![allow(dead_code)]
 
 mod qbft;
+mod ssv;
 mod types;
 mod utils;
+
+#[cfg(test)]
+mod debug_test;
 use std::{
     collections::{HashMap, HashSet},
     fmt, fs,
@@ -12,16 +16,18 @@ use std::{
 
 use qbft::QbftSpecTestType;
 use serde::de::DeserializeOwned;
+use ssv::SsvSpecTestType;
 use types::TypesSpecTestType;
 use walkdir::WalkDir;
 
 use crate::{qbft::*, types::*};
 
 // All Spec Test Variants. Maps to an inner variant type that describes specific tests
-#[derive(Eq, PartialEq, Hash, Debug)]
+#[derive(Eq, PartialEq, Hash, Debug, Clone)]
 enum SpecTestType {
     Qbft(QbftSpecTestType),
     Types(TypesSpecTestType),
+    Ssv(SsvSpecTestType),
 }
 
 // Maps a test category to its respective spec test location. Do not change!
@@ -30,6 +36,9 @@ impl fmt::Display for SpecTestType {
         match self {
             SpecTestType::Qbft(_) => write!(f, "ssv-spec/qbft/spectest/generate/tests"),
             SpecTestType::Types(_) => write!(f, "ssv-spec/types/spectest/generate/tests"),
+            SpecTestType::Ssv(_) => {
+                write!(f, "ssv-spec/ssv/spectest/generate/tests")
+            }
         }
     }
 }
@@ -130,52 +139,113 @@ fn run_tests(test_type: SpecTestType) -> bool {
     let dir_name = test_type.to_string();
     let test_dir = Path::new(&dir_name);
 
-    let tests: Vec<Box<dyn SpecTest>> = WalkDir::new(test_dir)
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let path = entry.path();
+    let tests: Vec<Box<dyn SpecTest>> = match &test_type {
+        SpecTestType::Ssv(ssv_type) => {
+            // For SSV tests, load JSON files that match the test type
+            WalkDir::new(test_dir)
+                .into_iter()
+                .filter_map(Result::ok)
+                .filter_map(|entry| {
+                    let path = entry.path();
+                    if path.is_file() && path.extension().map_or(false, |ext| ext == "json") {
+                        let filename = path.file_name()?.to_string_lossy();
 
-            // Check if it is an encoding test
-            let is_encoding = test_type.is_encoding();
-
-            // Get the inner variant string to check in filenames
-            let variant = match &test_type {
-                SpecTestType::Qbft(inner) => inner.to_string(),
-                SpecTestType::Types(inner) => inner.to_string(),
-            };
-
-            if path.is_file() {
-                let filename = path.file_name().map(|name| name.to_string_lossy());
-
-                let matches = filename
-                    .map(|name| {
-                        let split: HashSet<String> = name.split('.').map(String::from).collect();
-
-                        let contains_prefix = split.contains(&variant);
-                        if is_encoding {
-                            // if it is an encoding tests, we also have to check that the file
-                            // conatins "EncodingTest"
-                            contains_prefix & name.contains("EncodingTest")
+                        // Use filename pattern matching to determine if this file belongs to the requested test type
+                        if let Some(detected_type) =
+                            utils::ssv_test_discovery::determine_ssv_test_type(&filename)
+                        {
+                            if detected_type == *ssv_type {
+                                println!("Loading {path:?}");
+                                match fs::read_to_string(path) {
+                                    Ok(json_data) => {
+                                        match ssv::create_ssv_test(ssv_type.clone(), &json_data) {
+                                            Ok(test) => Some(test),
+                                            Err(e) => {
+                                                eprintln!(
+                                                    "Failed to parse SSV test {}: {}",
+                                                    path.display(),
+                                                    e
+                                                );
+                                                None
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        eprintln!(
+                                            "Failed to read SSV test file {}: {}",
+                                            path.display(),
+                                            e
+                                        );
+                                        None
+                                    }
+                                }
+                            } else {
+                                None
+                            }
                         } else {
-                            contains_prefix & !name.contains("EncodingTest")
+                            None
                         }
-                    })
-                    .unwrap_or(false);
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        }
+        _ => {
+            // Original logic for Qbft and Types tests
+            WalkDir::new(test_dir)
+                .into_iter()
+                .filter_map(Result::ok)
+                .filter_map(|entry| {
+                    let path = entry.path();
 
-                if matches {
-                    println!("Loading {path:?}");
-                    let loader = TEST_LOADERS
-                        .get(&test_type)
-                        .unwrap_or_else(|| panic!("No loader registered for: {test_type}"));
-                    return Some(loader(&path.to_string_lossy()));
-                }
-            }
-            None
-        })
-        .collect();
+                    // Check if it is an encoding test
+                    let is_encoding = test_type.is_encoding();
 
-    assert!(!tests.is_empty());
+                    // Get the inner variant string to check in filenames
+                    let variant = match &test_type {
+                        SpecTestType::Qbft(inner) => inner.to_string(),
+                        SpecTestType::Types(inner) => inner.to_string(),
+                        SpecTestType::Ssv(inner) => inner.to_string(),
+                    };
+
+                    if path.is_file() {
+                        let filename = path.file_name().map(|name| name.to_string_lossy());
+
+                        let matches = filename
+                            .map(|name| {
+                                let split: HashSet<String> =
+                                    name.split('.').map(String::from).collect();
+
+                                let contains_prefix = split.contains(&variant);
+                                if is_encoding {
+                                    // if it is an encoding tests, we also have to check that the file
+                                    // conatins "EncodingTest"
+                                    contains_prefix & name.contains("EncodingTest")
+                                } else {
+                                    contains_prefix & !name.contains("EncodingTest")
+                                }
+                            })
+                            .unwrap_or(false);
+
+                        if matches {
+                            println!("Loading {path:?}");
+                            let loader = TEST_LOADERS
+                                .get(&test_type)
+                                .unwrap_or_else(|| panic!("No loader registered for: {test_type}"));
+                            return Some(loader(&path.to_string_lossy()));
+                        }
+                    }
+                    None
+                })
+                .collect()
+        }
+    };
+
+    if tests.is_empty() {
+        println!("No tests found for {test_type:?}");
+        return false;
+    }
     println!("Loaded {} tests", tests.len());
 
     let mut result = true;
@@ -314,6 +384,65 @@ mod spec_tests {
             assert!(run_tests(SpecTestType::Types(
                 TypesSpecTestType::ValidatorConsensusDataEncoding
             )))
+        }
+    }
+
+    // All SSV specific spec tests
+    mod ssv_tests {
+        use super::*;
+
+        #[test]
+        // SSV Controller tests
+        fn test_ssv_controller() {
+            assert!(run_tests(SpecTestType::Ssv(SsvSpecTestType::Controller)))
+        }
+
+        #[test]
+        // SSV Message Processing tests
+        fn test_ssv_message_processing() {
+            assert!(run_tests(SpecTestType::Ssv(
+                SsvSpecTestType::MessageProcessing
+            )))
+        }
+
+        #[test]
+        // SSV Multi-Message Processing tests
+        fn test_ssv_multi_message_processing() {
+            assert!(run_tests(SpecTestType::Ssv(
+                SsvSpecTestType::MultiMessageProcessing
+            )))
+        }
+
+        #[test]
+        // SSV Committee tests
+        fn test_ssv_committee() {
+            assert!(run_tests(SpecTestType::Ssv(SsvSpecTestType::Committee)))
+        }
+
+        #[test]
+        // SSV Partial Signatures tests
+        fn test_ssv_partial_signatures() {
+            assert!(run_tests(SpecTestType::Ssv(
+                SsvSpecTestType::PartialSignatures
+            )))
+        }
+
+        #[test]
+        // SSV Validation tests
+        fn test_ssv_validation() {
+            assert!(run_tests(SpecTestType::Ssv(SsvSpecTestType::Validation)))
+        }
+
+        #[test]
+        // SSV Duty Execution tests
+        fn test_ssv_duty_execution() {
+            assert!(run_tests(SpecTestType::Ssv(SsvSpecTestType::DutyExecution)))
+        }
+
+        #[test]
+        // SSV Runner Construction tests
+        fn test_ssv_runner_construction() {
+            assert!(run_tests(SpecTestType::Ssv(SsvSpecTestType::RunnerConstruction)))
         }
     }
 }

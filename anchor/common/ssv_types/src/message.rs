@@ -4,7 +4,7 @@ use std::{
 };
 
 use base64::prelude::*;
-use serde::{Deserialize, Deserializer, de::Error};
+use serde::{Deserialize, Deserializer, Serialize, de::Error};
 use serde_json::Value;
 use ssz::{Decode, DecodeError, Encode};
 use ssz_derive::{Decode, Encode};
@@ -67,7 +67,7 @@ type SSVMessageDataLen = Sum<Prod<U722, U1000>, U412>;
 pub type ValidatorConsensusDataLen = Sum<Prod<U8, U1000000>, Sum<Prod<U388, U1000>, U608>>;
 
 /// Defines the types of messages with explicit discriminant values.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "arbitrary-fuzz", derive(arbitrary::Arbitrary))]
 #[repr(u64)]
 pub enum MsgType {
@@ -178,7 +178,7 @@ pub enum SSVMessageError {
 }
 
 /// Represents a bare SSVMessage with a type, ID, and data.
-#[derive(Encode, Decode, Clone, PartialEq, Eq, Deserialize, TreeHash)]
+#[derive(Encode, Decode, Clone, PartialEq, Eq, Deserialize, Serialize, TreeHash)]
 #[cfg_attr(feature = "arbitrary-fuzz", derive(arbitrary::Arbitrary))]
 pub struct SSVMessage {
     #[serde(rename = "MsgType")]
@@ -348,7 +348,7 @@ pub type SignatureList = VariableList<VariableList<u8, U256>, U13>;
 
 /// Represents a signed SSV Message with signatures, operator IDs, the message itself, and full
 /// data.
-#[derive(Encode, Decode, Clone, PartialEq, Eq, Deserialize, TreeHash)]
+#[derive(Encode, Decode, Clone, PartialEq, Eq, Deserialize, Serialize, TreeHash)]
 pub struct SignedSSVMessage {
     #[serde(rename = "Signatures")]
     #[serde(deserialize_with = "deserialize_base64_signatures")]

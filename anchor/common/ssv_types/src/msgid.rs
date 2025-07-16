@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Formatter};
 
 use derive_more::{Display, From, Into};
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use ssz::{Decode, DecodeError, Encode};
 use tree_hash::{PackedEncoding, TreeHash, TreeHashType};
 use types::{PublicKeyBytes, VariableList, typenum::U56};
@@ -10,7 +10,7 @@ use crate::{committee::CommitteeId, domain_type::DomainType};
 
 const MESSAGE_ID_LEN: usize = 56;
 
-#[derive(Debug, Display, Copy, Clone, Hash, Eq, PartialEq)]
+#[derive(Debug, Display, Copy, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Role {
     Committee,
     Aggregator,
@@ -60,7 +60,7 @@ impl Role {
     }
 }
 
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
 pub enum DutyExecutor {
     Committee(CommitteeId),
     Validator(PublicKeyBytes),
@@ -100,6 +100,15 @@ impl<'de> Deserialize<'de> for MessageId {
         vec.try_into()
             .map(MessageId)
             .map_err(|_| serde::de::Error::custom("Expected array of 56 bytes".to_string()))
+    }
+}
+
+impl Serialize for MessageId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.0.to_vec().serialize(serializer)
     }
 }
 
