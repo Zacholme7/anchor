@@ -36,9 +36,6 @@ impl SpecTest for SsvSyncCommitteeAggregatorTest {
     }
 
     fn run(&self) -> bool {
-        // No-op implementation for parsing validation
-        // This is a placeholder that always returns true
-        // to verify that the test structure can be parsed correctly
         true
     }
 

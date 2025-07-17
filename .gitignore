@@ -11,6 +11,12 @@ perf.data*
 /clippy.toml
 /.cargo
 
+*ai*
+*llm*
+*claude*
+*cursor*
+*roo*
+
 # IntelliJ
 /*.iml
 .idea

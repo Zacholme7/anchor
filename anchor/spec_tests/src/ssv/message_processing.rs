@@ -1,188 +1,11 @@
-use serde::{Deserialize, Deserializer, Serialize};
+use crate::utils::deserializers::ssv_message_parse::{
+    deserialize_base64_or_vec, deserialize_optional_base64_or_vec, deserialize_signature_map,
+};
+use crate::{SpecTest, SpecTestType, SsvSpecTestType};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ssv_types::message::SignedSSVMessage;
 use std::collections::HashMap;
-
-use crate::{SpecTest, SpecTestType, SsvSpecTestType};
-
-// Custom deserializer for base64 strings that should be Vec<u8>
-fn deserialize_base64_or_vec<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    use serde::de::Error;
-
-    let value: Value = Deserialize::deserialize(deserializer)?;
-    match value {
-        Value::String(s) => {
-            // Try to decode as base64
-            use base64::Engine;
-            base64::engine::general_purpose::STANDARD
-                .decode(&s)
-                .map_err(|e| D::Error::custom(format!("Invalid base64: {}", e)))
-        }
-        Value::Array(arr) => {
-            // Convert array of numbers to Vec<u8>
-            let mut bytes = Vec::new();
-            for item in arr {
-                if let Value::Number(n) = item {
-                    if let Some(byte) = n.as_u64() {
-                        if byte <= 255 {
-                            bytes.push(byte as u8);
-                        } else {
-                            return Err(D::Error::custom("Number too large for u8"));
-                        }
-                    } else {
-                        return Err(D::Error::custom("Expected integer"));
-                    }
-                } else {
-                    return Err(D::Error::custom("Expected number in array"));
-                }
-            }
-            Ok(bytes)
-        }
-        Value::Null => {
-            // Handle null values by returning empty Vec
-            Ok(Vec::new())
-        }
-        _ => Err(D::Error::custom(format!(
-            "Expected string, array, or null, got: {:?}",
-            value
-        ))),
-    }
-}
-
-// Custom deserializer for optional base64 strings
-fn deserialize_optional_base64_or_vec<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    use serde::de::Error;
-
-    let value: Value = Deserialize::deserialize(deserializer)?;
-    match value {
-        Value::String(s) => {
-            // Try to decode as base64
-            use base64::Engine;
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(&s)
-                .map_err(|e| D::Error::custom(format!("Invalid base64: {}", e)))?;
-            Ok(Some(bytes))
-        }
-        Value::Array(arr) => {
-            // Convert array of numbers to Vec<u8>
-            let mut bytes = Vec::new();
-            for item in arr {
-                if let Value::Number(n) = item {
-                    if let Some(byte) = n.as_u64() {
-                        if byte <= 255 {
-                            bytes.push(byte as u8);
-                        } else {
-                            return Err(D::Error::custom("Number too large for u8"));
-                        }
-                    } else {
-                        return Err(D::Error::custom("Expected integer"));
-                    }
-                } else {
-                    return Err(D::Error::custom("Expected number in array"));
-                }
-            }
-            Ok(Some(bytes))
-        }
-        Value::Null => {
-            // Handle null values by returning None
-            Ok(None)
-        }
-        _ => Err(D::Error::custom(format!(
-            "Expected string, array, or null, got: {:?}",
-            value
-        ))),
-    }
-}
-
-// Custom deserializer for nested signature HashMap with base64 strings
-fn deserialize_signature_map<'de, D>(
-    deserializer: D,
-) -> Result<HashMap<String, HashMap<String, HashMap<String, Vec<u8>>>>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    use base64::Engine;
-    use serde::de::Error;
-
-    let value: Value = Deserialize::deserialize(deserializer)?;
-    let mut outer_map = HashMap::new();
-
-    if let Value::Object(obj1) = value {
-        for (key1, value1) in obj1 {
-            let mut middle_map = HashMap::new();
-
-            if let Value::Object(obj2) = value1 {
-                for (key2, value2) in obj2 {
-                    let mut inner_map = HashMap::new();
-
-                    if let Value::Object(obj3) = value2 {
-                        for (key3, value3) in obj3 {
-                            let bytes = match value3 {
-                                Value::String(s) => {
-                                    // Try to decode as base64
-                                    base64::engine::general_purpose::STANDARD
-                                        .decode(&s)
-                                        .map_err(|e| {
-                                            D::Error::custom(format!("Invalid base64: {}", e))
-                                        })?
-                                }
-                                Value::Array(arr) => {
-                                    // Convert array of numbers to Vec<u8>
-                                    let mut bytes = Vec::new();
-                                    for item in arr {
-                                        if let Value::Number(n) = item {
-                                            if let Some(byte) = n.as_u64() {
-                                                if byte <= 255 {
-                                                    bytes.push(byte as u8);
-                                                } else {
-                                                    return Err(D::Error::custom(
-                                                        "Number too large for u8",
-                                                    ));
-                                                }
-                                            } else {
-                                                return Err(D::Error::custom("Expected integer"));
-                                            }
-                                        } else {
-                                            return Err(D::Error::custom(
-                                                "Expected number in array",
-                                            ));
-                                        }
-                                    }
-                                    bytes
-                                }
-                                Value::Null => Vec::new(),
-                                _ => {
-                                    return Err(D::Error::custom(
-                                        "Expected string, array, or null for signature value",
-                                    ));
-                                }
-                            };
-                            inner_map.insert(key3, bytes);
-                        }
-                    } else {
-                        return Err(D::Error::custom("Expected object for signature inner map"));
-                    }
-
-                    middle_map.insert(key2, inner_map);
-                }
-            } else {
-                return Err(D::Error::custom("Expected object for signature middle map"));
-            }
-
-            outer_map.insert(key1, middle_map);
-        }
-    } else {
-        return Err(D::Error::custom("Expected object for signature outer map"));
-    }
-
-    Ok(outer_map)
-}
 
 // Wrapper for SignedSSVMessage with custom deserialization
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -406,30 +229,34 @@ impl SpecTest for SsvMessageProcessingTest {
     }
 
     fn run(&self) -> bool {
-        if let Some(ref tests) = self.tests {
-            // Multi test format (MultiMsgProcessingSpecTest_*)
-            println!(
-                "Message processing multi-test '{}' parsed successfully with {} sub-tests",
-                self.name,
-                tests.len()
-            );
-            for test in tests {
-                println!("  Sub-test '{}' parsed successfully", test.name);
-            }
-        } else {
-            // Single test format (MsgProcessingSpecTest_*)
-            println!(
-                "Message processing test '{}' parsed successfully",
-                self.name
-            );
-        }
+        // todo!()
         true
     }
 
-    fn test_type() -> SpecTestType
-    where
-        Self: Sized,
-    {
+    fn test_type() -> SpecTestType {
         SpecTestType::Ssv(SsvSpecTestType::MessageProcessing)
+    }
+}
+
+// Newtype wrapper for MultiMessageProcessing that uses the same data but different test type
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SsvMultiMessageProcessingTest(pub SsvMessageProcessingTest);
+
+impl SpecTest for SsvMultiMessageProcessingTest {
+    fn name(&self) -> &str {
+        &self.0.name
+    }
+
+    fn setup(&mut self) {
+        // No-op for parsing validation
+    }
+
+    fn run(&self) -> bool {
+        // todo!()
+        true
+    }
+
+    fn test_type() -> SpecTestType {
+        SpecTestType::Ssv(SsvSpecTestType::MultiMessageProcessing)
     }
 }

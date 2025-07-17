@@ -7718,10 +7718,16 @@ dependencies = [
 name = "spec_tests"
 version = "0.1.0"
 dependencies = [
+ "async-channel 1.9.0",
  "base64 0.22.1",
+ "bls",
+ "database",
+ "duties_tracker",
  "ethereum_ssz",
  "ethereum_ssz_derive",
+ "futures",
  "hex",
+ "message_validator",
  "openssl",
  "operator_key",
  "parking_lot",
@@ -7729,7 +7735,11 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "slot_clock",
  "ssv_types",
+ "task_executor",
+ "tempfile",
+ "tokio",
  "tree_hash",
  "tree_hash_derive",
  "types",

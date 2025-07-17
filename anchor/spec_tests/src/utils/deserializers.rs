@@ -1,5 +1,6 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Deserializer, de::Error};
+use serde_json::Value;
 use ssv_types::{
     ValidatorIndex,
     consensus::{
@@ -12,6 +13,61 @@ use ssv_types::{
 };
 use types::{CommitteeIndex, ForkName, Hash256, PublicKeyBytes, Slot, VariableList, typenum::U13};
 
+/// Shared helper functions for common deserialization patterns
+mod shared_helpers {
+    use super::*;
+
+    /// Decode base64 string with consistent error handling
+    pub fn decode_base64<'de, D>(s: &str) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        STANDARD
+            .decode(s)
+            .map_err(|e| D::Error::custom(format!("Invalid base64: {}", e)))
+    }
+
+    /// Convert JSON array of numbers to Vec<u8>
+    pub fn convert_array_to_bytes<'de, D>(arr: &[Value]) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let mut bytes = Vec::new();
+        for item in arr {
+            if let Value::Number(n) = item {
+                if let Some(byte) = n.as_u64() {
+                    if byte <= 255 {
+                        bytes.push(byte as u8);
+                    } else {
+                        return Err(D::Error::custom("Number too large for u8"));
+                    }
+                } else {
+                    return Err(D::Error::custom("Expected integer"));
+                }
+            } else {
+                return Err(D::Error::custom("Expected number in array"));
+            }
+        }
+        Ok(bytes)
+    }
+
+    /// Flexible base64 or array decoder
+    pub fn decode_base64_or_array<'de, D>(value: &Value) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match value {
+            Value::String(s) => decode_base64::<D>(s),
+            Value::Array(arr) => convert_array_to_bytes::<D>(arr),
+            Value::Null => Ok(Vec::new()),
+            _ => Err(D::Error::custom(format!(
+                "Expected string, array, or null, got: {:?}",
+                value
+            ))),
+        }
+    }
+}
+
 /// General type parsers
 pub mod type_parse {
     use super::*;
@@ -21,9 +77,7 @@ pub mod type_parse {
         D: Deserializer<'de>,
     {
         let base64_string = String::deserialize(deserializer)?;
-        STANDARD
-            .decode(&base64_string)
-            .map_err(|e| Error::custom(format!("Failed to decode base64 string: {e}")))
+        super::shared_helpers::decode_base64::<D>(&base64_string)
     }
 
     // Convert byte array to Hash256 for expected roots
@@ -52,7 +106,7 @@ pub mod type_parse {
     {
         let opt: Option<String> = Option::deserialize(deserializer)?;
         match opt {
-            Some(s) => STANDARD.decode(&s).map(Some).map_err(D::Error::custom),
+            Some(s) => super::shared_helpers::decode_base64::<D>(&s).map(Some),
             None => Ok(None),
         }
     }
@@ -96,9 +150,7 @@ pub mod type_parse {
             Some(strings) => {
                 let mut result = Vec::new();
                 for s in strings {
-                    let bytes = STANDARD.decode(&s).map_err(|e| {
-                        Error::custom(format!("Failed to decode base64 string: {e}"))
-                    })?;
+                    let bytes = super::shared_helpers::decode_base64::<D>(&s)?;
                     result.push(bytes);
                 }
                 Ok(Some(result))
@@ -668,5 +720,80 @@ pub mod arbitrary_object_parse {
             round_change_justification,
             prepare_justification,
         })
+    }
+}
+
+/// Module for SSV-specific message deserializers
+pub mod ssv_message_parse {
+    use serde::{Deserialize, Deserializer, de::Error};
+    use serde_json::Value;
+    use std::collections::HashMap;
+
+    /// Custom deserializer for base64 strings that should be Vec<u8>
+    pub fn deserialize_base64_or_vec<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value: Value = Deserialize::deserialize(deserializer)?;
+        super::shared_helpers::decode_base64_or_array::<D>(&value)
+    }
+
+    /// Custom deserializer for optional base64 strings
+    pub fn deserialize_optional_base64_or_vec<'de, D>(
+        deserializer: D,
+    ) -> Result<Option<Vec<u8>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value: Value = Deserialize::deserialize(deserializer)?;
+        match value {
+            Value::Null => Ok(None),
+            _ => super::shared_helpers::decode_base64_or_array::<D>(&value).map(Some),
+        }
+    }
+
+    /// Custom deserializer for nested signature HashMap with base64 strings
+    pub fn deserialize_signature_map<'de, D>(
+        deserializer: D,
+    ) -> Result<HashMap<String, HashMap<String, HashMap<String, Vec<u8>>>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value: Value = Deserialize::deserialize(deserializer)?;
+        let mut outer_map = HashMap::new();
+
+        if let Value::Object(obj1) = value {
+            for (key1, value1) in obj1 {
+                let mut middle_map = HashMap::new();
+
+                if let Value::Object(obj2) = value1 {
+                    for (key2, value2) in obj2 {
+                        let mut inner_map = HashMap::new();
+
+                        if let Value::Object(obj3) = value2 {
+                            for (key3, value3) in obj3 {
+                                let bytes =
+                                    super::shared_helpers::decode_base64_or_array::<D>(&value3)?;
+                                inner_map.insert(key3, bytes);
+                            }
+                        } else {
+                            return Err(D::Error::custom(
+                                "Expected object for signature inner map",
+                            ));
+                        }
+
+                        middle_map.insert(key2, inner_map);
+                    }
+                } else {
+                    return Err(D::Error::custom("Expected object for signature middle map"));
+                }
+
+                outer_map.insert(key1, middle_map);
+            }
+        } else {
+            return Err(D::Error::custom("Expected object for signature outer map"));
+        }
+
+        Ok(outer_map)
     }
 }

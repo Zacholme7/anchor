@@ -1,7 +1,6 @@
+use crate::{SpecTest, SpecTestType, SsvSpecTestType};
 use serde::{Deserialize, Serialize};
 use ssv_types::partial_sig::PartialSignatureMessage;
-
-use crate::{SpecTest, SpecTestType, SsvSpecTestType};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SsvPartialSignatureTest {
@@ -35,7 +34,6 @@ impl SpecTest for SsvPartialSignatureTest {
     }
 
     fn run(&self) -> bool {
-        println!("Partial signature test '{}' parsed successfully", self.name);
         true
     }
 

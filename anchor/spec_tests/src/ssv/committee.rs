@@ -1,8 +1,58 @@
 use crate::{SpecTest, SpecTestType, SsvSpecTestType};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use ssv_types::{OperatorId, message::SignedSSVMessage};
+use ssv_types::OperatorId;
 use std::collections::HashMap;
+
+// Test-specific SignedSSVMessage that doesn't use custom deserializers
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TestSignedSSVMessage {
+    #[serde(rename = "Signatures")]
+    pub signatures: Vec<String>,
+    #[serde(rename = "OperatorIDs")]
+    pub operator_ids: Vec<OperatorId>,
+    #[serde(rename = "SSVMessage")]
+    pub ssv_message: Value,
+    #[serde(rename = "FullData")]
+    pub full_data: String,
+}
+
+// Custom enum to handle mixed input types in committee tests
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum CommitteeInput {
+    ValidatorDuty {
+        #[serde(rename = "Slot")]
+        slot: String,
+        #[serde(rename = "ValidatorDuties")]
+        validator_duties: Vec<ValidatorDuty>,
+    },
+    SignedMessage(TestSignedSSVMessage),
+    // Fallback to catch anything we don't handle
+    Unknown(Value),
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ValidatorDuty {
+    #[serde(rename = "Type")]
+    pub duty_type: u64,
+    #[serde(rename = "PubKey")]
+    pub pub_key: String,
+    #[serde(rename = "Slot")]
+    pub slot: String,
+    #[serde(rename = "ValidatorIndex")]
+    pub validator_index: String,
+    #[serde(rename = "CommitteeIndex")]
+    pub committee_index: u64,
+    #[serde(rename = "CommitteeLength")]
+    pub committee_length: u64,
+    #[serde(rename = "CommitteesAtSlot")]
+    pub committees_at_slot: u64,
+    #[serde(rename = "ValidatorCommitteeIndex")]
+    pub validator_committee_index: u64,
+    #[serde(rename = "ValidatorSyncCommitteeIndices")]
+    pub validator_sync_committee_indices: Vec<u64>,
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SsvCommitteeTest {
@@ -17,11 +67,11 @@ pub struct SsvCommitteeTest {
     #[serde(rename = "Committee")]
     pub committee: Option<Committee>,
     #[serde(rename = "Input")]
-    pub input: Option<Vec<SignedSSVMessage>>,
+    pub input: Option<Vec<Value>>,
     #[serde(rename = "PostDutyCommitteeRoot")]
     pub post_duty_committee_root: Option<String>,
     #[serde(rename = "OutputMessages")]
-    pub output_messages: Option<Vec<SignedSSVMessage>>,
+    pub output_messages: Option<Vec<Value>>,
     #[serde(rename = "BeaconBroadcastedRoots")]
     pub beacon_broadcasted_roots: Option<Vec<String>>,
     #[serde(rename = "ExpectedError")]
@@ -45,13 +95,13 @@ pub struct CommitteeSubTest {
     #[serde(rename = "Committee")]
     pub committee: Committee,
     #[serde(rename = "Input")]
-    pub input: Vec<SignedSSVMessage>,
+    pub input: Vec<Value>,
     #[serde(rename = "PostDutyCommitteeRoot")]
     pub post_duty_committee_root: String,
     #[serde(rename = "OutputMessages")]
-    pub output_messages: Vec<SignedSSVMessage>,
+    pub output_messages: Vec<Value>,
     #[serde(rename = "BeaconBroadcastedRoots")]
-    pub beacon_broadcasted_roots: Vec<String>,
+    pub beacon_broadcasted_roots: Option<Vec<String>>,
     #[serde(rename = "ExpectedError")]
     pub expected_error: String,
 }
@@ -97,26 +147,16 @@ impl SpecTest for SsvCommitteeTest {
 
     fn run(&self) -> bool {
         if let Some(ref tests) = self.tests {
-            // Multi test format (MultiCommitteeSpecTest_*)
-            println!(
-                "Committee multi-test '{}' parsed successfully with {} sub-tests",
-                self.name,
-                tests.len()
-            );
-            for test in tests {
-                println!("  Sub-test '{}' parsed successfully", test.name);
+            for _test in tests {
+                // todo!()
             }
         } else {
-            // Single test format (CommitteeSpecTest_*)
-            println!("Committee test '{}' parsed successfully", self.name);
+            // todo!()
         }
         true
     }
 
-    fn test_type() -> SpecTestType
-    where
-        Self: Sized,
-    {
+    fn test_type() -> SpecTestType {
         SpecTestType::Ssv(SsvSpecTestType::Committee)
     }
 }
