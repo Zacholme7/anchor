@@ -2,6 +2,11 @@ mod consensus_message;
 mod duty_state;
 mod message_counts;
 mod partial_signature;
+// SSV Spec validation modules
+mod beacon_validation;
+mod duty_validation;
+mod slashing_detection;
+mod ssv_spec_validation;
 
 use std::{
     sync::Arc,
@@ -38,6 +43,7 @@ use crate::{
     consensus_message::validate_consensus_message,
     duty_state::{DutyState, OperatorState},
     partial_signature::validate_partial_signature_message,
+    ssv_spec_validation::SsvSpecValidator,
 };
 
 const VALIDATOR_CLEANER_NAME: &str = "validator_cleaner";
@@ -195,6 +201,14 @@ pub enum ValidationFailure {
     UnexpectedFailure {
         msg: String,
     },
+    // SSV Spec validation failures
+    AttestationSourceGreaterThanTarget,
+    AttestationTargetInFarFuture,
+    FarFutureDuty,
+    WrongBeaconRoleType,
+    WrongValidatorIndex,
+    WrongValidatorPk,
+    SlashableAttestation,
 }
 
 impl From<&ValidationFailure> for MessageAcceptance {
@@ -217,9 +231,14 @@ impl From<&ValidationFailure> for MessageAcceptance {
             | ValidationFailure::ValidatorIndexMismatch
             | ValidationFailure::TooManyDutiesPerEpoch
             | ValidationFailure::NoDuty
-            | ValidationFailure::EstimatedRoundNotInAllowedSpread { .. } => {
-                MessageAcceptance::Ignore
-            }
+            | ValidationFailure::EstimatedRoundNotInAllowedSpread { .. }
+            | ValidationFailure::AttestationSourceGreaterThanTarget
+            | ValidationFailure::AttestationTargetInFarFuture
+            | ValidationFailure::FarFutureDuty
+            | ValidationFailure::WrongBeaconRoleType
+            | ValidationFailure::WrongValidatorIndex
+            | ValidationFailure::WrongValidatorPk => MessageAcceptance::Ignore,
+            ValidationFailure::SlashableAttestation => MessageAcceptance::Reject,
             _ => MessageAcceptance::Reject,
         }
     }
@@ -272,6 +291,7 @@ pub struct Validator<S: SlotClock, D: DutiesProvider> {
     sync_committee_size: usize,
     duties_provider: Arc<D>,
     slot_clock: S,
+    ssv_spec_validator: std::sync::Mutex<SsvSpecValidator>,
 }
 
 impl<S: SlotClock + 'static, D: DutiesProvider> Validator<S, D> {
@@ -284,6 +304,7 @@ impl<S: SlotClock + 'static, D: DutiesProvider> Validator<S, D> {
         slot_clock: S,
         task_executor: &TaskExecutor,
     ) -> Arc<Self> {
+        let current_epoch = Epoch::new(0); // Will be updated by cleaner task
         let validator = Arc::new(Self {
             network_state_rx,
             duty_state_map: DashMap::new(),
@@ -292,6 +313,10 @@ impl<S: SlotClock + 'static, D: DutiesProvider> Validator<S, D> {
             sync_committee_size,
             duties_provider,
             slot_clock,
+            ssv_spec_validator: std::sync::Mutex::new(SsvSpecValidator::new(
+                current_epoch,
+                slots_per_epoch,
+            )),
         });
 
         task_executor.spawn(Arc::clone(&validator).cleaner(), VALIDATOR_CLEANER_NAME);
@@ -352,6 +377,29 @@ impl<S: SlotClock + 'static, D: DutiesProvider> Validator<S, D> {
         };
         let operators_pks = get_operator_pks(&network_state, signed_ssv_message.operator_ids())?;
         drop(network_state);
+
+        // Get validator public key for SSV spec validation
+        let validator_pk = match ssv_message.msg_id().duty_executor() {
+            Some(DutyExecutor::Validator(pk)) => pk,
+            Some(DutyExecutor::Committee(_)) => {
+                // For committee messages, use the first validator index to get pubkey
+                committee_info
+                    .validator_indices
+                    .first()
+                    .map(|_| types::PublicKeyBytes::empty()) // TODO: lookup actual pubkey from validator index
+                    .unwrap_or_else(|| types::PublicKeyBytes::empty())
+            }
+            None => return Err(ValidationFailure::UnknownValidator),
+        };
+
+        // Perform SSV spec validation first
+        if let Ok(mut ssv_validator) = self.ssv_spec_validator.lock() {
+            ssv_validator.validate_ssv_message(ssv_message, &validator_pk)?;
+        } else {
+            return Err(ValidationFailure::UnexpectedFailure {
+                msg: "Failed to acquire SSV spec validator lock".to_string(),
+            });
+        }
 
         let mut duty_state = self.get_duty_state(ssv_message.msg_id(), self.slots_per_epoch);
 
@@ -417,6 +465,12 @@ impl<S: SlotClock + 'static, D: DutiesProvider> Validator<S, D> {
                 // Very weird, let's try again later.
                 continue;
             };
+
+            // Update SSV spec validator epoch context
+            let current_epoch = Epoch::new(now.as_u64() / slots_per_epoch);
+            if let Ok(mut ssv_validator) = validator.ssv_spec_validator.lock() {
+                ssv_validator.update_current_epoch(current_epoch);
+            }
 
             validator
                 .duty_state_map

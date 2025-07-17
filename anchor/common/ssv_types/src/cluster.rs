@@ -70,7 +70,19 @@ pub struct ClusterMember {
 
 /// Index of the validator in the validator registry.
 #[derive(
-    Clone, Copy, Debug, Default, Eq, PartialEq, Hash, From, Deref, Encode, Decode, Deserialize, Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Eq,
+    PartialEq,
+    Hash,
+    From,
+    Deref,
+    Encode,
+    Decode,
+    Deserialize,
+    Serialize,
 )]
 #[ssz(struct_behaviour = "transparent")]
 pub struct ValidatorIndex(pub usize);

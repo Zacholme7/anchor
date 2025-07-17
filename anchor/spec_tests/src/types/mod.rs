@@ -9,7 +9,6 @@ mod signed_ssv_msg_encoding;
 mod ssv_msg;
 mod ssv_msg_encoding;
 mod ssz;
-mod validation_types;
 mod validator_consensus_data;
 mod validator_consensus_data_encoding;
 
@@ -27,7 +26,6 @@ pub use signed_ssv_msg_encoding::*;
 pub use ssv_msg::*;
 pub use ssv_msg_encoding::*;
 pub use ssz::*;
-pub use validation_types::*;
 pub use validator_consensus_data::*;
 pub use validator_consensus_data_encoding::*;
 

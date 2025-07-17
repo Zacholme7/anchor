@@ -20,7 +20,7 @@ use ssv::SsvSpecTestType;
 use types::TypesSpecTestType;
 use walkdir::WalkDir;
 
-use crate::{qbft::*, types::*};
+use crate::{qbft::*, ssv::*, types::*};
 
 // All Spec Test Variants. Maps to an inner variant type that describes specific tests
 #[derive(Eq, PartialEq, Hash, Debug, Clone)]
@@ -111,6 +111,17 @@ static TEST_LOADERS: LazyLock<Loaders> = register_test_loaders!(
     SSZSpecTest,                        // got
     ValidatorConsensusDataTest,         // got
     ValidatorConsensusDataEncodingTest, // got
+    // SSV tests
+    // ---------
+    SsvCommitteeTest,
+    SsvControllerTest,
+    SsvDutyExecutionTest,
+    SsvMessageProcessingTest,
+    SsvNewDutyTest,
+    SsvPartialSignatureTest,
+    SsvRunnerConstructionTest,
+    SsvSyncCommitteeAggregatorTest,
+    SsvValidationTest
 );
 
 // Register a test in the loader. This inserts a mapping from SpecTestType -> loading closure
@@ -442,7 +453,9 @@ mod spec_tests {
         #[test]
         // SSV Runner Construction tests
         fn test_ssv_runner_construction() {
-            assert!(run_tests(SpecTestType::Ssv(SsvSpecTestType::RunnerConstruction)))
+            assert!(run_tests(SpecTestType::Ssv(
+                SsvSpecTestType::RunnerConstruction
+            )))
         }
     }
 }
