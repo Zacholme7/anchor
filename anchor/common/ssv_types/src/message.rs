@@ -141,8 +141,6 @@ impl TryFrom<u64> for MsgType {
     }
 }
 
-const U32_SIZE: usize = 4; // u32 is 4 bytes - matches Go implementation
-
 // Change to u64 for consistency with Go's uint64
 impl Encode for MsgType {
     fn is_ssz_fixed_len() -> bool {

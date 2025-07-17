@@ -117,6 +117,7 @@ impl SpecTest for SignedSSVMessageTest {
 }
 
 impl SignedSSVMessageTest {
+    // duplicated in qbft_message.rs, todo!() combine
     fn convert_test_message(
         &self,
         test_msg: &TestSignedSSVMessage,
@@ -145,12 +146,45 @@ impl SignedSSVMessageTest {
             signatures.push(sig_array);
         }
 
+        println!("Debug (signed_ssv_msg): Processing full_data field");
+        println!(
+            "Debug (signed_ssv_msg): test_msg.full_data = {:?}",
+            test_msg.full_data
+        );
+
+        // Decode full_data from base64 string to bytes
+        let full_data_bytes = match &test_msg.full_data {
+            Some(base64_str) => {
+                println!(
+                    "Debug (signed_ssv_msg): Decoding base64 full_data: '{}'",
+                    base64_str
+                );
+                let decoded = BASE64_STANDARD
+                    .decode(base64_str.as_bytes())
+                    .map_err(|e| format!("failed to decode base64 full_data: {}", e))?;
+                println!(
+                    "Debug (signed_ssv_msg): Decoded full_data length: {} bytes",
+                    decoded.len()
+                );
+                decoded
+            }
+            None => {
+                println!("Debug (signed_ssv_msg): No full_data provided, using empty vector");
+                Vec::new()
+            }
+        };
+
+        println!(
+            "Debug (signed_ssv_msg): Final full_data_bytes length: {}",
+            full_data_bytes.len()
+        );
+
         // Create our SignedSSVMessage
         SignedSSVMessage::new_from_vecs(
             signatures,
             test_msg.operator_ids.clone().unwrap_or_default(),
             ssv_message.clone(),
-            Vec::new(),
+            full_data_bytes,
         )
         .map_err(|e| map_signed_ssv_error_to_go_format(&e))
     }

@@ -1,8 +1,8 @@
-use qbft::TestError;
 use serde::Deserialize;
 use ssv_types::{OperatorId, Round, message::SignedSSVMessage};
 use std::collections::HashMap;
 use types::Hash256;
+use openssl::rsa::Rsa;
 
 /// Unified decided state for all QBFT test scenarios
 #[derive(Debug, Clone)]
@@ -77,21 +77,54 @@ pub struct AdapterConfig {
     pub max_rounds: u64,
 }
 
-/// Unified error type for all adapter operations
+/// Minimal test keys structure for adapter testing
+#[derive(Debug, Clone)]
+pub struct TestKeys {
+    pub operator_keys: HashMap<OperatorId, Rsa<openssl::pkey::Private>>,
+    pub committee_size: usize,
+}
+
+impl TestKeys {
+    /// Create a minimal test key set for 4-operator committee
+    pub fn four_share_set() -> Self {
+        let mut operator_keys = HashMap::new();
+        
+        // Generate minimal RSA keys for 4 operators
+        for operator_id in 1..=4 {
+            // Generate a 1024-bit RSA key for testing (smaller for performance)
+            let rsa_key = Rsa::generate(1024).expect("Failed to generate RSA key for testing");
+            operator_keys.insert(OperatorId::from(operator_id), rsa_key);
+        }
+        
+        Self {
+            operator_keys,
+            committee_size: 4,
+        }
+    }
+    
+    /// Get signing key for specific operator
+    pub fn get_key(&self, operator_id: OperatorId) -> Option<&Rsa<openssl::pkey::Private>> {
+        self.operator_keys.get(&operator_id)
+    }
+}
+
+/// Simplified error type for adapter operations
 #[derive(Debug, thiserror::Error)]
 pub enum AdapterError {
-    #[error("QBFT error: {0}")]
-    Qbft(#[from] TestError),
-    #[error("Validation failed: {0}")]
-    Validation(String),
-    #[error("Invalid state: {0}")]
-    InvalidState(String),
-    #[error("Configuration error: {0}")]
-    Config(String),
     #[error("Message creation failed: {0}")]
     MessageCreation(String),
+    #[error("Validation failed: {0}")]
+    Validation(String),
+    #[error("Key loading failed: {0}")]
+    KeyLoading(String),
+    #[error("Signing failed: {0}")]
+    Signing(String),
+    #[error("Configuration error: {0}")]
+    Config(String),
     #[error("OpenSSL error: {0}")]
     OpenSsl(#[from] openssl::error::ErrorStack),
+    #[error("Invalid state: {0}")]
+    InvalidState(String),
     #[error("Base64 decode error: {0}")]
     Base64Decode(#[from] base64::DecodeError),
 }

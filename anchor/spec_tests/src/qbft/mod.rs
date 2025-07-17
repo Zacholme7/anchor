@@ -1,4 +1,4 @@
-mod adapter;
+pub mod adapter;
 mod controller_test;
 mod create_message;
 mod qbft_message;

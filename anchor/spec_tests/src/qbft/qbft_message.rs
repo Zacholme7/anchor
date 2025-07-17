@@ -1,8 +1,9 @@
+use super::adapter::{QbftTestAdapter, TestContext, TestType};
+use crate::qbft::adapter::error_mapping::map_signed_ssv_error_to_go_format;
+use crate::{QbftSpecTestType, SpecTest, SpecTestType, types::TestSignedSSVMessage};
+use base64::prelude::*;
 use serde::Deserialize;
 use ssv_types::message::SignedSSVMessage;
-
-use super::adapter::{QbftTestAdapter, TestContext, TestType};
-use crate::{QbftSpecTestType, SpecTest, SpecTestType, types::TestSignedSSVMessage};
 
 #[derive(Deserialize)]
 pub struct QbftMessageTest {
@@ -17,7 +18,7 @@ pub struct QbftMessageTest {
     #[serde(rename = "ExpectedError")]
     pub expected_error: String,
 
-    // Setup state fields (not serialized from JSON)
+    // Setup state fields - not from input JSON
     #[serde(skip)]
     pub test_context: Option<TestContext>,
     #[serde(skip)]
@@ -34,7 +35,7 @@ impl SpecTest for QbftMessageTest {
     fn setup(&mut self) {
         // Create test context and qbft adapter
         let test_context = TestContext::new(self.name.clone(), TestType::QbftMessage)
-            .with_expected_errors(self.expected_errors());
+            .with_expected_errors(vec![self.expected_error.clone()]);
         let adapter = match QbftTestAdapter::with_default_committee() {
             Ok(adapter) => adapter.with_test_context(test_context.clone()),
             Err(e) => {
@@ -49,17 +50,11 @@ impl SpecTest for QbftMessageTest {
     }
 
     fn run(&self) -> bool {
-        // Validate setup was successful
-        if !self.is_setup_valid() {
-            if let Some(error) = self.get_setup_error() {
-                eprintln!("Setup failed: {}", error);
-            } else {
-                eprintln!("Setup not called or incomplete - please call setup() before run()");
-            }
+        if !(self.setup_error.is_none() && self.test_context.is_some() && self.adapter.is_some()) {
             return false;
         }
 
-        // Get pre-created adapter (safe to unwrap after validation)
+        // Get pre-created adapter
         let adapter = self.adapter.as_ref().unwrap().as_ref();
 
         // Try to create the signed message
@@ -69,6 +64,7 @@ impl SpecTest for QbftMessageTest {
                 adapter.execute_validation_scenario(message)
             }
             Err(creation_error) => {
+                println!("{:?}", creation_error);
                 // Check if this creation error matches the expected error
                 if !self.expected_error.is_empty() && creation_error.contains(&self.expected_error)
                 {
@@ -81,8 +77,30 @@ impl SpecTest for QbftMessageTest {
             }
         };
 
-        // Assert validation result
-        self.assert_validation_result(&scenario_result)
+        // Check for expected errors first
+        if !self.expected_error.is_empty() {
+            if scenario_result
+                .go_formatted_errors
+                .iter()
+                .any(|err| err.contains(&self.expected_error))
+            {
+                return true;
+            } else {
+                return false;
+            }
+        }
+
+        // If no errors expected, validation should pass
+        if !scenario_result.processing_result.validation_result.is_valid {
+            return false;
+        }
+
+        // Check if any validation errors were found when none expected
+        if !scenario_result.validation_errors.is_empty() {
+            return false;
+        }
+
+        true
     }
 
     fn test_type() -> SpecTestType {
@@ -108,9 +126,6 @@ impl QbftMessageTest {
         &self,
         test_msg: &TestSignedSSVMessage,
     ) -> Result<SignedSSVMessage, String> {
-        use base64::prelude::*;
-        use ssv_types::message::SignedSSVMessage;
-
         // Handle null SSVMessage case
         let ssv_message = match &test_msg.ssv_message {
             Some(msg) => msg.clone(),
@@ -139,85 +154,18 @@ impl QbftMessageTest {
         // Get operator IDs and sort them before creating the message
         // The Go tests expect sorting to happen before zero validation
         let mut operator_ids = test_msg.operator_ids.clone().unwrap_or_default();
-
-        // Check for zero signers first (before sorting) to match Go validation order
-        if operator_ids
-            .iter()
-            .any(|&id| id == ssv_types::OperatorId(0))
-        {
-            return Err("signer ID 0 not allowed".to_string());
-        }
-
         operator_ids.sort();
 
+        // Decode full_data from base64 string to bytes
+        let full_data_bytes = match &test_msg.full_data {
+            Some(base64_str) => BASE64_STANDARD
+                .decode(base64_str.as_bytes())
+                .map_err(|e| format!("failed to decode base64 full_data: {}", e))?,
+            None => Vec::new(),
+        };
+
         // Create our SignedSSVMessage
-        SignedSSVMessage::new_from_vecs(signatures, operator_ids, ssv_message, Vec::new()).map_err(
-            |e| {
-                use crate::qbft::adapter::error_mapping::map_signed_ssv_error_to_go_format;
-                map_signed_ssv_error_to_go_format(&e)
-            },
-        )
-    }
-
-    /// Get expected errors from test
-    fn expected_errors(&self) -> Vec<String> {
-        vec![self.expected_error.clone()]
-    }
-
-    /// Check if setup was successful and all required objects are available
-    fn is_setup_valid(&self) -> bool {
-        self.setup_error.is_none() && self.test_context.is_some() && self.adapter.is_some()
-    }
-
-    /// Get setup error message if any
-    fn get_setup_error(&self) -> Option<&String> {
-        self.setup_error.as_ref()
-    }
-
-    /// Check if setup needs to be called (or re-called)
-    fn needs_setup(&self) -> bool {
-        !self.is_setup_valid()
-    }
-
-    /// Assert validation result
-    fn assert_validation_result(&self, result: &super::adapter::ScenarioResult) -> bool {
-        // Check for expected errors first
-        if !self.expected_error.is_empty() {
-            if result
-                .go_formatted_errors
-                .iter()
-                .any(|err| err.contains(&self.expected_error))
-            {
-                eprintln!("✓ Expected validation error found: {}", self.expected_error);
-                return true;
-            } else {
-                eprintln!(
-                    "✗ Expected error '{}' not found in: {:?}",
-                    self.expected_error, result.go_formatted_errors
-                );
-                return false;
-            }
-        }
-
-        // If no errors expected, validation should pass
-        if !result.processing_result.validation_result.is_valid {
-            eprintln!(
-                "✗ Message validation failed: {:?}",
-                result.processing_result.validation_result.errors
-            );
-            return false;
-        }
-
-        // Check if any validation errors were found when none expected
-        if !result.validation_errors.is_empty() {
-            eprintln!(
-                "✗ Unexpected validation errors: {:?}",
-                result.validation_errors
-            );
-            return false;
-        }
-
-        eprintln!("✓ Message validation passed as expected");
-        true
+        SignedSSVMessage::new_from_vecs(signatures, operator_ids, ssv_message, full_data_bytes)
+            .map_err(|e| map_signed_ssv_error_to_go_format(&e))
     }
 }

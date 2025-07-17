@@ -1,9 +1,51 @@
-use serde::Deserialize;
-use ssv_types::OperatorId;
-use ssv_types::message::SignedSSVMessage;
-
 use super::adapter::{QbftTestAdapter, ScenarioResult, TestContext, TestType};
 use crate::{QbftSpecTestType, SpecTest, SpecTestType};
+use serde::Deserialize;
+use ssv_types::message::SignedSSVMessage;
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ControllerTest {
+    #[serde(rename = "Name")]
+    pub name: String,
+    #[serde(rename = "Type")]
+    pub test_type: String,
+    #[serde(rename = "Documentation")]
+    pub documentation: String,
+    #[serde(rename = "RunInstanceData")]
+    pub run_instance_data: Vec<RunInstanceData>,
+    #[serde(rename = "ExpectedError")]
+    pub expected_error: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RunInstanceData {
+    #[serde(rename = "Height")]
+    pub height: Option<u64>,
+    #[serde(rename = "InputValue")]
+    pub input_value: Option<String>,
+    #[serde(rename = "InputMessages")]
+    pub input_messages: Option<Vec<SignedSSVMessage>>,
+    #[serde(rename = "ExpectedDecidedState")]
+    pub expected_decided_state: Option<ExpectedDecidedState>,
+    #[serde(rename = "ExpectedTimerState")]
+    pub expected_timer_state: Option<ExpectedTimerState>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExpectedDecidedState {
+    #[serde(rename = "DecidedCnt")]
+    pub decided_count: u64,
+    #[serde(rename = "DecidedVal")]
+    pub decided_value: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExpectedTimerState {
+    #[serde(rename = "Timeouts")]
+    pub timeouts: u64,
+    #[serde(rename = "Round")]
+    pub round: Option<u64>,
+}
 
 impl SpecTest for ControllerTest {
     fn name(&self) -> &str {
@@ -25,11 +67,8 @@ impl SpecTest for ControllerTest {
             )
             .with_expected_errors(vec![self.expected_error.clone()]);
 
-            // Determine height for this scenario
-            let scenario_height = run_data.height.unwrap_or(i as u64);
-
             // Create adapter for scenario
-            let mut adapter = match QbftTestAdapter::with_default_committee() {
+            let adapter = match QbftTestAdapter::with_default_committee() {
                 Ok(adapter) => adapter.with_test_context(test_context),
                 Err(e) => {
                     eprintln!("Failed to create adapter: {}", e);
@@ -141,48 +180,4 @@ impl ControllerTest {
             }
         }
     }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct ControllerTest {
-    #[serde(rename = "Name")]
-    pub name: String,
-    #[serde(rename = "Type")]
-    pub test_type: String,
-    #[serde(rename = "Documentation")]
-    pub documentation: String,
-    #[serde(rename = "RunInstanceData")]
-    pub run_instance_data: Vec<RunInstanceData>,
-    #[serde(rename = "ExpectedError")]
-    pub expected_error: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct RunInstanceData {
-    #[serde(rename = "Height")]
-    pub height: Option<u64>,
-    #[serde(rename = "InputValue")]
-    pub input_value: Option<String>,
-    #[serde(rename = "InputMessages")]
-    pub input_messages: Option<Vec<SignedSSVMessage>>,
-    #[serde(rename = "ExpectedDecidedState")]
-    pub expected_decided_state: Option<ExpectedDecidedState>,
-    #[serde(rename = "ExpectedTimerState")]
-    pub expected_timer_state: Option<ExpectedTimerState>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct ExpectedDecidedState {
-    #[serde(rename = "DecidedCnt")]
-    pub decided_count: u64,
-    #[serde(rename = "DecidedVal")]
-    pub decided_value: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct ExpectedTimerState {
-    #[serde(rename = "Timeouts")]
-    pub timeouts: u64,
-    #[serde(rename = "Round")]
-    pub round: Option<u64>,
 }
