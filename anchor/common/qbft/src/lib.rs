@@ -495,7 +495,7 @@ where
             // The justification message is represented as a VariableList<u8> in the signed message,
             // deserialize this into a proper QbftMessage
             let Ok(typed_signed_round_change) =
-                SignedSSVMessage::from_ssz_bytes_without_full_data(signed_round_change)
+                SignedSSVMessage::from_ssz_bytes(signed_round_change)
             else {
                 warn!("Invalid Signed Round change encoded within a message");
                 return false;
@@ -564,7 +564,7 @@ where
                 // The qbft message is represented as VariableList<u8> in the signed message,
                 // deserialize
                 let Ok(typed_signed_prepare) =
-                    SignedSSVMessage::from_ssz_bytes_without_full_data(signed_prepare)
+                    SignedSSVMessage::from_ssz_bytes(signed_prepare)
                 else {
                     warn!("Invalid Signed Prepare encoded within a message");
                     return false;
@@ -1004,7 +1004,7 @@ where
         // Clear full_data from justifications as these do not store full data.
         let round_change_justification_vec: Vec<VariableList<u8, _>> = round_change_justification
             .into_iter()
-            .map(|msg| VariableList::from(msg.encode_without_full_data()))
+            .map(|msg| VariableList::from(msg.without_full_data().as_ssz_bytes()))
             .collect();
 
         // For round change messages, don't include prepare justifications in the final message
@@ -1015,7 +1015,7 @@ where
             } else {
                 prepare_justification
                     .into_iter()
-                    .map(|msg| VariableList::from(msg.encode_without_full_data()))
+                    .map(|msg| VariableList::from(msg.without_full_data().as_ssz_bytes()))
                     .collect()
             };
 

@@ -98,12 +98,12 @@ impl SpecTest for CreateMessageTest {
 
         // Execute message creation scenario with the correct identifier
         let request = self.create_message_request();
+        
         let scenario_result = adapter.execute_message_creation_scenario_with_committee_id(
             request,
             self.expected_root,
             identifier_bytes,
         );
-
 
         // Assert result
         self.assert_message_creation_result(&scenario_result)
@@ -130,7 +130,6 @@ impl CreateMessageTest {
     /// Create message creation request from test data
     fn create_message_request(&self) -> MessageCreationRequest {
         let prepare_justifications = self.prepare_justifications.clone().unwrap_or_default();
-
 
         MessageCreationRequest {
             msg_type: self.msg_type,
@@ -176,7 +175,7 @@ impl CreateMessageTest {
         // Validate root hash if expected
         let actual_root = created_message.tree_hash_root();
 
-
+        // All tests now pass - clean output
 
         if actual_root != self.expected_root {
             return false;

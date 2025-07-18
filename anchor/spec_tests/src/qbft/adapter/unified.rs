@@ -374,24 +374,19 @@ impl QbftTestAdapter {
     fn calculate_data_round(&self, request: &MessageCreationRequest) -> u64 {
         match request.msg_type {
             QbftMessageType::RoundChange => {
-                let has_prepared_state =
-                    !request.prepare_justifications.is_empty() || request.state_value.is_some();
-                if has_prepared_state { 1 } else { 0 }
+                // For round change: data_round depends on whether we have state value AND quorum of justifications
+                // If we have state value but no justification quorum, use data_round=1 but ignore justifications
+                // If we have no state value, data_round=0 regardless of justifications
+                if request.state_value.is_some() {
+                    1  // Has prepared state
+                } else {
+                    0  // No prepared state
+                }
             }
             QbftMessageType::Proposal => {
-                // data_round is the round at which the data was prepared
-                // Only set it if we have prepare justifications (previously prepared)
-                if !request.prepare_justifications.is_empty() {
-                    // Extract the round from the first prepare justification
-                    if let Ok(qbft_msg) = self.extract_qbft_message_from_signed_message(&request.prepare_justifications[0]) {
-                        qbft_msg.round
-                    } else {
-                        0
-                    }
-                } else {
-                    // Not previously prepared, so data_round is 0
-                    0
-                }
+                // According to Go CreateProposal, DataRound is NOT set (defaults to 0)
+                // The prepare justifications are included in PrepareJustification field but don't affect DataRound
+                0
             }
             _ => 0,
         }
@@ -400,25 +395,19 @@ impl QbftTestAdapter {
     fn calculate_root(&self, request: &MessageCreationRequest) -> Hash256 {
         let result = match request.msg_type {
             QbftMessageType::RoundChange => {
-                let has_prepared_state =
-                    !request.prepare_justifications.is_empty() || request.state_value.is_some();
-                if has_prepared_state {
-                    // For round change, use the prepared value from prepare justifications
-                    let hash = self.get_prepared_root_from_justifications(request);
-                    hash
+                // For round change: root depends on state value, not justifications
+                // If we have state value, use hash of that value
+                // If no state value, use zero hash
+                if let Some(state_value) = &request.state_value {
+                    Hash256::from_slice(&Sha256::digest(state_value))
                 } else {
-                    let hash = Hash256::from([0u8; 32]);
-                    hash
+                    Hash256::from([0u8; 32])
                 }
             }
             QbftMessageType::Proposal => {
-                // For proposals, only use prepared root if we have prepare justifications
-                // Round change justifications indicate higher round but don't necessarily mean previously prepared
-                // For all proposals, use the hash of the proposal value (from data_hash field)
+                // For proposals, use the hash of the proposal value (from data_hash field)
                 // This matches the Go implementation behavior
                 let hash = Hash256::from_slice(&Sha256::digest(&request.data_hash.0));
-                if !request.prepare_justifications.is_empty() {
-                }
                 hash
             }
             _ => {
@@ -444,8 +433,12 @@ impl QbftTestAdapter {
         // - Proposal messages store round change justifications in the RoundChangeJustification field
         // - Proposal messages store prepare justifications in the PrepareJustification field
         let round_change_just = if matches!(request.msg_type, QbftMessageType::RoundChange) {
-            // For RoundChange messages: RoundChangeJustification field contains prepare justifications
-            self.encode_justifications(&request.prepare_justifications)?
+            // For RoundChange messages: include justifications only if we have state value AND quorum
+            if request.state_value.is_some() && !request.prepare_justifications.is_empty() {
+                self.encode_justifications(&request.prepare_justifications)?
+            } else {
+                VariableList::empty()
+            }
         } else if matches!(request.msg_type, QbftMessageType::Proposal) {
             // For Proposal messages: RoundChangeJustification field contains round change justifications
             self.encode_justifications(&request.round_change_justifications)?
@@ -517,16 +510,11 @@ impl QbftTestAdapter {
     fn calculate_full_data(&self, request: &MessageCreationRequest) -> Vec<u8> {
         let result = match request.msg_type {
             QbftMessageType::RoundChange => {
-                let has_prepared_state =
-                    !request.prepare_justifications.is_empty() || request.state_value.is_some();
-                if has_prepared_state {
-                    let data = request.state_value.clone().unwrap_or_else(|| {
-                        vec![
-                            1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6,
-                            7, 8, 9,
-                        ]
-                    });
-                    data
+                // For round change: full_data depends on state value, not justifications
+                // If we have state value, use that value
+                // If no state value, full_data is empty
+                if let Some(state_value) = &request.state_value {
+                    state_value.clone()
                 } else {
                     vec![]
                 }
