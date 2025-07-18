@@ -89,6 +89,7 @@ static TEST_LOADERS: LazyLock<Loaders> = register_test_loaders!(
     ControllerTest,
     QbftMessageTest,
     RoundRobinTest,
+    TimeoutTest,
     // Types tests
     // -----------
     BeaconVoteEncodingTest, // got
@@ -237,6 +238,11 @@ mod spec_tests {
         #[test]
         fn test_qbft_round_robin() {
             assert!(run_tests(SpecTestType::Qbft(QbftSpecTestType::RoundRobin)))
+        }
+
+        #[test]
+        fn test_qbft_timeout() {
+            assert!(run_tests(SpecTestType::Qbft(QbftSpecTestType::Timeout)))
         }
     }
 

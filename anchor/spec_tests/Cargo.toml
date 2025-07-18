@@ -30,6 +30,3 @@ tree_hash_derive = { workspace = true }
 types = { workspace = true }
 walkdir = "2.5.0"
 
-[[bin]]
-name = "test_keys"
-path = "src/bin/test_keys.rs"

@@ -5,7 +5,12 @@ use crate::utils::deserializers::qbft_deserializers::deserialize_qbft_message_ty
 use crate::{QbftSpecTestType, SpecTest, SpecTestType};
 use base64;
 use serde::Deserialize;
-use ssv_types::{Round, consensus::QbftMessageType, message::SignedSSVMessage};
+use ssv_types::{
+    Round,
+    consensus::{QbftMessage, QbftMessageType},
+    message::{SSVMessage, SignedSSVMessage},
+};
+use ssz::Decode;
 use tree_hash::TreeHash;
 use types::Hash256;
 
@@ -50,26 +55,7 @@ impl SpecTest for CreateMessageTest {
     }
 
     fn run(&self) -> bool {
-        // Debug: Log prepare justifications from JSON deserialization
-        eprintln!(
-            "🔍 DEBUG [{}]: JSON prepare_justifications count: {}",
-            self.name,
-            self.prepare_justifications
-                .as_ref()
-                .map(|pj| pj.len())
-                .unwrap_or(0)
-        );
-        if let Some(ref prepare_justifications) = self.prepare_justifications {
-            for (i, pj) in prepare_justifications.iter().enumerate() {
-                let operator_ids = pj.operator_ids();
-                eprintln!(
-                    "🔍 DEBUG [{}]: PrepareJustification[{}] operator_ids: {:?}",
-                    self.name,
-                    i,
-                    operator_ids.iter().map(|id| id.0).collect::<Vec<_>>()
-                );
-            }
-        }
+
 
         // Create test context
         let test_context = TestContext::new(self.name.clone(), TestType::MessageCreation)
@@ -78,19 +64,11 @@ impl SpecTest for CreateMessageTest {
         // Create adapter for message creation
         let mut adapter = match QbftTestAdapter::with_default_committee() {
             Ok(adapter) => adapter.with_test_context(test_context),
-            Err(e) => {
-                eprintln!("Failed to create adapter: {}", e);
-                return false;
-            }
+            Err(_) => return false,
         };
 
         // Setup scenario if needed
         let prepare_justifications = self.prepare_justifications.clone().unwrap_or_default();
-        eprintln!(
-            "🔍 DEBUG [{}]: Passing {} prepare justifications to setup_message_creation_scenario",
-            self.name,
-            prepare_justifications.len()
-        );
 
         if let Err(e) = adapter.setup_message_creation_scenario(
             self.round.map(Round::from),
@@ -99,10 +77,8 @@ impl SpecTest for CreateMessageTest {
             prepare_justifications,
         ) {
             if self.is_expected_error(&e.to_string()) {
-                eprintln!("✓ Expected error during setup: {}", e);
                 return true;
             } else {
-                eprintln!("Unexpected error during setup: {}", e);
                 return false;
             }
         }
@@ -112,8 +88,7 @@ impl SpecTest for CreateMessageTest {
             use base64::{Engine as _, engine::general_purpose};
             match general_purpose::STANDARD.decode(identifier_b64) {
                 Ok(bytes) => Some(bytes),
-                Err(e) => {
-                    eprintln!("Failed to decode identifier: {}", e);
+                Err(_) => {
                     return false;
                 }
             }
@@ -122,11 +97,13 @@ impl SpecTest for CreateMessageTest {
         };
 
         // Execute message creation scenario with the correct identifier
+        let request = self.create_message_request();
         let scenario_result = adapter.execute_message_creation_scenario_with_committee_id(
-            self.create_message_request(),
+            request,
             self.expected_root,
             identifier_bytes,
         );
+
 
         // Assert result
         self.assert_message_creation_result(&scenario_result)
@@ -154,11 +131,6 @@ impl CreateMessageTest {
     fn create_message_request(&self) -> MessageCreationRequest {
         let prepare_justifications = self.prepare_justifications.clone().unwrap_or_default();
 
-        eprintln!(
-            "🔍 DEBUG [{}]: create_message_request() - prepare_justifications count: {}",
-            self.name,
-            prepare_justifications.len()
-        );
 
         MessageCreationRequest {
             msg_type: self.msg_type,
@@ -178,6 +150,7 @@ impl CreateMessageTest {
 
     /// Assert message creation result
     fn assert_message_creation_result(&self, result: &super::adapter::ScenarioResult) -> bool {
+
         // Check for expected errors first
         if !self.expected_error.is_empty() {
             if result
@@ -185,46 +158,35 @@ impl CreateMessageTest {
                 .iter()
                 .any(|err| err.contains(&self.expected_error))
             {
-                eprintln!("✓ Expected error found: {}", self.expected_error);
                 return true;
             } else {
-                eprintln!(
-                    "✗ Expected error '{}' not found in: {:?}",
-                    self.expected_error, result.go_formatted_errors
-                );
                 return false;
             }
         }
 
         // Check if message was created successfully
         if result.processing_result.messages_sent.is_empty() {
-            eprintln!("✗ No message was created");
             return false;
         }
 
         let created_message = &result.processing_result.messages_sent[0];
 
+
+
         // Validate root hash if expected
         let actual_root = created_message.tree_hash_root();
 
+
+
         if actual_root != self.expected_root {
-            eprintln!(
-                "✗ Root hash mismatch: expected {:?}, got {:?}",
-                self.expected_root, actual_root
-            );
             return false;
         }
 
         // Check validation result
         if !result.processing_result.validation_result.is_valid {
-            eprintln!(
-                "✗ Created message failed validation: {:?}",
-                result.processing_result.validation_result.errors
-            );
             return false;
         }
 
-        eprintln!("✓ Message created successfully with correct root hash");
         true
     }
 
@@ -232,4 +194,13 @@ impl CreateMessageTest {
     fn is_expected_error(&self, error: &str) -> bool {
         !self.expected_error.is_empty() && error.contains(&self.expected_error)
     }
+}
+
+/// Helper function to decode QbftMessage from SSVMessage data
+fn decode_qbft_message_from_ssv(ssv_message: &SSVMessage) -> Result<QbftMessage, String> {
+    // The SSVMessage.data contains the encoded QbftMessage
+    let data = ssv_message.data();
+
+    // Try to decode the QbftMessage from the data
+    QbftMessage::from_ssz_bytes(data).map_err(|e| format!("Failed to decode QbftMessage: {:?}", e))
 }

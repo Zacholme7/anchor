@@ -1,8 +1,8 @@
+use openssl::rsa::Rsa;
 use serde::Deserialize;
 use ssv_types::{OperatorId, Round, message::SignedSSVMessage};
 use std::collections::HashMap;
 use types::Hash256;
-use openssl::rsa::Rsa;
 
 /// Unified decided state for all QBFT test scenarios
 #[derive(Debug, Clone)]
@@ -88,20 +88,20 @@ impl TestKeys {
     /// Create a minimal test key set for 4-operator committee
     pub fn four_share_set() -> Self {
         let mut operator_keys = HashMap::new();
-        
+
         // Generate minimal RSA keys for 4 operators
         for operator_id in 1..=4 {
             // Generate a 1024-bit RSA key for testing (smaller for performance)
             let rsa_key = Rsa::generate(1024).expect("Failed to generate RSA key for testing");
             operator_keys.insert(OperatorId::from(operator_id), rsa_key);
         }
-        
+
         Self {
             operator_keys,
             committee_size: 4,
         }
     }
-    
+
     /// Get signing key for specific operator
     pub fn get_key(&self, operator_id: OperatorId) -> Option<&Rsa<openssl::pkey::Private>> {
         self.operator_keys.get(&operator_id)
@@ -176,6 +176,13 @@ pub struct TestContext {
     pub test_type: TestType,
     pub expected_errors: Vec<String>,
     pub error_mapping_context: HashMap<String, String>,
+    // Additional fields for timeout testing
+    pub instance_height: Option<u64>,
+    pub current_round: Option<Round>,
+    pub last_prepared_round: Option<u64>,
+    pub last_prepared_value: Option<String>,
+    pub decided: Option<bool>,
+    pub decided_value: Option<String>,
 }
 
 /// Test type enumeration for context-aware processing
@@ -185,6 +192,7 @@ pub enum TestType {
     MessageCreation,
     QbftMessage,
     RoundRobin,
+    Timeout,
 }
 
 /// Comprehensive result for test scenarios
@@ -217,6 +225,12 @@ impl Default for TestContext {
             test_type: TestType::Controller,
             expected_errors: Vec::new(),
             error_mapping_context: HashMap::new(),
+            instance_height: None,
+            current_round: None,
+            last_prepared_round: None,
+            last_prepared_value: None,
+            decided: None,
+            decided_value: None,
         }
     }
 }
@@ -228,6 +242,12 @@ impl TestContext {
             test_type,
             expected_errors: Vec::new(),
             error_mapping_context: HashMap::new(),
+            instance_height: None,
+            current_round: None,
+            last_prepared_round: None,
+            last_prepared_value: None,
+            decided: None,
+            decided_value: None,
         }
     }
 
@@ -246,6 +266,12 @@ impl TestContext {
             test_type: TestType::Controller,
             expected_errors: Vec::new(),
             error_mapping_context: HashMap::new(),
+            instance_height: None,
+            current_round: None,
+            last_prepared_round: None,
+            last_prepared_value: None,
+            decided: None,
+            decided_value: None,
         }
     }
 
@@ -255,6 +281,12 @@ impl TestContext {
             test_type: TestType::MessageCreation,
             expected_errors: Vec::new(),
             error_mapping_context: HashMap::new(),
+            instance_height: None,
+            current_round: None,
+            last_prepared_round: None,
+            last_prepared_value: None,
+            decided: None,
+            decided_value: None,
         }
     }
 
@@ -264,6 +296,12 @@ impl TestContext {
             test_type: TestType::QbftMessage,
             expected_errors: Vec::new(),
             error_mapping_context: HashMap::new(),
+            instance_height: None,
+            current_round: None,
+            last_prepared_round: None,
+            last_prepared_value: None,
+            decided: None,
+            decided_value: None,
         }
     }
 }
@@ -275,6 +313,7 @@ impl TestType {
             TestType::MessageCreation => "message_creation",
             TestType::QbftMessage => "qbft_message",
             TestType::RoundRobin => "round_robin",
+            TestType::Timeout => "timeout",
         }
     }
 }
