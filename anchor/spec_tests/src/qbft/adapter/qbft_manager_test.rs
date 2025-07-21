@@ -1,4 +1,5 @@
 use super::types::{AsyncScenarioResult, AsyncDecisionResult, SpecTestCommitteeMember};
+use super::shared::{SerializableCommitteeMember, SerializableOperator, base64_serde};
 use crate::utils::async_test_utils::{AsyncQbftTestSetup, ControllerStateData, StoredInstance};
 use ssv_types::message::SignedSSVMessage;
 use sha2::{Digest, Sha256};
@@ -27,53 +28,7 @@ struct SerializableController {
     committee_member: SerializableCommitteeMember,
 }
 
-/// Serializable committee member for JSON encoding
-#[derive(Debug, Clone, Serialize)]
-struct SerializableCommitteeMember {
-    #[serde(rename = "OperatorID")]
-    operator_id: u64,
-    #[serde(rename = "CommitteeID")]
-    committee_id: Vec<u8>,
-    #[serde(rename = "SSVOperatorPubKey")]
-    ssv_operator_pub_key: String,
-    #[serde(rename = "FaultyNodes")]
-    faulty_nodes: u64,
-    #[serde(rename = "Committee")]
-    committee: Vec<SerializableOperator>,
-    #[serde(rename = "DomainType")]
-    domain_type: Vec<u8>,
-}
 
-/// Serializable operator for committee member encoding
-#[derive(Debug, Clone, Serialize)]
-struct SerializableOperator {
-    #[serde(rename = "OperatorID")]
-    operator_id: u64,
-    #[serde(rename = "SSVOperatorPubKey")]
-    ssv_operator_pub_key: String,
-}
-
-/// Base64 serialization helper
-mod base64_serde {
-    use serde::{Deserialize, Deserializer, Serializer};
-    use base64::prelude::*;
-
-    pub fn serialize<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let encoded = BASE64_STANDARD.encode(bytes);
-        serializer.serialize_str(&encoded)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let encoded = String::deserialize(deserializer)?;
-        BASE64_STANDARD.decode(encoded).map_err(serde::de::Error::custom)
-    }
-}
 
 impl QbftManagerTestAdapter {
     /// Create a new QbftManagerTestAdapter from committee member data

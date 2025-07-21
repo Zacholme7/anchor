@@ -4,9 +4,6 @@ mod create_message;
 mod qbft_message;
 mod round_robin;
 mod timeout;
-// Removed modules:
-// mod validation_adapter;
-// mod validation_facade;
 
 // Export adapter module for clean interface
 pub use adapter::error_mapping::map_signed_ssv_error_to_go_format;

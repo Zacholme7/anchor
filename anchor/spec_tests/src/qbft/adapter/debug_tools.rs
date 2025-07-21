@@ -1,4 +1,4 @@
-use serde_json::{Map, Value};
+use serde_json::Value;
 use sha2::{Sha256, Digest};
 use std::collections::HashSet;
 use std::fs;
@@ -31,35 +31,49 @@ pub struct HashSteps {
 }
 
 /// Parse Go state comparison file to get expected JSON structure
+/// Only available in debug mode to avoid hardcoded paths in production
+#[cfg(debug_assertions)]
 pub fn parse_go_state_file(test_name: &str) -> Result<Value, String> {
-    // Map test names to their corresponding Go state files
-    let file_path = match test_name {
+    use std::path::PathBuf;
+    
+    // Try to find relative path to state comparison files
+    let base_paths = [
+        "ssv-spec/qbft/spectest/generate/state_comparison/tests_ControllerSpecTest",
+        "../ssv-spec/qbft/spectest/generate/state_comparison/tests_ControllerSpecTest",
+        "./ssv-spec/qbft/spectest/generate/state_comparison/tests_ControllerSpecTest",
+    ];
+    
+    let filename = match test_name {
         name if name.contains("late commit") && !name.contains("past") => {
-            "/home/dsfreakdude/code/sigp/anchor/anchor/spec_tests/ssv-spec/qbft/spectest/generate/state_comparison/tests_ControllerSpecTest/qbft controller late commit.json"
+            "qbft controller late commit.json"
         }
         name if name.contains("decide current instance") && !name.contains("future") && !name.contains("past") => {
-            "/home/dsfreakdude/code/sigp/anchor/anchor/spec_tests/ssv-spec/qbft/spectest/generate/state_comparison/tests_ControllerSpecTest/qbft controller decide current instance.json"
+            "qbft controller decide current instance.json"
         }
         name if name.contains("late round change") && !name.contains("past") => {
-            "/home/dsfreakdude/code/sigp/anchor/anchor/spec_tests/ssv-spec/qbft/spectest/generate/state_comparison/tests_ControllerSpecTest/qbft controller late round change.json"
+            "qbft controller late round change.json"
         }
         _ => {
             return Err(format!("No Go state file mapping found for test: {}", test_name));
         }
     };
-
-    match fs::read_to_string(file_path) {
-        Ok(content) => {
-            match serde_json::from_str::<Value>(&content) {
+    
+    // Try each base path until we find the file
+    for base_path in &base_paths {
+        let file_path = PathBuf::from(base_path).join(filename);
+        if let Ok(content) = fs::read_to_string(&file_path) {
+            return match serde_json::from_str::<Value>(&content) {
                 Ok(json) => Ok(json),
                 Err(e) => Err(format!("Failed to parse Go state file JSON: {}", e))
-            }
+            };
         }
-        Err(e) => Err(format!("Failed to read Go state file '{}': {}", file_path, e))
     }
+    
+    Err(format!("Could not find Go state file for test: {}", test_name))
 }
 
 /// Compare our JSON structure with expected hash and provide detailed analysis
+#[cfg(debug_assertions)]
 pub fn compare_json_structures(our_json: &str, expected_hash: &str, test_name: &str) -> DebugReport {
     // Calculate our hash
     let hash = Sha256::digest(our_json.as_bytes());
@@ -243,7 +257,8 @@ pub fn get_simplest_failing_test() -> &'static str {
     "decide current instance"
 }
 
-/// Print detailed analysis of hash mismatch for debugging
+/// Print detailed analysis of hash mismatch for debugging (debug builds only)
+#[cfg(debug_assertions)]
 pub fn print_debug_analysis(report: &DebugReport, test_name: &str) {
     println!("=== HASH DEBUG ANALYSIS: {} ===", test_name);
     println!("Hash Match: {}", report.hash_match);
@@ -278,4 +293,10 @@ pub fn print_debug_analysis(report: &DebugReport, test_name: &str) {
     }
     
     println!("=== END HASH DEBUG ANALYSIS ===");
+}
+
+/// Print detailed analysis of hash mismatch for debugging (release builds - no-op)
+#[cfg(not(debug_assertions))]
+pub fn print_debug_analysis(_report: &DebugReport, _test_name: &str) {
+    // No debug output in release builds
 }

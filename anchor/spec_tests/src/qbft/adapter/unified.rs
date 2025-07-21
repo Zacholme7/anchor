@@ -17,6 +17,7 @@ use types::typenum::U13;
 use types::{Hash256, VariableList};
 
 use super::types::*;
+use super::shared::{validate_committee_configuration, validate_message_structure as shared_validate_message_structure};
 use crate::utils::test_keys::TestKeySet;
 
 /// Extract committee from spec test data structure
@@ -44,19 +45,7 @@ pub fn validate_committee(
     committee: &IndexSet<OperatorId>,
     quorum_threshold: usize,
 ) -> Result<(), AdapterError> {
-    if committee.is_empty() {
-        return Err(AdapterError::Config(
-            "Committee cannot be empty".to_string(),
-        ));
-    }
-
-    if quorum_threshold > committee.len() {
-        return Err(AdapterError::Config(
-            "Quorum threshold exceeds committee size".to_string(),
-        ));
-    }
-
-    Ok(())
+    validate_committee_configuration(committee, quorum_threshold)
 }
 
 /// Validate message root against expected value
@@ -110,7 +99,7 @@ impl QbftTestAdapter {
         config: AdapterConfig,
         operator_id: OperatorId,
     ) -> Result<Self, AdapterError> {
-        Self::validate_committee(&committee, config.quorum_threshold)?;
+        validate_committee_configuration(&committee, config.quorum_threshold)?;
 
         Ok(Self {
             committee,
@@ -633,39 +622,7 @@ impl QbftTestAdapter {
     // Helper methods for validation
 
     fn validate_message_structure(&self, message: &SignedSSVMessage) -> Result<(), String> {
-        if message.operator_ids().is_empty() {
-            return Err("no signers".to_string());
-        }
-
-        if message.signatures().is_empty() {
-            return Err("no signatures".to_string());
-        }
-
-        if message.signatures().len() != message.operator_ids().len() {
-            return Err("number of signatures is different than number of signers".to_string());
-        }
-
-        for signature in message.signatures() {
-            if signature.is_empty() {
-                return Err("empty signature".to_string());
-            }
-        }
-
-        for operator_id in message.operator_ids() {
-            if operator_id.0 == 0 {
-                return Err("signer ID 0 not allowed".to_string());
-            }
-        }
-
-        let mut seen_signers = HashSet::new();
-        for operator_id in message.operator_ids() {
-            if seen_signers.contains(operator_id) {
-                return Err("non unique signer".to_string());
-            }
-            seen_signers.insert(operator_id);
-        }
-
-        Ok(())
+        shared_validate_message_structure(message)
     }
 
     fn validate_identifier(&self, message: &SignedSSVMessage) -> Result<(), String> {
@@ -829,25 +786,6 @@ impl QbftTestAdapter {
     }
 
     // Utility methods
-
-    fn validate_committee(
-        committee: &IndexSet<OperatorId>,
-        quorum_threshold: usize,
-    ) -> Result<(), AdapterError> {
-        if committee.is_empty() {
-            return Err(AdapterError::Config(
-                "Committee cannot be empty".to_string(),
-            ));
-        }
-
-        if quorum_threshold > committee.len() {
-            return Err(AdapterError::Config(
-                "Quorum threshold exceeds committee size".to_string(),
-            ));
-        }
-
-        Ok(())
-    }
 
     fn has_quorum(&self, justifications: &[SignedSSVMessage]) -> bool {
         let committee_size = self.committee.len();

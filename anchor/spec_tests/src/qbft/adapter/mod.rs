@@ -2,6 +2,7 @@ pub mod debug_tools;
 pub mod error_mapping;
 pub mod keys;
 pub mod qbft_manager_test;
+pub mod shared;
 pub mod simple_controller_test;
 pub mod types;
 pub mod unified;
@@ -34,4 +35,11 @@ pub use error_mapping::{ErrorMapper, map_signed_ssv_error_to_go_format, simple_e
 pub use debug_tools::{
     compare_json_structures, generate_hash_step_by_step, get_simplest_failing_test, 
     parse_go_state_file, print_debug_analysis, DebugReport
+};
+
+// Shared utilities for adapter consolidation
+pub use shared::{
+    SerializableController, SerializableCommitteeMember, SerializableOperator,
+    base64_serde, optional_base64_serde, calculate_sha256_hash, 
+    validate_committee_configuration, validate_message_structure
 };
