@@ -1,5 +1,8 @@
+pub mod debug_tools;
 pub mod error_mapping;
 pub mod keys;
+pub mod qbft_manager_test;
+pub mod simple_controller_test;
 pub mod types;
 pub mod unified;
 
@@ -11,9 +14,12 @@ pub use unified::{
 
 // Enhanced types with validation support
 pub use types::{
-    AdapterConfig, AdapterError, MessageCreationRequest, ScenarioResult, SpecTestCommitteeMember,
-    TestContext, TestKeys, TestType, ValidationResult,
+    AdapterConfig, AdapterError, AsyncDecisionResult, AsyncScenarioResult, MessageCreationRequest,
+    ScenarioResult, SpecTestCommitteeMember, TestContext, TestKeys, TestType, ValidationResult,
 };
+
+// Async QBFT manager test adapter
+pub use qbft_manager_test::QbftManagerTestAdapter;
 
 // Key management utilities
 pub use keys::{
@@ -23,3 +29,9 @@ pub use keys::{
 
 // Error mapping utilities
 pub use error_mapping::{ErrorMapper, map_signed_ssv_error_to_go_format, simple_error_message};
+
+// Debug utilities for systematic hash debugging
+pub use debug_tools::{
+    compare_json_structures, generate_hash_step_by_step, get_simplest_failing_test, 
+    parse_go_state_file, print_debug_analysis, DebugReport
+};

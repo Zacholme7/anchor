@@ -3,6 +3,7 @@ use serde::Deserialize;
 use ssv_types::{OperatorId, Round, message::SignedSSVMessage};
 use std::collections::HashMap;
 use types::Hash256;
+use crate::utils::async_test_utils::{CommitteeInstanceId, ControllerStateData};
 
 /// Unified decided state for all QBFT test scenarios
 #[derive(Debug, Clone)]
@@ -202,6 +203,7 @@ pub struct ScenarioResult {
     pub processing_result: ProcessingResult,
     pub decided_state: DecidedState,
     pub timer_state: Option<TimerState>,
+    pub controller_root: Option<String>,
     pub validation_errors: Vec<String>, // Store error strings instead of ValidationFailure
     pub go_formatted_errors: Vec<String>,
 }
@@ -314,6 +316,52 @@ impl TestType {
             TestType::QbftMessage => "qbft_message",
             TestType::RoundRobin => "round_robin",
             TestType::Timeout => "timeout",
+        }
+    }
+}
+
+/// Async result structure for QBFT manager test scenarios
+#[derive(Debug, Clone)]
+pub struct AsyncScenarioResult {
+    pub scenario_id: String,
+    pub decisions: Vec<AsyncDecisionResult>,
+    pub controller_state: Option<ControllerStateData>,
+    pub processing_errors: Vec<String>,
+    pub decided_state: DecidedState,
+    pub timer_state: Option<TimerState>,
+    pub controller_root: Option<String>,
+    pub validation_errors: Vec<String>,
+    pub go_formatted_errors: Vec<String>,
+}
+
+/// Async decision result for individual QBFT instances
+#[derive(Debug, Clone)]
+pub struct AsyncDecisionResult {
+    pub instance_id: CommitteeInstanceId,
+    pub decided_value: Option<Vec<u8>>,
+    pub messages_processed: usize,
+}
+
+// Convert to existing ScenarioResult for compatibility
+impl From<AsyncScenarioResult> for ScenarioResult {
+    fn from(async_result: AsyncScenarioResult) -> Self {
+        ScenarioResult {
+            scenario_id: async_result.scenario_id,
+            processing_result: ProcessingResult {
+                consensus_reached: async_result.decided_state.decided_count > 0,
+                messages_sent: Vec::new(),
+                validation_result: ValidationResult {
+                    is_valid: async_result.processing_errors.is_empty(),
+                    errors: async_result.processing_errors.clone(),
+                    warnings: Vec::new(),
+                },
+                go_error_messages: async_result.go_formatted_errors.clone(),
+            },
+            decided_state: async_result.decided_state,
+            timer_state: async_result.timer_state,
+            controller_root: async_result.controller_root,
+            validation_errors: async_result.validation_errors,
+            go_formatted_errors: async_result.go_formatted_errors,
         }
     }
 }

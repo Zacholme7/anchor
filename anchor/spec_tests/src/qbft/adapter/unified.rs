@@ -1,4 +1,9 @@
-use openssl::pkey::{PKey, Private};
+use openssl::{
+    hash::MessageDigest,
+    pkey::{PKey, Private, Public},
+    rsa::Rsa,
+    sign::Verifier,
+};
 use sha2::{Digest, Sha256};
 use ssv_types::{
     IndexSet, OperatorId, Round,
@@ -79,13 +84,22 @@ impl MessageIdExt for MessageId {
     }
 }
 
+
+
+
+
+
+
+
 /// Minimal QBFT test adapter focused on essential functionality
+#[derive(Clone)]
 pub struct QbftTestAdapter {
     committee: IndexSet<OperatorId>,
     operator_id: OperatorId,
     identifier: MessageId,
     config: AdapterConfig,
     test_context: Option<TestContext>,
+    test_keys: TestKeySet,
 }
 
 impl QbftTestAdapter {
@@ -104,6 +118,7 @@ impl QbftTestAdapter {
             identifier,
             config,
             test_context: None,
+            test_keys: TestKeySet::four_share_set(),
         })
     }
 
@@ -196,6 +211,10 @@ impl QbftTestAdapter {
         self
     }
 
+
+
+
+
     /// Execute validation scenario for compatibility with existing tests
     pub fn execute_validation_scenario(&self, message: SignedSSVMessage) -> ScenarioResult {
         let mut validation_result = self.validate_message(&message);
@@ -223,78 +242,12 @@ impl QbftTestAdapter {
                 decided_value: None,
             },
             timer_state: None,
+            controller_root: None, // Validation tests don't use controller root
             validation_errors: validation_result.errors.clone(),
             go_formatted_errors: validation_result.errors,
         }
     }
 
-    /// Execute controller scenario for compatibility with existing tests
-    pub fn execute_controller_scenario(
-        &self,
-        _input_value: Option<String>,
-        messages: Vec<SignedSSVMessage>,
-    ) -> ScenarioResult {
-        let mut all_errors = Vec::new();
-        let mut processed_messages = Vec::new();
-        let mut decided_count = 0;
-        let mut timeout_count = 0;
-        let mut consensus_reached = false;
-
-        // Validate all messages and simulate consensus progress
-        for message in messages {
-            let validation_result = self.validate_message(&message);
-            if validation_result.is_valid {
-                processed_messages.push(message);
-                // Simulate consensus progress - if we have enough valid messages, consensus is reached
-                if processed_messages.len() >= self.config.quorum_threshold {
-                    consensus_reached = true;
-                    decided_count = 1;
-                }
-            } else {
-                all_errors.extend(validation_result.errors);
-            }
-        }
-
-        // If no consensus reached but we have some valid messages, it might be a timeout scenario
-        if !consensus_reached && !processed_messages.is_empty() {
-            timeout_count = 1;
-        }
-
-        // For scenarios with no valid messages but expecting decisions, simulate based on input
-        if processed_messages.is_empty() && all_errors.is_empty() {
-            // This might be a scenario where consensus should be reached automatically
-            decided_count = 1;
-            consensus_reached = true;
-        }
-
-        ScenarioResult {
-            scenario_id: "controller_test".to_string(),
-            processing_result: ProcessingResult {
-                consensus_reached,
-                messages_sent: processed_messages,
-                validation_result: ValidationResult {
-                    is_valid: all_errors.is_empty(),
-                    errors: all_errors.clone(),
-                    warnings: Vec::new(),
-                },
-                go_error_messages: all_errors.clone(),
-            },
-            decided_state: DecidedState {
-                decided_count,
-                decided_value: if decided_count > 0 {
-                    Some(vec![1, 2, 3, 4])
-                } else {
-                    None
-                },
-            },
-            timer_state: Some(TimerState {
-                timeouts: timeout_count,
-                current_round: Round::from(1),
-            }),
-            validation_errors: all_errors.clone(),
-            go_formatted_errors: all_errors,
-        }
-    }
 
     /// Setup message creation scenario for compatibility with existing tests
     pub fn setup_message_creation_scenario(
@@ -332,6 +285,7 @@ impl QbftTestAdapter {
                         decided_value: None,
                     },
                     timer_state: None,
+                    controller_root: None, // Message creation tests don't use controller root
                     validation_errors: validation_result.errors.clone(),
                     go_formatted_errors: validation_result.errors,
                 }
@@ -356,6 +310,7 @@ impl QbftTestAdapter {
                         decided_value: None,
                     },
                     timer_state: None,
+                    controller_root: None, // Message creation tests don't use controller root
                     validation_errors: vec![error_msg.clone()],
                     go_formatted_errors: vec![error_msg],
                 }
@@ -726,10 +681,95 @@ impl QbftTestAdapter {
         Ok(())
     }
 
-    fn validate_signatures(&self, _message: &SignedSSVMessage) -> Result<(), String> {
-        // Placeholder for signature validation
-        // In a full implementation, this would verify RSA signatures
+    fn validate_signatures(&self, message: &SignedSSVMessage) -> Result<(), String> {
+        let signatures = message.signatures();
+        let operator_ids = message.operator_ids();
+        
+        // Check if we have signatures
+        if signatures.is_empty() {
+            return Err("no signers".to_string());
+        }
+
+        // Check if number of signatures matches operator IDs
+        if signatures.len() != operator_ids.len() {
+            return Err("signature count mismatch".to_string());
+        }
+
+        // Check for unique signers
+        let mut unique_operators = std::collections::HashSet::new();
+        for operator_id in operator_ids {
+            if !unique_operators.insert(*operator_id) {
+                return Err("non unique signer".to_string());
+            }
+        }
+
+        // Note: Quorum validation is moved to consensus logic, not basic signature validation
+        // Messages can be structurally valid but not have quorum for consensus
+
+        // Check all signers are in committee
+        for operator_id in operator_ids {
+            if !self.committee.contains(operator_id) {
+                return Err("signer not in committee".to_string());
+            }
+        }
+
+        // Get the SSV message data to verify signatures against
+        let ssv_message_bytes = message.ssv_message().as_ssz_bytes();
+
+        // Verify each signature
+        for (signature_bytes, operator_id) in signatures.iter().zip(operator_ids.iter()) {
+            // Get the public key for this operator
+            let private_key = match self.test_keys.operator_keys.get(operator_id) {
+                Some(key) => key,
+                None => return Err("signer not in committee".to_string()),
+            };
+
+            // Extract public key from private key
+            let public_key = match private_key.public_key_to_pem() {
+                Ok(pem_bytes) => match Rsa::public_key_from_pem(&pem_bytes) {
+                    Ok(rsa_pub) => match PKey::from_rsa(rsa_pub) {
+                        Ok(pkey) => pkey,
+                        Err(_) => return Err("msg signature invalid: crypto/rsa: verification error".to_string()),
+                    },
+                    Err(_) => return Err("msg signature invalid: crypto/rsa: verification error".to_string()),
+                },
+                Err(_) => return Err("msg signature invalid: crypto/rsa: verification error".to_string()),
+            };
+
+            // Verify the signature
+            match self.verify_rsa_signature(&public_key, &ssv_message_bytes, signature_bytes) {
+                Ok(true) => {
+                    // Signature is valid
+                }
+                Ok(false) | Err(_) => {
+                    return Err("msg signature invalid: crypto/rsa: verification error".to_string());
+                }
+            }
+        }
+
         Ok(())
+    }
+
+    /// Verify RSA signature using OpenSSL
+    fn verify_rsa_signature(
+        &self,
+        public_key: &PKey<Public>,
+        data: &[u8],
+        signature: &[u8],
+    ) -> Result<bool, String> {
+        let mut verifier = match Verifier::new(MessageDigest::sha256(), public_key) {
+            Ok(v) => v,
+            Err(_) => return Err("failed to create verifier".to_string()),
+        };
+
+        if let Err(_) = verifier.update(data) {
+            return Err("failed to update verifier".to_string());
+        }
+
+        match verifier.verify(signature) {
+            Ok(result) => Ok(result),
+            Err(_) => Err("verification failed".to_string()),
+        }
     }
 
     fn validate_message_type(&self, message: &SignedSSVMessage) -> Result<(), String> {
@@ -962,6 +1002,7 @@ impl QbftTestAdapter {
                     timeouts: 0,
                     current_round: Round::from(1),
                 }),
+                controller_root: None, // Timeout tests don't use controller root
                 validation_errors: vec!["instance stopped processing timeouts".to_string()],
                 go_formatted_errors: vec!["instance stopped processing timeouts".to_string()],
             };
@@ -1028,6 +1069,7 @@ impl QbftTestAdapter {
                 timeouts: timeout_count,
                 current_round: Round::from(new_round),
             }),
+            controller_root: None, // Timeout tests don't use controller root
             validation_errors: validation_errors.clone(),
             go_formatted_errors: validation_errors,
         }

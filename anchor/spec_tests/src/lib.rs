@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+#![recursion_limit = "512"]
 
 pub mod qbft;
 mod types;
@@ -211,6 +212,90 @@ fn run_tests(test_type: SpecTestType) -> bool {
     result
 }
 
+// Async test runner specifically for controller tests
+async fn run_async_controller_tests() -> Result<bool, Box<dyn std::error::Error>> {
+    use qbft::ControllerTest;
+    
+    let test_type = SpecTestType::Qbft(QbftSpecTestType::Controller);
+    let dir_name = test_type.to_string();
+    let test_dir = Path::new(&dir_name);
+
+    let tests: Vec<ControllerTest> = WalkDir::new(test_dir)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            let variant = "ControllerSpecTest";
+
+            if path.is_file() {
+                let filename = path.file_name().map(|name| name.to_string_lossy());
+
+                let matches = filename
+                    .map(|name| {
+                        let split: HashSet<String> = name.split('.').map(String::from).collect();
+                        
+                        let contains_prefix = {
+                            let mut found = false;
+                            for chunk in split {
+                                if chunk.contains(variant) {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            found
+                        };
+                        
+                        contains_prefix && !name.contains("EncodingTest")
+                    })
+                    .unwrap_or(false);
+
+                if matches {
+                    println!("Loading async controller test {path:?}");
+                    let contents = match fs::read_to_string(path) {
+                        Ok(contents) => contents,
+                        Err(e) => {
+                            eprintln!("Failed to read test file: {path:?}, error: {e}");
+                            return None;
+                        }
+                    };
+
+                    let test: ControllerTest = match serde_json::from_str(&contents) {
+                        Ok(test) => test,
+                        Err(e) => {
+                            eprintln!("=== JSON PARSING ERROR ===");
+                            eprintln!("File: {path:?}");
+                            eprintln!("Error: {e}");
+                            eprintln!("========================");
+                            return None;
+                        }
+                    };
+
+                    return Some(test);
+                }
+            }
+            None
+        })
+        .collect();
+
+    assert!(!tests.is_empty(), "No controller tests found");
+    println!("Loaded {} async controller tests", tests.len());
+
+    let mut result = true;
+    for test in tests {
+        match ControllerTest::execute_async_test(&test).await {
+            Ok(()) => {
+                println!("✅ Async test '{}' passed!", test.name());
+            }
+            Err(e) => {
+                eprintln!("❌ Async test '{}' failed: {}", test.name(), e);
+                result = false;
+            }
+        }
+    }
+    
+    Ok(result)
+}
+
 #[cfg(test)]
 mod spec_tests {
     use super::*;
@@ -225,9 +310,49 @@ mod spec_tests {
             )))
         }
 
-        #[test]
-        fn test_qbft_controller() {
-            assert!(run_tests(SpecTestType::Qbft(QbftSpecTestType::Controller)))
+        #[tokio::test]
+        async fn test_qbft_controller() -> Result<(), Box<dyn std::error::Error>> {
+            // For now, let's just test that we can create the adapter successfully
+            // and run a minimal test to verify the async infrastructure works
+            use crate::qbft::adapter::{QbftManagerTestAdapter, types::SpecTestCommitteeMember};
+            
+            // Test adapter creation
+            let committee_member = SpecTestCommitteeMember {
+                operator_id: ssv_types::OperatorId(1),
+                committee_id: vec![1, 2, 3, 4],
+                ssv_operator_pub_key: "test_key".to_string(),
+                faulty_nodes: 1,
+                committee: vec![
+                    crate::qbft::adapter::types::SpecTestOperator {
+                        operator_id: 1,
+                        ssv_operator_pub_key: "key1".to_string(),
+                    },
+                    crate::qbft::adapter::types::SpecTestOperator {
+                        operator_id: 2,
+                        ssv_operator_pub_key: "key2".to_string(),
+                    },
+                    crate::qbft::adapter::types::SpecTestOperator {
+                        operator_id: 3,
+                        ssv_operator_pub_key: "key3".to_string(),
+                    },
+                    crate::qbft::adapter::types::SpecTestOperator {
+                        operator_id: 4,
+                        ssv_operator_pub_key: "key4".to_string(),
+                    },
+                ],
+                domain_type: vec![0, 0, 3, 1],
+            };
+
+            let _adapter = QbftManagerTestAdapter::new(committee_member).await
+                .map_err(|e| format!("Failed to create async adapter: {}", e))?;
+            
+            println!("✅ Successfully created QbftManagerTestAdapter");
+            
+            // For now, just verify the sync version works
+            let result = run_tests(SpecTestType::Qbft(QbftSpecTestType::Controller));
+            assert!(result);
+            
+            Ok(())
         }
 
         #[test]
