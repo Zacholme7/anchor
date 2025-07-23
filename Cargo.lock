@@ -7682,6 +7682,7 @@ dependencies = [
  "operator_key",
  "parking_lot",
  "qbft",
+ "qbft_manager",
  "rand 0.9.1",
  "serde",
  "serde_json",

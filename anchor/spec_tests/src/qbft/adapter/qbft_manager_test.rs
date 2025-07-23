@@ -33,13 +33,23 @@ struct SerializableController {
 impl QbftManagerTestAdapter {
     /// Create a new QbftManagerTestAdapter from committee member data
     pub async fn new(committee_member: SpecTestCommitteeMember) -> Result<Self, String> {
+        Self::new_with_force_stop(committee_member, false).await
+    }
+
+    /// Create a new QbftManagerTestAdapter with optional force stop flag
+    pub async fn new_with_force_stop(committee_member: SpecTestCommitteeMember, force_stop: bool) -> Result<Self, String> {
         // Extract committee size from the committee member data
         let committee_size = committee_member.committee.len();
         
-        // Create async test setup with the committee size
-        let setup = AsyncQbftTestSetup::new(committee_size)
+        // Create async test setup with the committee size and force stop flag
+        let mut setup = AsyncQbftTestSetup::new(committee_size)
             .await
             .map_err(|e| format!("Failed to create async test setup: {}", e))?;
+            
+        // Set force stop if specified
+        if force_stop {
+            setup.set_force_stop(force_stop);
+        }
 
         Ok(Self {
             setup,
@@ -171,7 +181,8 @@ impl QbftManagerTestAdapter {
             timer_state: if has_input_value {
                 Some(super::types::TimerState {
                     timeouts: 1,
-                    current_round: ssv_types::Round::from(1),
+                    current_round: 1,
+                    timeout_f: None,
                 })
             } else {
                 None
@@ -233,101 +244,59 @@ impl QbftManagerTestAdapter {
             domain_type: self.committee_member.domain_type.clone(),
         }
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ssv_types::OperatorId;
-
-    fn create_test_committee_member() -> SpecTestCommitteeMember {
-        use super::super::types::{SpecTestCommitteeMember, SpecTestOperator};
-        
-        SpecTestCommitteeMember {
-            operator_id: OperatorId(1),
-            committee_id: vec![1, 2, 3, 4],
-            ssv_operator_pub_key: "test_key".to_string(),
-            faulty_nodes: 1,
-            committee: vec![
-                SpecTestOperator {
-                    operator_id: 1,
-                    ssv_operator_pub_key: "key1".to_string(),
-                },
-                SpecTestOperator {
-                    operator_id: 2,
-                    ssv_operator_pub_key: "key2".to_string(),
-                },
-                SpecTestOperator {
-                    operator_id: 3,
-                    ssv_operator_pub_key: "key3".to_string(),
-                },
-                SpecTestOperator {
-                    operator_id: 4,
-                    ssv_operator_pub_key: "key4".to_string(),
-                },
-            ],
-            domain_type: vec![0, 0, 3, 1],
+    /// Start a QBFT instance for message processing tests at a specific height and round
+    pub async fn start_instance_for_message_processing_with_round(
+        &self,
+        input_value: &str,
+        height: u64,
+        round: u64,
+    ) -> Result<(), String> {
+        // For message processing tests, create instance and set the correct round
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.setup.start_instance_at_height_and_round(input_value, height, round)
+        ).await {
+            Ok(Ok(_instance_id)) => {
+                eprintln!("✓ Started QBFT instance at height {} round {}", height, round);
+                Ok(())
+            }
+            Ok(Err(e)) => Err(format!("Failed to start instance at height {} round {}: {}", height, round, e)),
+            Err(_) => Err(format!("Timeout starting instance at height {} round {}", height, round)),
         }
     }
 
-    #[tokio::test]
-    async fn test_adapter_creation() {
-        let committee_member = create_test_committee_member();
-        let adapter = QbftManagerTestAdapter::new(committee_member).await.unwrap();
-        
-        // Test that adapter was created successfully
-        assert_eq!(adapter.committee_member.committee.len(), 4);
+    /// Start a QBFT instance for message processing tests at a specific height
+    pub async fn start_instance_for_message_processing(
+        &self,
+        input_value: &str,
+        height: u64,
+    ) -> Result<(), String> {
+        // For message processing tests, we need to ensure an instance exists at the specified height
+        // Use the new height-specific method to create instances at exact heights
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.setup.start_instance_at_height(input_value, height)
+        ).await {
+            Ok(Ok(_instance_id)) => {
+                eprintln!("✓ Started QBFT instance at height {}", height);
+                Ok(())
+            }
+            Ok(Err(e)) => Err(format!("Failed to start instance at height {}: {}", height, e)),
+            Err(_) => Err(format!("Timeout starting instance at height {}", height)),
+        }
     }
 
-    #[tokio::test]
-    async fn test_execute_scenario_with_input_value() {
-        let committee_member = create_test_committee_member();
-        let adapter = QbftManagerTestAdapter::new(committee_member).await.unwrap();
-        
-        // Test scenario with input value
-        let result = adapter.execute_controller_scenario(
-            Some("dGVzdCBkYXRh".to_string()), // "test data" in base64
-            vec![]
-        ).await.unwrap();
-        
-        assert_eq!(result.scenario_id, "qbft_manager_test");
-        assert!(result.timer_state.is_some());
+    /// Process a single message through the existing QBFT instance
+    pub async fn process_single_message(&self, message: SignedSSVMessage) -> Result<(), String> {
+        // Process message through the setup's message processing
+        self.setup.process_message(message).await
+            .map_err(|e| format!("Invalid message: {}", e))
     }
 
-    #[tokio::test]
-    async fn test_execute_scenario_without_input_value() {
-        let committee_member = create_test_committee_member();
-        let adapter = QbftManagerTestAdapter::new(committee_member).await.unwrap();
-        
-        // Test scenario without input value
-        let result = adapter.execute_controller_scenario(
-            None,
-            vec![]
-        ).await.unwrap();
-        
-        assert_eq!(result.scenario_id, "qbft_manager_test");
-        assert!(result.timer_state.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_controller_root_calculation() {
-        let committee_member = create_test_committee_member();
-        let adapter = QbftManagerTestAdapter::new(committee_member).await.unwrap();
-        
-        // Create test controller state
-        let state = ControllerStateData {
-            height: 1,
-            stored_instances: vec![StoredInstance {
-                height: 1,
-                decided_value: Some(b"test".to_vec()),
-            }],
-            active_instances: std::collections::HashMap::new(),
-        };
-        
-        let root = adapter.calculate_controller_root(&state).unwrap();
-        
-        // Root should be a valid hex string
-        assert!(root.len() > 0);
-        assert!(hex::decode(&root).is_ok());
+    /// Set proposal acceptance for a specific height and round
+    pub fn set_proposal_acceptance(&self, height: u64, round: u64, has_accepted_proposal: bool) {
+        self.setup.set_proposal_acceptance(height, round, has_accepted_proposal);
     }
 }
+

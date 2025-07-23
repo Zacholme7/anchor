@@ -310,7 +310,8 @@ impl ControllerTest {
                         timer_state: if run_data.input_value.is_some() {
                             Some(super::adapter::types::TimerState {
                                 timeouts: 1,
-                                current_round: ssv_types::Round::from(1),
+                                current_round: 1,
+                                timeout_f: None,
                             })
                         } else {
                             None

@@ -1,8 +1,13 @@
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use ssv_types::{IndexSet, OperatorId};
+use ssv_types::{IndexSet, OperatorId, Cluster};
+use ssv_types::domain_type::DomainType;
 
-use super::types::AdapterError;
+// Core QBFT imports for bridge integration
+use qbft::{Config, DefaultLeaderFunction, ConfigBuilder, ConfigBuilderError};
+use ssv_types::msgid::MessageId;
+
+use super::types::{AdapterError, SpecTestCommitteeMember};
 
 /// Shared serializable controller structure for consistent JSON formatting
 #[derive(Debug, Clone, Serialize)]
@@ -160,4 +165,55 @@ pub fn validate_message_structure(message: &ssv_types::message::SignedSSVMessage
     }
 
     Ok(())
+}
+
+/// Bridge utility functions for core QBFT integration
+/// Committee configuration conversion from spec test format to core types
+pub fn build_committee_from_spec_test(
+    member: &SpecTestCommitteeMember
+) -> Result<(IndexSet<OperatorId>, Cluster), AdapterError> {
+    // Build operator index set from committee members
+    let mut operators = IndexSet::new();
+    for operator in &member.committee {
+        operators.insert(OperatorId(operator.operator_id));
+    }
+    
+    // Build cluster information (simplified for tests)
+    let cluster = Cluster {
+        cluster_id: ssv_types::ClusterId([1u8; 32]), // Default cluster ID for spec tests
+        owner: types::Address::from([0u8; 20]), // Default owner address
+        fee_recipient: types::Address::from([0u8; 20]), // Default fee recipient
+        liquidated: false,
+        cluster_members: operators.clone(),
+    };
+    
+    Ok((operators, cluster))
+}
+
+/// Build QBFT config from spec test data
+pub fn build_qbft_config_from_spec(
+    committee: &IndexSet<OperatorId>,
+    operator_id: OperatorId,
+    instance_height: qbft::InstanceHeight,
+    max_rounds: usize,
+) -> Result<Config<DefaultLeaderFunction>, ConfigBuilderError> {
+    ConfigBuilder::new(operator_id, instance_height, committee.clone())
+        .with_max_rounds(max_rounds)
+        .build()
+}
+
+/// Create message ID for spec tests based on domain and committee
+pub fn build_message_id_for_spec_test(
+    _domain: &DomainType,
+    _committee_id: &[u8],
+) -> MessageId {
+    // Use the existing for_spectest method which creates a standard test MessageId
+    MessageId::for_spectest()
+}
+
+/// Convert core error types to Go-compatible format for spec test compatibility
+pub fn map_core_error_to_go_format(
+    error: &dyn std::error::Error
+) -> String {
+    format!("Core QBFT error: {}", error)
 }

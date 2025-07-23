@@ -5,6 +5,115 @@ use std::collections::HashMap;
 use types::Hash256;
 use crate::utils::async_test_utils::{CommitteeInstanceId, ControllerStateData};
 
+// =================== Message Processing Test Types ===================
+
+/// Main test structure for message processing tests
+#[derive(Debug, Clone, Deserialize)]
+pub struct MsgProcessingTest {
+    #[serde(rename = "Name")]
+    pub name: String,
+    #[serde(rename = "Pre")]
+    pub pre: MsgProcessingPre,
+    #[serde(rename = "PostRoot")]
+    pub post_root: Option<String>,
+    #[serde(rename = "PostState")]
+    pub post_state: Option<QbftInstanceState>,
+    #[serde(rename = "OutputMessages")]
+    pub output_messages: Vec<SignedSSVMessage>,
+    #[serde(rename = "ExpectedError")]
+    pub expected_error: Option<String>,
+}
+
+/// Pre-test state for message processing
+#[derive(Debug, Clone, Deserialize)]
+pub struct MsgProcessingPre {
+    #[serde(rename = "State")]
+    pub state: QbftInstanceState,
+    #[serde(rename = "InputMessages")]
+    pub input_messages: Vec<MessageContainer>,
+}
+
+/// Complete QBFT instance state representation
+#[derive(Debug, Clone, Deserialize)]
+pub struct QbftInstanceState {
+    #[serde(rename = "Height")]
+    pub height: u64,
+    #[serde(rename = "Round")]
+    pub round: u64,
+    #[serde(rename = "Stage")]
+    pub stage: u8,
+    #[serde(rename = "LastPreparedRound")]
+    pub last_prepared_round: Option<u64>,
+    #[serde(rename = "LastPreparedValue")]
+    pub last_prepared_value: Option<Vec<u8>>,
+    #[serde(rename = "ProposalAcceptedForCurrentRound")]
+    pub proposal_accepted_for_current_round: Option<Vec<u8>>,
+    #[serde(rename = "Decided")]
+    pub decided: bool,
+    #[serde(rename = "DecidedValue")]
+    pub decided_value: Option<Vec<u8>>,
+    #[serde(rename = "ProposeContainer")]
+    pub propose_container: Option<MessageContainer>,
+    #[serde(rename = "PrepareContainer")]
+    pub prepare_container: Option<MessageContainer>,
+    #[serde(rename = "CommitContainer")]
+    pub commit_container: Option<MessageContainer>,
+    #[serde(rename = "RoundChangeContainer")]
+    pub round_change_container: Option<MessageContainer>,
+}
+
+/// Message container for different message types
+#[derive(Debug, Clone, Deserialize)]
+pub struct MessageContainer {
+    #[serde(rename = "Msgs")]
+    pub msgs: HashMap<String, SignedSSVMessage>,
+}
+
+/// Timer state information - enhanced from existing TimerState
+#[derive(Debug, Clone, Deserialize)]
+pub struct TimerState {
+    #[serde(rename = "Timeouts")]
+    pub timeouts: u64,
+    #[serde(rename = "Round")]
+    pub current_round: u64,
+    #[serde(rename = "TimeoutF")]
+    pub timeout_f: Option<u64>,
+}
+
+/// Processed message result for message sequence processing
+#[derive(Debug, Clone)]
+pub struct ProcessedMessage {
+    /// The original message
+    pub message: SignedSSVMessage,
+    /// Whether the message was processed successfully
+    pub processed: bool,
+    /// The height at which this message was processed
+    pub result_height: Option<u64>,
+    /// Any error that occurred during processing
+    pub error: Option<String>,
+}
+
+// =================== End Message Processing Test Types ===================
+
+impl QbftInstanceState {
+    /// Convert u64 round to ssv_types::Round
+    pub fn round(&self) -> Round {
+        Round::from(self.round)
+    }
+
+    /// Convert optional u64 to optional ssv_types::Round
+    pub fn last_prepared_round(&self) -> Option<Round> {
+        self.last_prepared_round.map(Round::from)
+    }
+}
+
+impl TimerState {
+    /// Convert u64 round to ssv_types::Round
+    pub fn current_round(&self) -> Round {
+        Round::from(self.current_round)
+    }
+}
+
 /// Unified decided state for all QBFT test scenarios
 #[derive(Debug, Clone)]
 pub struct DecidedState {
@@ -12,12 +121,6 @@ pub struct DecidedState {
     pub decided_value: Option<Vec<u8>>,
 }
 
-/// Unified timer state for all QBFT test scenarios
-#[derive(Debug, Clone)]
-pub struct TimerState {
-    pub timeouts: u64,
-    pub current_round: Round,
-}
 
 /// Validation result with comprehensive error information
 #[derive(Debug, Clone)]
@@ -191,6 +294,7 @@ pub struct TestContext {
 pub enum TestType {
     Controller,
     MessageCreation,
+    MessageProcessing,
     QbftMessage,
     RoundRobin,
     Timeout,
@@ -313,6 +417,7 @@ impl TestType {
         match self {
             TestType::Controller => "controller",
             TestType::MessageCreation => "message_creation",
+            TestType::MessageProcessing => "message_processing",
             TestType::QbftMessage => "qbft_message",
             TestType::RoundRobin => "round_robin",
             TestType::Timeout => "timeout",
