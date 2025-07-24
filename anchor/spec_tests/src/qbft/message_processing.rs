@@ -1,5 +1,5 @@
 use super::adapter::{
-    QbftManagerTestAdapter, AsyncScenarioResult, TestContext, TestType, SpecTestCommitteeMember,
+    QbftManagerTestAdapter, AsyncScenarioResult, SpecTestCommitteeMember,
 };
 use crate::{QbftSpecTestType, SpecTest, SpecTestType};
 use serde::Deserialize;
@@ -393,7 +393,7 @@ impl MessageProcessingTest {
         // Process messages directly through the initialized instance
         // Don't start new instances - use the ones we already created
         let mut processing_errors = Vec::new();
-        let mut decisions = Vec::new();
+        let decisions = Vec::new();
         let mut round_change_count: HashMap<u64, u64> = HashMap::new(); // round -> count
         let mut accepted_proposals: HashMap<u64, bool> = HashMap::new(); // round -> has_accepted_proposal
         let mut highest_round = 1u64;

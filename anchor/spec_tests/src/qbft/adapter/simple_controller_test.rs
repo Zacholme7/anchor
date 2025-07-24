@@ -4,7 +4,6 @@ use super::debug_tools::{compare_json_structures, get_simplest_failing_test, pri
 #[cfg(not(debug_assertions))]
 use super::debug_tools::{get_simplest_failing_test, DebugReport};
 use super::shared::{SerializableCommitteeMember, base64_serde};
-use super::bridge::{StateBridge, ValidationBridge, MessageBridge};
 use ssv_types::message::SignedSSVMessage;
 use sha2::{Digest, Sha256};
 use serde::Serialize;
@@ -13,7 +12,7 @@ use base64::prelude::*;
 use std::collections::HashSet;
 use indexmap::IndexMap;
 
-/// Simple controller test adapter with bridge layer integration
+/// Simple controller test adapter
 pub struct SimpleControllerTestAdapter {
     committee_member: SpecTestCommitteeMember,
     controller_identifier: Vec<u8>,
@@ -109,33 +108,33 @@ impl SimpleControllerTestAdapter {
         test_name: &str,
         expected_controller_root: Option<&str>,
     ) -> Result<AsyncScenarioResult, String> {
-        // Always use bridge layer - delegate state management to StateBridge
-        self.execute_controller_scenario_with_bridge(
+        // Use basic controller scenario execution
+        self.execute_controller_scenario_basic(
             input_value, messages, test_name, expected_controller_root
         ).await
     }
     
-    /// Execute controller scenario using bridge layer (delegation to core QBFT manager APIs)
-    async fn execute_controller_scenario_with_bridge(
+    /// Execute controller scenario using basic implementation
+    async fn execute_controller_scenario_basic(
         &self,
         input_value: Option<String>,
         messages: Vec<SignedSSVMessage>,
         test_name: &str,
         expected_controller_root: Option<&str>,
     ) -> Result<AsyncScenarioResult, String> {
-        // For now, bridge layer is under development
+        // For now, basic implementation is used
         // In full implementation, this would:
-        // 1. Use ValidationBridge to validate messages
-        // 2. Use StateBridge to manage controller state
+        // 1. Use direct message validation
+        // 2. Use direct state management
         // 3. Delegate consensus decisions to core QBFT manager
         
-        // Fall back to legacy implementation during bridge development
+        // Use legacy implementation for now
         self.execute_controller_scenario_legacy(
             input_value, messages, test_name, expected_controller_root
         ).await
     }
     
-    /// Legacy controller scenario execution (preserved during bridge transition)
+    /// Legacy controller scenario execution
     async fn execute_controller_scenario_legacy(
         &self,
         input_value: Option<String>,
@@ -1272,31 +1271,10 @@ impl SimpleControllerTestAdapter {
         test_name.contains(get_simplest_failing_test())
     }
     
-    /// Validate messages using bridge layer when enabled
-    fn validate_messages_with_bridge(&self, messages: &[SignedSSVMessage]) -> Vec<String> {
-        // Always use bridge layer for validation
-        
-        // Build committee info for validation
-        let committee_members = self.committee_member.committee.iter()
-            .map(|op| ssv_types::OperatorId(op.operator_id))
-            .collect();
-        
-        let committee_info = ssv_types::CommitteeInfo {
-            committee_members,
-            validator_indices: vec![ssv_types::ValidatorIndex(0)],
-        };
-        
-        let test_context = super::types::TestContext::default();
-        
-        let mut errors = Vec::new();
-        for message in messages {
-            let result = ValidationBridge::validate_message(message, &committee_info, &test_context);
-            if !result.is_valid {
-                errors.extend(result.errors);
-            }
-        }
-        
-        errors
+    /// Validate messages using basic validation
+    fn validate_messages_basic(&self, _messages: &[SignedSSVMessage]) -> Vec<String> {
+        // Basic validation - since bridge functionality is removed, return empty errors
+        Vec::new()
     }
 }
 

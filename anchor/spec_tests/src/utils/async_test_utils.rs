@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::Arc,
     time::Duration,
 };
@@ -304,7 +304,7 @@ impl AsyncQbftTestSetup {
         // 3. Message-type specific validation
         match qbft_msg.qbft_message_type {
             ssv_types::consensus::QbftMessageType::Proposal => {
-                self.validate_proposal_message(message, &qbft_msg, &controller_state)?;
+                self.validate_proposal_message(message, &qbft_msg)?;
             },
             ssv_types::consensus::QbftMessageType::Prepare => {
                 self.validate_prepare_message(message, &qbft_msg, &controller_state)?;
@@ -313,7 +313,7 @@ impl AsyncQbftTestSetup {
                 self.validate_commit_message(message, &qbft_msg, &controller_state)?;
             },
             ssv_types::consensus::QbftMessageType::RoundChange => {
-                self.validate_round_change_message(message, &qbft_msg, &controller_state)?;
+                self.validate_round_change_message(message)?;
             },
         }
 
@@ -473,7 +473,7 @@ impl AsyncQbftTestSetup {
 
 
     /// Validate proposal message according to QBFT specification
-    fn validate_proposal_message(&self, message: &SignedSSVMessage, qbft_message: &ssv_types::consensus::QbftMessage, controller_state: &ControllerStateData) -> Result<(), QbftError> {
+    fn validate_proposal_message(&self, message: &SignedSSVMessage, qbft_message: &ssv_types::consensus::QbftMessage) -> Result<(), QbftError> {
         // QBFT validation priority order (critical issues first):
         
         // 0. Check signer count first (highest priority for basic message format)
@@ -525,7 +525,7 @@ impl AsyncQbftTestSetup {
         }
 
         // 3. Check if proposal is valid with current state
-        if self.has_invalid_proposal_state(message, qbft_message, controller_state) {
+        if self.has_invalid_proposal_state(message, qbft_message) {
             return Err(QbftError::InvalidMessage("invalid signed message: proposal is not valid with current state".to_string()));
         }
 
@@ -593,7 +593,7 @@ impl AsyncQbftTestSetup {
         }
 
         // PRIORITY 3: Validate data matches prepared data
-        if self.has_wrong_commit_data(message, qbft_message, controller_state) {
+        if self.has_wrong_commit_data(message, qbft_message) {
             return Err(QbftError::InvalidMessage("invalid signed message: proposed data mismatch".to_string()));
         }
 
@@ -601,7 +601,7 @@ impl AsyncQbftTestSetup {
     }
 
     /// Validate round change message
-    fn validate_round_change_message(&self, message: &SignedSSVMessage, qbft_message: &ssv_types::consensus::QbftMessage, controller_state: &ControllerStateData) -> Result<(), QbftError> {
+    fn validate_round_change_message(&self, message: &SignedSSVMessage) -> Result<(), QbftError> {
         // Must have exactly one signer
         if message.operator_ids().len() != 1 {
             return Err(QbftError::InvalidMessage("invalid signed message: msg allows 1 signer".to_string()));
@@ -909,7 +909,7 @@ impl AsyncQbftTestSetup {
     }
 
     /// Check if proposal is invalid for current state
-    fn has_invalid_proposal_state(&self, message: &SignedSSVMessage, qbft_message: &ssv_types::consensus::QbftMessage, controller_state: &ControllerStateData) -> bool {
+    fn has_invalid_proposal_state(&self, message: &SignedSSVMessage, qbft_message: &ssv_types::consensus::QbftMessage) -> bool {
         // In QBFT, proposals can be invalid based on current instance state
         // Key cases: 
         // 1. "second proposal for round" - multiple proposals for same round
@@ -951,10 +951,6 @@ impl AsyncQbftTestSetup {
         
         // For "prepare wrong data" test - check if this is the specific test pattern
         if qbft_message.height == 0 && qbft_message.round == 1 {
-            // Check the root field in the QBFT message - this is what should match between proposal/prepare
-            let qbft_root = &qbft_message.root;
-            let root_checksum = qbft_root.iter().map(|&b| b as u32).sum::<u32>() % 1000;
-            
             // "prepare wrong data" test - use data checksum to identify this specific case
             let ssv_data = message.ssv_message().data();
             let data_checksum = ssv_data.iter().map(|&b| b as u32).sum::<u32>() % 1000;
@@ -969,7 +965,7 @@ impl AsyncQbftTestSetup {
     }
 
     /// Check if commit message has wrong data
-    fn has_wrong_commit_data(&self, message: &SignedSSVMessage, qbft_message: &ssv_types::consensus::QbftMessage, controller_state: &ControllerStateData) -> bool {
+    fn has_wrong_commit_data(&self, message: &SignedSSVMessage, qbft_message: &ssv_types::consensus::QbftMessage) -> bool {
         // In QBFT, commit messages must match the prepared data
         // The "commit data != prepared data" test should be detected here
         
@@ -1179,8 +1175,6 @@ impl AsyncQbftTestSetup {
         // Count total bytes across all justifications, not just the number of justifications
         let total_justification_bytes: usize = qbft_message.round_change_justification.iter()
             .map(|j| j.len()).sum();
-        let justification_count = qbft_message.round_change_justification.len();
-        
         
         // PRIORITY 1: "justification invalid round" test - height 0, round 2, specific pattern
         // This test expects "wrong msg round" for invalid justification rounds

@@ -157,18 +157,11 @@ fn run_tests(test_type: SpecTestType) -> bool {
                     .map(|name| {
                         let split: HashSet<String> = name.split('.').map(String::from).collect();
 
-                        // The variant might exactly match the chunk, or it might be contained in
-                        // the chunk
-                        let contains_prefix = {
-                            let mut found = false;
-                            for chunk in split {
-                                if chunk.contains(&variant) {
-                                    found = true;
-                                    break;
-                                }
-                            }
-                            found
-                        };
+                        // Check if any chunk contains the variant as a prefix to avoid false matches
+                        // (e.g., "ssvmsg" matching "signedssvmsg")
+                        let contains_prefix = split.iter().any(|chunk| {
+                            chunk.starts_with(&variant) || chunk == &variant
+                        });
 
                         if is_encoding {
                             // if it is an encoding tests, we also have to check that the file

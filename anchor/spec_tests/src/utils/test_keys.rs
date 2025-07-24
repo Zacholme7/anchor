@@ -12,9 +12,6 @@ pub static TESTING_VALIDATOR_PUBKEY: LazyLock<PublicKeyBytes> = LazyLock::new(||
     PublicKeyBytes::from_str("0x8e80066551a81b318258709edaf7dd1f63cd686a0e4db8b29bbb7acfe65608677af5a527d9448ee47835485e02b50bc0").expect("Failed to create public key")
 });
 
-pub static TESTING_WRONG_VALIDATOR_PUBKEY: LazyLock<PublicKeyBytes> = LazyLock::new(|| {
-    PublicKeyBytes::from_str("0x948fb44582ce25336fdb17122eac64fe5a1afc39174ce92d6013becac116766dc5a778c880dd47de7dfff6a0f86ba42b").expect("Failed to create public key")
-});
 
 pub static VALIDATOR_SECRET_KEY: LazyLock<SecretKey> = LazyLock::new(|| {
     secret_key_from_hex("3515c7d08e5affd729e9579f7588d30f2342ee6f6a9334acf006345262162c6f")
@@ -28,21 +25,6 @@ pub const FOUR_OPERATOR_THREE_PRIVATE: &str = "308204a40201000282010100b688854d4
 
 pub const FOUR_OPERATOR_FOUR_PRIVATE: &str = "308204a40201000282010100a905f3abfe97b5511f25367fbf53f09334a43515dba42ff8d5af4b490bec924202746d9d1b0f906a090d558a6f290b11df003105f0e842a74ca04bfc1a1f7105a65a7fa90b5a49da55860d25e5a7e9b1220e65e35580ccab976197da1df5484ae04613f2b21fe5a95fc846bdf96b3da1e00b4b6d5c54fa513e86d01f1b17f31a3db900ab2f13aa738116f36f392a3e6f9d095fa461b6d561417db1c64785daf9a98e7d328f9512e579550ccf05feee978627fe47de3a4b165fa815aaf60bf6031ff109cf4f8daba1899bbd6227b31cd7e7343fa14e6b2e99a99f990e3f5da4977f99ba98cf2deb2ba6cfa3c36f3446074897ce443e0a8cd308b384b5ca9c592302030100010282010060dd2e562523601fcb4f923a07b5dd2b1f81f382414b88ca7bfb6793c7279e7201e2236763b8b9b46ad79f6c24644b19c4c8e14f5c4e5ed46dcf777c54a42c2b66b87a6cb03ae01425eb1ae1db092d9dfbbc709ba5c69884c5ce822dd7f957a2c180a7b1f06ee338fbd154e94e652cfef5dcc32f3b38dff36b77eb11c87f232bb9be79e7039dc61af7ac15e608369c479f23cd99887bc01dadbe5aeefee4b579a7b9858705a4cb2a3f66c13ae304cd52d6a60f0cc445025d872883b419ea6f2fc90d794b82f107afa191239642d97b85e2f7069b560bcc855c9ea5119d9f98d2b4e207102ebc23153a956207b62295172f725655c46756ef7c57ce6c117659e102818100c2b75c4ce021fef5ca4ec0a5581e7383c7ec0a0342bae6082ea3b2d9c3a9ce157b190a1eb2bb7a7e5407332f8e28ac16926156b4b47f25e1392bf5fcd35e0de463f928ecb1d3c6311c6f69b4244d666eb4f29dc10622ad124ed33c95abaec5d1443036725a92831ab1aa956f18f4f5a713f48e3a12b1a210f0d3b6ec7c0907c902818100de3875b1ee8f03e42274bb26b34739d4e4b33e48280a72ff9b2c7e5954308a5faaf7bceef3c45d495082f1825217646fd490cf2bc0df90fe807c13b4f7c2e8106438f856f04089a6130f0974cbb619709be2ee988f0362f8900f37444e5e53ed85b07574063cfa275b8f4636d5e94cbcd1c7a655dd3a1cd66209daa7f319a78b0281807665198960eb2ae4f6db45c603bb984f73bb712724671241bd6229f8c141399ed4179890abead50385424f7c45fb331012777f4a2749fc9562b6f93e7ea2fcdd777063d2f019adb3e4ef559d84494fd456d002de00460b684b67a3b9fa072e1f1d50177b16d969404cf14525a54e25242f3d0f51fe55e60e58f0d2941ea33b0902818100bc66abca3612445f47a32604b29c6178908932f5a414efd8ababb6576fdc5384b683a148099de2e544802fd7a857b2cc693078a484ba46c8af1002f93bd1a0443d645b9001d305a0aaa9e5ff82b299b0f2491cb675118ef863d2b2ad93afbf823205201f4526af836cc9f4e28acb6846f1a84deaa04c23a4d2abbe19042f2cef02818100bb9e385d27f693f7981cad37aa856e24b651e26e8f8040e9e29b9da15b9a54f51cf49cd718dfc70948436ee8d4a4625b6cab3da065ba1f286fd423f55e10a778634a4286e1838df70e2525fc5cc48a3f4e1e28859526e1f8a2563f6bd635484ce101d1a7158d2702f25399d0013d4fff927547b828286a3f882d3c39869f3836";
 
-// A SSV Operator that is responsible for signing
-pub struct TestingSigner {
-    private_key: Rsa<Private>,
-    operator_id: OperatorId,
-}
-
-impl TestingSigner {
-    pub fn new_testing_signer(keyset: &TestKeySet, id: u64) -> TestingSigner {
-        let id = OperatorId::from(id);
-        TestingSigner {
-            private_key: keyset.operator_keys.get(&id).unwrap().clone(),
-            operator_id: id,
-        }
-    }
-}
 
 #[derive(Clone)]
 pub struct TestKeySet {
@@ -79,17 +61,6 @@ impl TestKeySet {
         }
     }
 
-    fn seven_share_set() -> TestKeySet {
-        todo!()
-    }
-
-    fn ten_share_set() -> TestKeySet {
-        todo!()
-    }
-
-    fn thirteen_share_set() -> TestKeySet {
-        todo!()
-    }
 }
 
 pub fn secret_key_from_hex(hex: &str) -> SecretKey {
