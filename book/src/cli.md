@@ -16,9 +16,14 @@ Where `<COMMAND>` is one of:
 - `keysplit` - Split validator keys into shares
 - `keygen` - Generate RSA keys for operator identification
 
-Global options:
+### Global Options
 
-- `--help` - Display help information
+| Option | Description | Default               |
+| --- | --- |-----------------------|
+| `--data-dir <DIR>` | Data directory for node files | `~/.anchor/{network}` |
+| `--testnet-dir <DIR>` | Directory containing testnet specs | None                  |
+| `--network <NETWORK>` | Network to use (Holesky, Hoodi) | `hoodi`               |
+| `--help` | Display help information | Unset                 |
 
 ## Node Command
 
@@ -29,14 +34,6 @@ anchor node [OPTIONS]
 ```
 
 ### Options
-
-#### General Options
-
-| Option | Description | Default |
-| --- | --- | ---|
-| `--datadir <DIR>` | Data directory for node files | `~/.anchor/{network}` |
-| `--testnet-dir <DIR>` | Directory containing testnet specs | None |
-| `--network <NETWORK>` | Network to use (Mainnet, Holesky, Hoodi) | `Hoodi` |
 
 #### External APIs
 
@@ -73,7 +70,7 @@ anchor node [OPTIONS]
 | `--listen-address <ADDRESS>` | Network address to listen for UDP & TCP connections | `0.0.0.0` |
 | `--port <PORT>` | Base port for all network connections | `13001` |
 | `--port6 <PORT>` | Base port for IPv6 network connections | Same as `--port` |
-| `--discovery-port <PORT>` | UDP port for discovery | `12001` |
+| `--discovery-port <PORT>` | UDP port for discovery | Same as `--port` if specified, otherwise `12001` |
 | `--discovery-port6 <PORT>` | UDP port for IPv6 discovery | Same as `--discovery-port` |
 | `--quic-port <PORT>` | UDP port for QUIC protocol | `--port` + 1 |
 | `--quic-port6 <PORT>` | UDP port for IPv6 QUIC protocol | `--port6` + 1 |
@@ -119,7 +116,7 @@ anchor node [OPTIONS]
 
 ```bash
 anchor node \
-  --network mainnet \
+  --network hoodi \
   --datadir /data/anchor \
   --beacon-nodes https://beacon1.example.com,https://beacon2.example.com \
   --execution-rpc https://execution1.example.com,https://execution2.example.com \
@@ -145,8 +142,6 @@ anchor keygen [OPTIONS]
 ```
 
 ### Options
-
-.
 
 | Option | Description | Default |
 | --- | --- | ---|
@@ -226,7 +221,6 @@ Additional Options:
 | Option | Description | Default |
 | --- | --- | ---|
 | `--rpc <ENDPOINT>` | RPC endpoint to access L1 data | Required|
-| `--network <NETWORK>` | Ethereum Network (Mainnet, Holesky, Hoodi) | Required |
 
 #### Examples
 
@@ -253,7 +247,7 @@ anchor keysplit onchain \
   --operators 1,2,3,4 \
   --output-path /path/to/output.json \
   --rpc https://eth-mainnet.provider.com \
-  --network Mainnet
+  --network mainnet
 ```
 
 These commands will generate a json file to be uploaded to the SSV network webapp when

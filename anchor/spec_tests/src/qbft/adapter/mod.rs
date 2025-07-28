@@ -37,19 +37,15 @@ pub use error_mapping::{ErrorMapper, map_signed_ssv_error_to_go_format, simple_e
 // Debug utilities for systematic hash debugging
 #[cfg(debug_assertions)]
 pub use debug_tools::{
-    compare_json_structures, generate_hash_step_by_step, get_simplest_failing_test, 
-    print_debug_analysis, DebugReport
+    DebugReport, compare_json_structures, generate_hash_step_by_step, get_simplest_failing_test,
+    print_debug_analysis,
 };
 #[cfg(not(debug_assertions))]
-pub use debug_tools::{
-    generate_hash_step_by_step, get_simplest_failing_test, 
-    DebugReport
-};
-
+pub use debug_tools::{DebugReport, generate_hash_step_by_step, get_simplest_failing_test};
 
 // Shared utilities for adapter consolidation
 pub use shared::{
-    SerializableController, SerializableCommitteeMember, SerializableOperator,
-    base64_serde, optional_base64_serde, calculate_sha256_hash, 
-    validate_committee_configuration, validate_message_structure,
+    SerializableCommitteeMember, SerializableController, SerializableOperator, base64_serde,
+    calculate_sha256_hash, optional_base64_serde, validate_committee_configuration,
+    validate_message_structure,
 };

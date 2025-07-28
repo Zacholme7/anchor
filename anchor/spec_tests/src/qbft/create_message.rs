@@ -55,8 +55,6 @@ impl SpecTest for CreateMessageTest {
     }
 
     fn run(&self) -> bool {
-
-
         // Create test context
         let test_context = TestContext::new(self.name.clone(), TestType::MessageCreation)
             .with_expected_errors(vec![self.expected_error.clone()]);
@@ -98,7 +96,7 @@ impl SpecTest for CreateMessageTest {
 
         // Execute message creation scenario with the correct identifier
         let request = self.create_message_request();
-        
+
         let scenario_result = adapter.execute_message_creation_scenario_with_committee_id(
             request,
             self.expected_root,
@@ -149,7 +147,6 @@ impl CreateMessageTest {
 
     /// Assert message creation result
     fn assert_message_creation_result(&self, result: &super::adapter::ScenarioResult) -> bool {
-
         // Check for expected errors first
         if !self.expected_error.is_empty() {
             if result
@@ -169,8 +166,6 @@ impl CreateMessageTest {
         }
 
         let created_message = &result.processing_result.messages_sent[0];
-
-
 
         // Validate root hash if expected
         let actual_root = created_message.tree_hash_root();

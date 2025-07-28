@@ -114,4 +114,3 @@ pub fn get_operator_ids(test_keys: &TestKeys) -> Vec<OperatorId> {
 pub fn has_operator_key(test_keys: &TestKeys, operator_id: OperatorId) -> bool {
     test_keys.operator_keys.contains_key(&operator_id)
 }
-

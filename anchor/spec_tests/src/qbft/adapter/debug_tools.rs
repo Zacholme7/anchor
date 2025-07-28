@@ -1,4 +1,4 @@
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone)]
 pub struct DebugReport {
@@ -14,11 +14,15 @@ pub struct DebugReport {
 
 /// Compare our JSON structure with expected hash and provide basic analysis
 #[cfg(debug_assertions)]
-pub fn compare_json_structures(our_json: &str, expected_hash: &str, _test_name: &str) -> DebugReport {
+pub fn compare_json_structures(
+    our_json: &str,
+    expected_hash: &str,
+    _test_name: &str,
+) -> DebugReport {
     // Calculate our hash
     let hash = Sha256::digest(our_json.as_bytes());
     let our_hash = hex::encode(hash);
-    
+
     DebugReport {
         hash_match: our_hash == expected_hash,
         our_hash,
@@ -36,7 +40,7 @@ pub fn generate_hash_step_by_step(json: &str) -> (String, Vec<u8>, Vec<u8>, Stri
     let json_bytes = json.as_bytes().to_vec();
     let hash_bytes = Sha256::digest(&json_bytes).to_vec();
     let hash_hex = hex::encode(&hash_bytes);
-    
+
     (json.to_string(), json_bytes, hash_bytes, hash_hex)
 }
 

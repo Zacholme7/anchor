@@ -1,9 +1,7 @@
 use serde::Deserialize;
 use ssv_types::msgid::MessageId;
 
-use crate::{
-    SpecTest, SpecTestType, types::TypesSpecTestType,
-};
+use crate::{SpecTest, SpecTestType, types::TypesSpecTestType};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]

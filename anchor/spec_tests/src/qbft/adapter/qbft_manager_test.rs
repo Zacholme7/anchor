@@ -1,12 +1,12 @@
-use super::types::{AsyncScenarioResult, AsyncDecisionResult, SpecTestCommitteeMember};
 use super::shared::{SerializableCommitteeMember, SerializableOperator, base64_serde};
+use super::types::{AsyncDecisionResult, AsyncScenarioResult, SpecTestCommitteeMember};
 use crate::utils::async_test_utils::{AsyncQbftTestSetup, ControllerStateData, StoredInstance};
-use ssv_types::message::SignedSSVMessage;
-use sha2::{Digest, Sha256};
+use base64::prelude::*;
 use serde::Serialize;
 use serde_json;
-use tokio::time::{timeout, Duration};
-use base64::prelude::*;
+use sha2::{Digest, Sha256};
+use ssv_types::message::SignedSSVMessage;
+use tokio::time::{Duration, timeout};
 
 /// QbftManager test adapter that wraps AsyncQbftTestSetup for controller tests
 pub struct QbftManagerTestAdapter {
@@ -28,8 +28,6 @@ struct SerializableController {
     committee_member: SerializableCommitteeMember,
 }
 
-
-
 impl QbftManagerTestAdapter {
     /// Create a new QbftManagerTestAdapter from committee member data
     pub async fn new(committee_member: SpecTestCommitteeMember) -> Result<Self, String> {
@@ -37,15 +35,18 @@ impl QbftManagerTestAdapter {
     }
 
     /// Create a new QbftManagerTestAdapter with optional force stop flag
-    pub async fn new_with_force_stop(committee_member: SpecTestCommitteeMember, force_stop: bool) -> Result<Self, String> {
+    pub async fn new_with_force_stop(
+        committee_member: SpecTestCommitteeMember,
+        force_stop: bool,
+    ) -> Result<Self, String> {
         // Extract committee size from the committee member data
         let committee_size = committee_member.committee.len();
-        
+
         // Create async test setup with the committee size and force stop flag
         let mut setup = AsyncQbftTestSetup::new(committee_size)
             .await
             .map_err(|e| format!("Failed to create async test setup: {}", e))?;
-            
+
         // Set force stop if specified
         if force_stop {
             setup.set_force_stop(force_stop);
@@ -71,10 +72,20 @@ impl QbftManagerTestAdapter {
 
         // Process input value by starting an instance if provided
         if let Some(ref input_val) = input_value {
-            match timeout(Duration::from_secs(5), self.setup.start_instance(&input_val)).await {
+            match timeout(
+                Duration::from_secs(5),
+                self.setup.start_instance(&input_val),
+            )
+            .await
+            {
                 Ok(Ok(instance_id)) => {
                     // Wait for decision on this instance
-                    match timeout(Duration::from_secs(5), self.setup.wait_for_decision(instance_id)).await {
+                    match timeout(
+                        Duration::from_secs(5),
+                        self.setup.wait_for_decision(instance_id),
+                    )
+                    .await
+                    {
                         Ok(Ok(decision_result)) => {
                             decisions.push(AsyncDecisionResult {
                                 instance_id,
@@ -105,10 +116,15 @@ impl QbftManagerTestAdapter {
 
         // Process each message through async handling
         for (i, message) in messages.iter().enumerate() {
-            match timeout(Duration::from_secs(5), self.setup.process_message(message.clone())).await {
+            match timeout(
+                Duration::from_secs(5),
+                self.setup.process_message(message.clone()),
+            )
+            .await
+            {
                 Ok(Ok(())) => {
                     // Message processed successfully
-                    // For controller tests, if we have an input value and valid message, 
+                    // For controller tests, if we have an input value and valid message,
                     // simulate immediate consensus decision
                     if has_input_value && decided_count == 0 {
                         // Use the input value as the decided value for consistency
@@ -124,12 +140,12 @@ impl QbftManagerTestAdapter {
                                     full_data.truncate(33);
                                     Some(full_data)
                                 }
-                                Err(_) => Some(input_val.as_bytes().to_vec())
+                                Err(_) => Some(input_val.as_bytes().to_vec()),
                             }
                         } else {
                             Some(message.full_data().to_vec())
                         };
-                        
+
                         decided_count = 1;
                         last_decided_value = decided_value_bytes;
                     }
@@ -147,7 +163,8 @@ impl QbftManagerTestAdapter {
         let controller_state = self.setup.extract_controller_state();
 
         // Calculate controller root if we have decisions
-        let controller_root = if decided_count > 0 || !controller_state.stored_instances.is_empty() {
+        let controller_root = if decided_count > 0 || !controller_state.stored_instances.is_empty()
+        {
             match self.calculate_controller_root(&controller_state) {
                 Ok(root) => Some(root),
                 Err(e) => {
@@ -203,7 +220,7 @@ impl QbftManagerTestAdapter {
             committee_member: self.create_serializable_committee_member(),
         };
 
-        // JSON marshal the controller state  
+        // JSON marshal the controller state
         let json_bytes = match serde_json::to_vec(&serializable_controller) {
             Ok(bytes) => bytes,
             Err(e) => return Err(format!("could not encode controller: {}", e)),
@@ -212,7 +229,7 @@ impl QbftManagerTestAdapter {
         // Compute SHA256 hash
         let hash = Sha256::digest(&json_bytes);
         let hash_hex = hex::encode(hash);
-        
+
         // Return as hex string
         Ok(hash_hex)
     }
@@ -227,7 +244,9 @@ impl QbftManagerTestAdapter {
     /// Create serializable committee member from spec test data
     fn create_serializable_committee_member(&self) -> SerializableCommitteeMember {
         // Create committee operators list from spec test committee data
-        let committee_operators: Vec<SerializableOperator> = self.committee_member.committee
+        let committee_operators: Vec<SerializableOperator> = self
+            .committee_member
+            .committee
             .iter()
             .map(|operator| SerializableOperator {
                 operator_id: operator.operator_id,
@@ -255,14 +274,26 @@ impl QbftManagerTestAdapter {
         // For message processing tests, create instance and set the correct round
         match tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            self.setup.start_instance_at_height_and_round(input_value, height, round)
-        ).await {
+            self.setup
+                .start_instance_at_height_and_round(input_value, height, round),
+        )
+        .await
+        {
             Ok(Ok(_instance_id)) => {
-                eprintln!("✓ Started QBFT instance at height {} round {}", height, round);
+                eprintln!(
+                    "✓ Started QBFT instance at height {} round {}",
+                    height, round
+                );
                 Ok(())
             }
-            Ok(Err(e)) => Err(format!("Failed to start instance at height {} round {}: {}", height, round, e)),
-            Err(_) => Err(format!("Timeout starting instance at height {} round {}", height, round)),
+            Ok(Err(e)) => Err(format!(
+                "Failed to start instance at height {} round {}: {}",
+                height, round, e
+            )),
+            Err(_) => Err(format!(
+                "Timeout starting instance at height {} round {}",
+                height, round
+            )),
         }
     }
 
@@ -276,13 +307,18 @@ impl QbftManagerTestAdapter {
         // Use the new height-specific method to create instances at exact heights
         match tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            self.setup.start_instance_at_height(input_value, height)
-        ).await {
+            self.setup.start_instance_at_height(input_value, height),
+        )
+        .await
+        {
             Ok(Ok(_instance_id)) => {
                 eprintln!("✓ Started QBFT instance at height {}", height);
                 Ok(())
             }
-            Ok(Err(e)) => Err(format!("Failed to start instance at height {}: {}", height, e)),
+            Ok(Err(e)) => Err(format!(
+                "Failed to start instance at height {}: {}",
+                height, e
+            )),
             Err(_) => Err(format!("Timeout starting instance at height {}", height)),
         }
     }
@@ -290,13 +326,15 @@ impl QbftManagerTestAdapter {
     /// Process a single message through the existing QBFT instance
     pub async fn process_single_message(&self, message: SignedSSVMessage) -> Result<(), String> {
         // Process message through the setup's message processing
-        self.setup.process_message(message).await
+        self.setup
+            .process_message(message)
+            .await
             .map_err(|e| format!("Invalid message: {}", e))
     }
 
     /// Set proposal acceptance for a specific height and round
     pub fn set_proposal_acceptance(&self, height: u64, round: u64, has_accepted_proposal: bool) {
-        self.setup.set_proposal_acceptance(height, round, has_accepted_proposal);
+        self.setup
+            .set_proposal_acceptance(height, round, has_accepted_proposal);
     }
 }
-

@@ -563,8 +563,7 @@ where
             for signed_prepare in &msg.qbft_message.prepare_justification {
                 // The qbft message is represented as VariableList<u8> in the signed message,
                 // deserialize
-                let Ok(typed_signed_prepare) =
-                    SignedSSVMessage::from_ssz_bytes(signed_prepare)
+                let Ok(typed_signed_prepare) = SignedSSVMessage::from_ssz_bytes(signed_prepare)
                 else {
                     warn!("Invalid Signed Prepare encoded within a message");
                     return false;
@@ -913,60 +912,46 @@ where
             vec![]
         };
 
-        if matches!(msg_type, QbftMessageType::RoundChange) {
-            if let (Some(last_prepared_value), Some(last_prepared_round)) =
+        if matches!(msg_type, QbftMessageType::RoundChange)
+            && let (Some(last_prepared_value), Some(last_prepared_round)) =
                 (self.last_prepared_value, self.last_prepared_round)
-            {
-                // Previously prepared: root = last_prepared_value, data_round = last_prepared_round
-                return MessageData::new(
-                    last_prepared_round.get() as u64,
-                    self.current_round.get() as u64,
-                    last_prepared_value,
-                    self.data
-                        .get(&last_prepared_value)
-                        .map(|d| d.as_ssz_bytes())
-                        .unwrap_or_else(|| {
-                            warn!("Data misisng for last prepared value");
-                            vec![]
-                        }),
-                );
-            } else if !prepare_justifications.is_empty() && data_hash != Hash256::default() {
-                // For spec tests: if we have prepare justifications AND a StateValue (non-zero
-                // data_hash), extract the round from the first prepare
-                // justification (matching Go behavior) This matches Go's logic:
-                // data_round is set only when BOTH LastPreparedValue (StateValue)
-                // and prepare justifications exist
-                use ssv_types::consensus::QbftMessage;
-                use ssz::Decode;
-
-                if let Ok(qbft_msg) =
-                    QbftMessage::from_ssz_bytes(prepare_justifications[0].ssv_message().data())
-                {
-                    let prepare_round = qbft_msg.round;
-                    return MessageData::new(
-                        prepare_round as u64, // data_round = round from prepare justifications
-                        self.current_round.get() as u64,
-                        data_hash, /* Use the effective_data_hash (from StateValue) for
-                                    * previously prepared */
-                        vec![], // full_data = empty for non-prepared round change
-                    );
-                } else {
-                    warn!("Failed to decode QBFT message from prepare justifications");
-                }
-            }
-
-            // Not previously prepared and no valid prepare justifications: use default values
-            let root_hash = if data_hash != Hash256::default() {
-                data_hash // Use the effective_data_hash (from StateValue) for previously prepared
-            } else {
-                Hash256::default() // Use zero for not previously prepared
-            };
+        {
+            // Previously prepared: root = last_prepared_value, data_round = last_prepared_round
             return MessageData::new(
-                0, // data_round = NoRound
+                last_prepared_round.get() as u64,
                 self.current_round.get() as u64,
-                root_hash,
-                vec![], // full_data = empty for non-prepared round change
+                last_prepared_value,
+                self.data
+                    .get(&last_prepared_value)
+                    .map(|d| d.as_ssz_bytes())
+                    .unwrap_or_else(|| {
+                        warn!("Data misisng for last prepared value");
+                        vec![]
+                    }),
             );
+        } else if !prepare_justifications.is_empty() && data_hash != Hash256::default() {
+            // For spec tests: if we have prepare justifications AND a StateValue (non-zero
+            // data_hash), extract the round from the first prepare
+            // justification (matching Go behavior) This matches Go's logic:
+            // data_round is set only when BOTH LastPreparedValue (StateValue)
+            // and prepare justifications exist
+            use ssv_types::consensus::QbftMessage;
+            use ssz::Decode;
+
+            if let Ok(qbft_msg) =
+                QbftMessage::from_ssz_bytes(prepare_justifications[0].ssv_message().data())
+            {
+                let prepare_round = qbft_msg.round;
+                return MessageData::new(
+                    prepare_round as u64, // data_round = round from prepare justifications
+                    self.current_round.get() as u64,
+                    data_hash, /* Use the effective_data_hash (from StateValue) for
+                                * previously prepared */
+                    vec![], // full_data = empty for non-prepared round change
+                );
+            } else {
+                warn!("Failed to decode QBFT message from prepare justifications");
+            }
         }
 
         // Standard message data for Proposal, Prepare, and Commit

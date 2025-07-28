@@ -1,9 +1,9 @@
+use crate::utils::async_test_utils::{CommitteeInstanceId, ControllerStateData};
 use openssl::rsa::Rsa;
 use serde::Deserialize;
 use ssv_types::{OperatorId, Round, message::SignedSSVMessage};
 use std::collections::HashMap;
 use types::Hash256;
-use crate::utils::async_test_utils::{CommitteeInstanceId, ControllerStateData};
 
 // =================== Message Processing Test Types ===================
 
@@ -120,7 +120,6 @@ pub struct DecidedState {
     pub decided_count: u64,
     pub decided_value: Option<Vec<u8>>,
 }
-
 
 /// Validation result with comprehensive error information
 #[derive(Debug, Clone)]

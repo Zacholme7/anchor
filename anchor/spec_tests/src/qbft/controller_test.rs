@@ -1,8 +1,11 @@
-use super::adapter::{simple_controller_test::SimpleControllerTestAdapter, ScenarioResult, types::SpecTestCommitteeMember};
+use super::adapter::{
+    ScenarioResult, simple_controller_test::SimpleControllerTestAdapter,
+    types::SpecTestCommitteeMember,
+};
 use crate::{QbftSpecTestType, SpecTest, SpecTestType};
+use base64::prelude::*;
 use serde::Deserialize;
 use ssv_types::message::SignedSSVMessage;
-use base64::prelude::*;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TestController {
@@ -76,10 +79,12 @@ impl SpecTest for ControllerTest {
                 // We're in an async context, spawn the task
                 let test_clone = self.clone();
                 let result = std::thread::spawn(move || {
-                    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+                    let rt =
+                        tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
                     rt.block_on(Self::execute_async_test(&test_clone))
-                }).join();
-                
+                })
+                .join();
+
                 match result {
                     Ok(Ok(())) => {
                         eprintln!("✓ Controller test '{}' passed", self.name);
@@ -263,12 +268,13 @@ impl ControllerTest {
         // Create simple adapter with real controller data
         let adapter = if let Some(ref controller) = test.controller {
             // Decode the base64 identifier
-            let identifier = BASE64_STANDARD.decode(&controller.identifier)
+            let identifier = BASE64_STANDARD
+                .decode(&controller.identifier)
                 .map_err(|e| format!("Failed to decode controller identifier: {}", e))?;
             SimpleControllerTestAdapter::new_with_controller_data(
-                committee_member, 
-                identifier, 
-                controller.height
+                committee_member,
+                identifier,
+                controller.height,
             )
         } else {
             SimpleControllerTestAdapter::new(committee_member)
@@ -281,19 +287,24 @@ impl ControllerTest {
             // Execute scenario with async adapter with timeout, passing expected controller root
             let expected_controller_root = run_data.controller_post_root.as_deref();
             let async_result = match tokio::time::timeout(
-                std::time::Duration::from_secs(10), 
+                std::time::Duration::from_secs(10),
                 adapter.execute_controller_scenario_with_expected_root(
                     run_data.input_value.clone(),
                     run_data.input_messages.clone().unwrap_or_default(),
                     &test.name,
                     expected_controller_root,
-                )
-            ).await {
+                ),
+            )
+            .await
+            {
                 Ok(Ok(result)) => result,
                 Ok(Err(e)) => return Err(format!("Async scenario execution failed: {}", e)),
                 Err(_) => {
                     // Timeout - for now, we'll create a minimal result for testing
-                    eprintln!("Warning: Async scenario {} timed out, creating minimal result", i + 1);
+                    eprintln!(
+                        "Warning: Async scenario {} timed out, creating minimal result",
+                        i + 1
+                    );
                     super::adapter::types::AsyncScenarioResult {
                         scenario_id: format!("async_scenario_{}", i + 1),
                         decisions: Vec::new(),
@@ -338,7 +349,11 @@ impl ControllerTest {
                     .any(|err| err.contains(&test.expected_error));
                 if has_expected_error {
                     found_expected_error = true;
-                    eprintln!("✓ Found expected error '{}' in scenario {}", test.expected_error, i + 1);
+                    eprintln!(
+                        "✓ Found expected error '{}' in scenario {}",
+                        test.expected_error,
+                        i + 1
+                    );
                 }
             }
 
@@ -350,7 +365,11 @@ impl ControllerTest {
                         found_expected_error = true;
                         eprintln!("Found expected error: {}", error_msg);
                     } else {
-                        eprintln!("Unexpected error in async scenario {}: {}", i + 1, error_msg);
+                        eprintln!(
+                            "Unexpected error in async scenario {}: {}",
+                            i + 1,
+                            error_msg
+                        );
                         return Err(error_msg);
                     }
                 }
@@ -361,7 +380,10 @@ impl ControllerTest {
         if test.validate_expected_error_handling(found_expected_error) {
             Ok(())
         } else {
-            Err(format!("Expected error '{}' was not found", test.expected_error))
+            Err(format!(
+                "Expected error '{}' was not found",
+                test.expected_error
+            ))
         }
     }
 }

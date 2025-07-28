@@ -159,9 +159,9 @@ fn run_tests(test_type: SpecTestType) -> bool {
 
                         // Check if any chunk contains the variant as a prefix to avoid false matches
                         // (e.g., "ssvmsg" matching "signedssvmsg")
-                        let contains_prefix = split.iter().any(|chunk| {
-                            chunk.starts_with(&variant) || chunk == &variant
-                        });
+                        let contains_prefix = split
+                            .iter()
+                            .any(|chunk| chunk.starts_with(&variant) || chunk == &variant);
 
                         if is_encoding {
                             // if it is an encoding tests, we also have to check that the file
@@ -209,7 +209,7 @@ fn run_tests(test_type: SpecTestType) -> bool {
 // Async test runner specifically for controller tests
 async fn run_async_controller_tests() -> Result<bool, Box<dyn std::error::Error>> {
     use qbft::ControllerTest;
-    
+
     let test_type = SpecTestType::Qbft(QbftSpecTestType::Controller);
     let dir_name = test_type.to_string();
     let test_dir = Path::new(&dir_name);
@@ -227,7 +227,7 @@ async fn run_async_controller_tests() -> Result<bool, Box<dyn std::error::Error>
                 let matches = filename
                     .map(|name| {
                         let split: HashSet<String> = name.split('.').map(String::from).collect();
-                        
+
                         let contains_prefix = {
                             let mut found = false;
                             for chunk in split {
@@ -238,7 +238,7 @@ async fn run_async_controller_tests() -> Result<bool, Box<dyn std::error::Error>
                             }
                             found
                         };
-                        
+
                         contains_prefix && !name.contains("EncodingTest")
                     })
                     .unwrap_or(false);
@@ -286,7 +286,7 @@ async fn run_async_controller_tests() -> Result<bool, Box<dyn std::error::Error>
             }
         }
     }
-    
+
     Ok(result)
 }
 
@@ -309,7 +309,7 @@ mod spec_tests {
             // For now, let's just test that we can create the adapter successfully
             // and run a minimal test to verify the async infrastructure works
             use crate::qbft::adapter::{QbftManagerTestAdapter, types::SpecTestCommitteeMember};
-            
+
             // Test adapter creation
             let committee_member = SpecTestCommitteeMember {
                 operator_id: ssv_types::OperatorId(1),
@@ -337,15 +337,16 @@ mod spec_tests {
                 domain_type: vec![0, 0, 3, 1],
             };
 
-            let _adapter = QbftManagerTestAdapter::new(committee_member).await
+            let _adapter = QbftManagerTestAdapter::new(committee_member)
+                .await
                 .map_err(|e| format!("Failed to create async adapter: {}", e))?;
-            
+
             println!("✅ Successfully created QbftManagerTestAdapter");
-            
+
             // For now, just verify the sync version works
             let result = run_tests(SpecTestType::Qbft(QbftSpecTestType::Controller));
             assert!(result);
-            
+
             Ok(())
         }
 
@@ -356,7 +357,9 @@ mod spec_tests {
 
         #[test]
         fn test_qbft_message_processing() {
-            assert!(run_tests(SpecTestType::Qbft(QbftSpecTestType::MsgProcessing)))
+            assert!(run_tests(SpecTestType::Qbft(
+                QbftSpecTestType::MsgProcessing
+            )))
         }
 
         #[test]

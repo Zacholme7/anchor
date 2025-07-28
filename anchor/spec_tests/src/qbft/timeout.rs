@@ -1,10 +1,7 @@
 use super::adapter::{QbftTestAdapter, TestContext, TestType};
-use crate::{SpecTest, SpecTestType, QbftSpecTestType};
+use crate::{QbftSpecTestType, SpecTest, SpecTestType};
 use serde::Deserialize;
-use ssv_types::{
-    Round,
-    message::SignedSSVMessage,
-};
+use ssv_types::{Round, message::SignedSSVMessage};
 use types::Hash256;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -136,7 +133,7 @@ impl TimeoutTest {
     fn setup_initial_state(&self, adapter: &mut QbftTestAdapter) -> Result<(), String> {
         // Setup committee and operator
         adapter.setup_committee_from_spec(&self.pre.state.committee_member)?;
-        
+
         // Setup instance state
         adapter.setup_instance_state(
             self.pre.state.height,
@@ -174,7 +171,12 @@ impl TimeoutTest {
         }
 
         // Verify each output message
-        for (actual, expected) in result.processing_result.messages_sent.iter().zip(expected_messages) {
+        for (actual, expected) in result
+            .processing_result
+            .messages_sent
+            .iter()
+            .zip(expected_messages)
+        {
             if !self.messages_match(actual, expected) {
                 return false;
             }
@@ -184,14 +186,15 @@ impl TimeoutTest {
         if let Some(expected_timer) = &self.expected_timer_state {
             if let Some(actual_timer) = &result.timer_state {
                 // Special case: Round 0 in JSON means no active round (cutoff scenario)
-                let expected_round = if expected_timer.round == 0 { 
+                let expected_round = if expected_timer.round == 0 {
                     1 // Use Round 1 as minimum since Round can't be 0
-                } else { 
-                    expected_timer.round 
+                } else {
+                    expected_timer.round
                 };
-                
-                if actual_timer.timeouts != expected_timer.timeouts || 
-                   u64::from(actual_timer.current_round) != expected_round {
+
+                if actual_timer.timeouts != expected_timer.timeouts
+                    || u64::from(actual_timer.current_round) != expected_round
+                {
                     return false;
                 }
             } else {

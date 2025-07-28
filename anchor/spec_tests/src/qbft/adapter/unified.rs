@@ -16,8 +16,8 @@ use std::collections::HashSet;
 use types::typenum::U13;
 use types::{Hash256, VariableList};
 
+use super::shared::validate_committee_configuration;
 use super::types::*;
-use super::shared::{validate_committee_configuration};
 use crate::utils::test_keys::TestKeySet;
 
 /// Extract committee from spec test data structure
@@ -72,13 +72,6 @@ impl MessageIdExt for MessageId {
         MessageId::try_from(bytes.as_slice()).unwrap()
     }
 }
-
-
-
-
-
-
-
 
 /// QBFT test adapter with basic functionality
 #[derive(Clone)]
@@ -145,7 +138,7 @@ impl QbftTestAdapter {
         let data_round = self.calculate_data_round(&request);
         let root = self.calculate_root(&request);
         let justifications = self.build_justifications(&request)?;
-        
+
         let qbft_message = QbftMessage {
             qbft_message_type: request.msg_type,
             height: 0,
@@ -161,15 +154,17 @@ impl QbftTestAdapter {
         let full_data = self.calculate_full_data(&request);
         self.sign_message(ssv_message, full_data)
     }
-    
+
     /// Legacy message creation
-    fn create_message_legacy(&self, request: MessageCreationRequest) -> Result<SignedSSVMessage, AdapterError> {
+    fn create_message_legacy(
+        &self,
+        request: MessageCreationRequest,
+    ) -> Result<SignedSSVMessage, AdapterError> {
         let round = request.round.unwrap_or(Round::from(1)).into();
         let identifier = self.build_identifier()?;
         let data_round = self.calculate_data_round(&request);
         let root = self.calculate_root(&request);
         let justifications = self.build_justifications(&request)?;
-        
 
         let qbft_message = QbftMessage {
             qbft_message_type: request.msg_type,
@@ -192,51 +187,51 @@ impl QbftTestAdapter {
         // Use basic validation logic
         self.validate_message_basic(message)
     }
-    
+
     /// Validate message using basic validation logic (replaces deleted ValidationBridge)
     fn validate_message_basic(&self, message: &SignedSSVMessage) -> ValidationResult {
         let mut errors = Vec::new();
-        
+
         // Validate message type (this was in the original ValidationBridge)
         if let Err(error) = self.validate_message_type(message) {
             errors.push(error);
         }
-        
+
         // Validate identifier (this was part of the original validation)
         if let Err(error) = self.validate_message_identifier(message) {
             errors.push(error);
         }
-        
+
         ValidationResult {
             is_valid: errors.is_empty(),
             errors,
             warnings: Vec::new(),
         }
     }
-    
+
     /// Validate message type (restored from original ValidationBridge logic)
     fn validate_message_type(&self, message: &SignedSSVMessage) -> Result<(), String> {
-        use ssz::Decode;
         use ssv_types::consensus::{QbftMessage, QbftMessageType};
+        use ssz::Decode;
 
         let qbft_message = QbftMessage::from_ssz_bytes(message.ssv_message().data())
             .map_err(|_| "message type is invalid".to_string())?;
 
         // Validate that the message type is one of the known types
         match qbft_message.qbft_message_type {
-            QbftMessageType::Proposal |
-            QbftMessageType::Prepare |
-            QbftMessageType::Commit |
-            QbftMessageType::RoundChange => Ok(()),
+            QbftMessageType::Proposal
+            | QbftMessageType::Prepare
+            | QbftMessageType::Commit
+            | QbftMessageType::RoundChange => Ok(()),
             // If deserialization succeeded but we get here, it means there might be
             // an invalid enum value that passed deserialization but isn't valid
         }
     }
-    
+
     /// Validate message identifier (restored from original ValidationBridge logic)
     fn validate_message_identifier(&self, message: &SignedSSVMessage) -> Result<(), String> {
-        use ssz::Decode;
         use ssv_types::consensus::QbftMessage;
+        use ssz::Decode;
 
         let qbft_message = QbftMessage::from_ssz_bytes(message.ssv_message().data())
             .map_err(|_| "message identifier is invalid".to_string())?;
@@ -254,10 +249,6 @@ impl QbftTestAdapter {
         self.test_context = Some(context);
         self
     }
-
-
-
-
 
     /// Execute validation scenario for compatibility with existing tests
     pub fn execute_validation_scenario(&self, message: SignedSSVMessage) -> ScenarioResult {
@@ -291,7 +282,6 @@ impl QbftTestAdapter {
             go_formatted_errors: validation_result.errors,
         }
     }
-
 
     /// Setup message creation scenario for compatibility with existing tests
     pub fn setup_message_creation_scenario(
@@ -377,9 +367,9 @@ impl QbftTestAdapter {
                 // If we have state value but no justification quorum, use data_round=1 but ignore justifications
                 // If we have no state value, data_round=0 regardless of justifications
                 if request.state_value.is_some() {
-                    1  // Has prepared state
+                    1 // Has prepared state
                 } else {
-                    0  // No prepared state
+                    0 // No prepared state
                 }
             }
             QbftMessageType::Proposal => {
@@ -409,9 +399,7 @@ impl QbftTestAdapter {
                 let hash = Hash256::from_slice(&Sha256::digest(&request.data_hash.0));
                 hash
             }
-            _ => {
-                request.data_hash
-            }
+            _ => request.data_hash,
         };
 
         result
@@ -487,22 +475,22 @@ impl QbftTestAdapter {
 
     fn build_ssv_message(&self, qbft_message: &QbftMessage) -> Result<SSVMessage, AdapterError> {
         let data_bytes = qbft_message.as_ssz_bytes();
-        
+
         let data_list = VariableList::new(data_bytes)
             .map_err(|e| AdapterError::MessageCreation(format!("Invalid data: {:?}", e)))?;
 
         let id_bytes: [u8; 56] = self.identifier.clone().into();
-        
+
         let ssv_identifier =
             ssv_types::msgid::MessageId::try_from(id_bytes.as_slice()).map_err(|e| {
                 AdapterError::MessageCreation(format!("Invalid SSV identifier: {:?}", e))
             })?;
 
-        let ssv_message = SSVMessage::new(MsgType::SSVConsensusMsgType, ssv_identifier, data_list).map_err(|e| {
-            AdapterError::MessageCreation(format!("Failed to create SSV message: {:?}", e))
-        })?;
-        
-        
+        let ssv_message = SSVMessage::new(MsgType::SSVConsensusMsgType, ssv_identifier, data_list)
+            .map_err(|e| {
+                AdapterError::MessageCreation(format!("Failed to create SSV message: {:?}", e))
+            })?;
+
         Ok(ssv_message)
     }
 
@@ -592,15 +580,13 @@ impl QbftTestAdapter {
         use openssl::bn::BigNum;
         use sha2::{Digest, Sha256};
 
-
         // Go's SignPKCS1v15 is deterministic (random parameter is ignored)
         // We need to implement deterministic RSA signing to match Go exactly
-        
+
         // Hash the message bytes first (like Go does)
         let mut hasher = Sha256::new();
         hasher.update(message_bytes);
         let hash = hasher.finalize();
-        
 
         // Extract RSA key from PKey for direct signing
         let rsa_key = pkey.rsa().map_err(|e| {
@@ -610,69 +596,71 @@ impl QbftTestAdapter {
         // Create ASN.1 DigestInfo structure for SHA256 (like Go does)
         // This is what Go's crypto/rsa does internally for SignPKCS1v15
         let asn1_prefix = [
-            0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 
-            0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 
-            0x00, 0x04, 0x20
+            0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02,
+            0x01, 0x05, 0x00, 0x04, 0x20,
         ];
-        
+
         let mut digest_info = Vec::new();
         digest_info.extend_from_slice(&asn1_prefix);
         digest_info.extend_from_slice(&hash);
-        
 
         // Implement deterministic PKCS1v15 signing (like Go does)
         // We need to manually create the PKCS1v15 padding without randomness
         let k = rsa_key.size() as usize;
         let mut padded_msg = vec![0u8; k];
-        
+
         // PKCS1v15 padding structure: 0x00 || 0x01 || PS || 0x00 || T
         // where PS is padding string of 0xff bytes
         // T is the DigestInfo (ASN.1 DER encoded)
-        
+
         padded_msg[0] = 0x00;
         padded_msg[1] = 0x01;
-        
+
         let ps_len = k - 3 - digest_info.len();
         for i in 2..2 + ps_len {
             padded_msg[i] = 0xff;
         }
-        
+
         padded_msg[2 + ps_len] = 0x00;
         padded_msg[3 + ps_len..].copy_from_slice(&digest_info);
-        
 
         // Convert padded message to BigNum
         let m = BigNum::from_slice(&padded_msg).map_err(|e| {
-            AdapterError::MessageCreation(format!("Failed to create BigNum from padded message: {:?}", e))
+            AdapterError::MessageCreation(format!(
+                "Failed to create BigNum from padded message: {:?}",
+                e
+            ))
         })?;
 
         // Perform RSA private key operation: s = m^d mod n
         let mut ctx = openssl::bn::BigNumContext::new().map_err(|e| {
             AdapterError::MessageCreation(format!("Failed to create BigNum context: {:?}", e))
         })?;
-        
+
         let mut signature_bn = BigNum::new().map_err(|e| {
             AdapterError::MessageCreation(format!("Failed to create signature BigNum: {:?}", e))
         })?;
-        
+
         let d = rsa_key.d();
         let n = rsa_key.n();
-        
+
         signature_bn.mod_exp(&m, d, n, &mut ctx).map_err(|e| {
-            AdapterError::MessageCreation(format!("Failed to perform RSA signing operation: {:?}", e))
+            AdapterError::MessageCreation(format!(
+                "Failed to perform RSA signing operation: {:?}",
+                e
+            ))
         })?;
 
         // Convert signature BigNum to bytes
         let mut signature = vec![0u8; k];
         let sig_bytes = signature_bn.to_vec();
-        
+
         // Pad with leading zeros if necessary
         let start_pos = k - sig_bytes.len();
         signature[start_pos..].copy_from_slice(&sig_bytes);
 
         Ok(signature)
     }
-
 
     // Basic validation - legacy methods removed
 
@@ -692,7 +680,7 @@ impl QbftTestAdapter {
     fn validate_signatures(&self, message: &SignedSSVMessage) -> Result<(), String> {
         let signatures = message.signatures();
         let operator_ids = message.operator_ids();
-        
+
         // Check if we have signatures
         if signatures.is_empty() {
             return Err("no signers".to_string());
@@ -737,11 +725,21 @@ impl QbftTestAdapter {
                 Ok(pem_bytes) => match Rsa::public_key_from_pem(&pem_bytes) {
                     Ok(rsa_pub) => match PKey::from_rsa(rsa_pub) {
                         Ok(pkey) => pkey,
-                        Err(_) => return Err("msg signature invalid: crypto/rsa: verification error".to_string()),
+                        Err(_) => {
+                            return Err(
+                                "msg signature invalid: crypto/rsa: verification error".to_string()
+                            );
+                        }
                     },
-                    Err(_) => return Err("msg signature invalid: crypto/rsa: verification error".to_string()),
+                    Err(_) => {
+                        return Err(
+                            "msg signature invalid: crypto/rsa: verification error".to_string()
+                        );
+                    }
                 },
-                Err(_) => return Err("msg signature invalid: crypto/rsa: verification error".to_string()),
+                Err(_) => {
+                    return Err("msg signature invalid: crypto/rsa: verification error".to_string());
+                }
             };
 
             // Verify the signature
@@ -779,7 +777,6 @@ impl QbftTestAdapter {
             Err(_) => Err("verification failed".to_string()),
         }
     }
-
 
     fn validate_justification_unmarshalling(
         &self,
@@ -904,10 +901,13 @@ impl QbftTestAdapter {
     }
 
     /// Setup committee from spec test data
-    pub fn setup_committee_from_spec(&mut self, committee_member: &super::types::SpecTestCommitteeMember) -> Result<(), String> {
+    pub fn setup_committee_from_spec(
+        &mut self,
+        committee_member: &super::types::SpecTestCommitteeMember,
+    ) -> Result<(), String> {
         let committee = extract_committee_from_spec_test(committee_member)
             .map_err(|e| format!("Failed to extract committee: {:?}", e))?;
-        
+
         self.committee = committee;
         Ok(())
     }
@@ -926,7 +926,7 @@ impl QbftTestAdapter {
         // Update adapter config with instance state
         self.config.instance_height = height;
         self.config.current_height = height;
-        
+
         // Store state information in test context if available
         if let Some(ref mut context) = self.test_context {
             context.instance_height = Some(height);
@@ -936,7 +936,7 @@ impl QbftTestAdapter {
             context.decided = Some(decided);
             context.decided_value = decided_value;
         }
-        
+
         Ok(())
     }
 
@@ -949,7 +949,7 @@ impl QbftTestAdapter {
         // Check for cutoff round (Go implementation has CutoffRound = 12)
         const CUTOFF_ROUND: u64 = 12;
         let current_round = u64::from(round);
-        
+
         if current_round > CUTOFF_ROUND {
             // Instance should stop processing timeouts after cutoff round
             return ScenarioResult {
@@ -978,20 +978,20 @@ impl QbftTestAdapter {
                 go_formatted_errors: vec!["instance stopped processing timeouts".to_string()],
             };
         }
-        
+
         // Simulate timeout behavior:
         // 1. Generate a round change message for the next round
         // 2. Check if we have enough messages for consensus
         // 3. Update timer state
-        
+
         let new_round = current_round + 1;
         let timeout_count = 1;
-        
+
         // For timeout scenarios, we expect to generate a round change message
         let mut messages_sent = Vec::new();
         let mut consensus_reached = false;
         let mut validation_errors = Vec::new();
-        
+
         // Simulate creating a round change message due to timeout
         let round_change_request = super::types::MessageCreationRequest {
             msg_type: ssv_types::consensus::QbftMessageType::RoundChange,
@@ -1001,7 +1001,7 @@ impl QbftTestAdapter {
             round_change_justifications: Vec::new(),
             prepare_justifications: Vec::new(),
         };
-        
+
         match self.create_message(round_change_request) {
             Ok(message) => {
                 messages_sent.push(message);
@@ -1010,12 +1010,12 @@ impl QbftTestAdapter {
                 validation_errors.push(format!("Failed to create round change message: {:?}", e));
             }
         }
-        
+
         // Check if timeout leads to consensus (unlikely in timeout scenarios)
         if messages_sent.len() >= self.config.quorum_threshold {
             consensus_reached = true;
         }
-        
+
         ScenarioResult {
             scenario_id: "timeout_test".to_string(),
             processing_result: ProcessingResult {
@@ -1030,10 +1030,10 @@ impl QbftTestAdapter {
             },
             decided_state: DecidedState {
                 decided_count: if consensus_reached { 1 } else { 0 },
-                decided_value: if consensus_reached { 
-                    Some(vec![1, 2, 3, 4]) 
-                } else { 
-                    None 
+                decided_value: if consensus_reached {
+                    Some(vec![1, 2, 3, 4])
+                } else {
+                    None
                 },
             },
             timer_state: Some(TimerState {
@@ -1048,9 +1048,9 @@ impl QbftTestAdapter {
     }
 
     /// Execute message processing test scenario
-    /// 
+    ///
     /// Processes a sequence of messages through the QBFT instance and validates the results
-    /// against expected outcomes. This method provides basic message processing 
+    /// against expected outcomes. This method provides basic message processing
     /// to handle state management and message routing.
     pub async fn execute_message_processing_test(
         &self,
@@ -1099,19 +1099,35 @@ impl QbftTestAdapter {
         let _context = TestContext {
             test_name: test_data.name.clone(),
             test_type: TestType::Controller,
-            expected_errors: test_data.expected_error.as_ref().map(|e| vec![e.clone()]).unwrap_or_default(),
+            expected_errors: test_data
+                .expected_error
+                .as_ref()
+                .map(|e| vec![e.clone()])
+                .unwrap_or_default(),
             error_mapping_context: std::collections::HashMap::new(),
             instance_height: Some(test_data.pre.state.height),
             current_round: Some(Round::from(test_data.pre.state.round)),
             last_prepared_round: test_data.pre.state.last_prepared_round,
-            last_prepared_value: test_data.pre.state.last_prepared_value.as_ref().map(|v| String::from_utf8_lossy(v).to_string()),
+            last_prepared_value: test_data
+                .pre
+                .state
+                .last_prepared_value
+                .as_ref()
+                .map(|v| String::from_utf8_lossy(v).to_string()),
             decided: Some(test_data.pre.state.decided),
-            decided_value: test_data.pre.state.decided_value.as_ref().map(|v| String::from_utf8_lossy(v).to_string()),
+            decided_value: test_data
+                .pre
+                .state
+                .decided_value
+                .as_ref()
+                .map(|v| String::from_utf8_lossy(v).to_string()),
         };
 
         // TODO: In full implementation, use direct message processing
         // For now, simulate the processing result
-        let processing_result = self.simulate_message_processing(&processed_messages, &test_data.pre.state).await;
+        let processing_result = self
+            .simulate_message_processing(&processed_messages, &test_data.pre.state)
+            .await;
 
         // Validate processing result against expected outcomes
         let validation_result = self.validate_message_processing_result(
@@ -1130,7 +1146,11 @@ impl QbftTestAdapter {
                 go_error_messages: validation_result.errors.clone(),
             },
             decided_state: DecidedState {
-                decided_count: if processing_result.consensus_reached { processing_result.messages_sent.len() as u64 } else { 0 },
+                decided_count: if processing_result.consensus_reached {
+                    processing_result.messages_sent.len() as u64
+                } else {
+                    0
+                },
                 decided_value: None, // Since bridge functionality is removed, set to None
             },
             timer_state: None,
@@ -1141,7 +1161,7 @@ impl QbftTestAdapter {
     }
 
     /// Validate message processing result against expected outcomes
-    /// 
+    ///
     /// This method validates the processing results by checking:
     /// - State root hash matches expected value
     /// - Expected error occurred (or didn't occur)
@@ -1165,20 +1185,29 @@ impl QbftTestAdapter {
         // Validate expected error
         match (expected_error, result.go_error_messages.is_empty()) {
             (Some(expected_err), true) => {
-                errors.push(format!("Expected error '{}', but processing succeeded", expected_err));
+                errors.push(format!(
+                    "Expected error '{}', but processing succeeded",
+                    expected_err
+                ));
             }
             (Some(expected_err), false) => {
                 // Check if any of the actual errors match the expected error
-                let found_expected_error = result.go_error_messages.iter().any(|err| err.contains(expected_err));
+                let found_expected_error = result
+                    .go_error_messages
+                    .iter()
+                    .any(|err| err.contains(expected_err));
                 if !found_expected_error {
                     errors.push(format!(
-                        "Expected error '{}', but got different errors: {:?}", 
+                        "Expected error '{}', but got different errors: {:?}",
                         expected_err, result.go_error_messages
                     ));
                 }
             }
             (None, false) => {
-                errors.push(format!("Unexpected processing errors: {:?}", result.go_error_messages));
+                errors.push(format!(
+                    "Unexpected processing errors: {:?}",
+                    result.go_error_messages
+                ));
             }
             (None, true) => {
                 // Expected success and got success - good
@@ -1231,15 +1260,20 @@ impl QbftTestAdapter {
         }
 
         // Validate prepared state consistency
-        if test_data.pre.state.last_prepared_round.is_some() != test_data.pre.state.last_prepared_value.is_some() {
-            return Err("Inconsistent prepared state: round and value must both be present or absent".to_string());
+        if test_data.pre.state.last_prepared_round.is_some()
+            != test_data.pre.state.last_prepared_value.is_some()
+        {
+            return Err(
+                "Inconsistent prepared state: round and value must both be present or absent"
+                    .to_string(),
+            );
         }
 
         Ok(())
     }
 
     /// Simulate message processing for testing
-    /// 
+    ///
     /// In the full implementation, this would use direct message processing
     /// For now, we simulate the processing to maintain test compatibility
     async fn simulate_message_processing(
@@ -1254,7 +1288,7 @@ impl QbftTestAdapter {
         for (i, message) in messages.iter().enumerate() {
             // Basic validation - check message structure
             let validation_result = self.validate_message(&message.message);
-            
+
             if validation_result.is_valid {
                 // Simulate successful processing
                 let mut processed = message.clone();

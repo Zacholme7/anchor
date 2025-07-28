@@ -721,7 +721,7 @@ dependencies = [
 
 [[package]]
 name = "anchor"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-channel 1.9.0",
  "bls",
@@ -729,11 +729,13 @@ dependencies = [
  "client",
  "dirs 6.0.0",
  "futures",
+ "global_config",
  "keygen",
  "keysplit",
  "logging 0.1.0",
  "metrics",
  "serde",
+ "ssv_network_config",
  "strum 0.27.1",
  "task_executor",
  "tokio",
@@ -1852,7 +1854,7 @@ dependencies = [
 
 [[package]]
 name = "client"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anchor_validator_store",
  "beacon_node_fallback",
@@ -1864,6 +1866,7 @@ dependencies = [
  "eth2",
  "ethereum_hashing",
  "fdlimit",
+ "global_config",
  "http_api",
  "http_metrics",
  "hyper 1.6.0",
@@ -1888,7 +1891,7 @@ dependencies = [
  "ssv_network_config",
  "ssv_types",
  "strum 0.27.1",
- "subnet_tracker",
+ "subnet_service",
  "task_executor",
  "tokio",
  "tracing",
@@ -2361,7 +2364,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d162beedaa69905488a8da94f5ac3edb4dd4788b732fadb7bd120b2625c1976"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 2.0.101",
 ]
 
 [[package]]
@@ -2369,6 +2372,7 @@ name = "database"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "once_cell",
  "openssl",
  "r2d2",
  "r2d2_sqlite",
@@ -2930,7 +2934,7 @@ dependencies = [
  "hmac 0.11.0",
  "pbkdf2 0.8.0",
  "rand 0.8.5",
- "scrypt 0.7.0",
+ "scrypt",
  "serde",
  "serde_json",
  "serde_repr",
@@ -3448,6 +3452,16 @@ name = "glob"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8d1add55171497b4705a648c6b583acafb01d58050a51727785f0b2c8e0a2b2"
+
+[[package]]
+name = "global_config"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "dirs 6.0.0",
+ "ssv_network_config",
+ "tracing",
+]
 
 [[package]]
 name = "gloo-timers"
@@ -4323,7 +4337,7 @@ dependencies = [
 
 [[package]]
 name = "keygen"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "clap",
@@ -4339,25 +4353,22 @@ dependencies = [
 
 [[package]]
 name = "keysplit"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
- "aes 0.8.4",
  "alloy",
  "base64 0.22.1",
  "bls_lagrange",
  "chrono",
  "clap",
- "ctr 0.9.2",
  "database",
  "eth",
+ "eth2_keystore",
+ "global_config",
  "hex",
  "openssl",
  "operator_key",
- "pbkdf2 0.12.2",
- "scrypt 0.11.0",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "tokio",
  "tracing",
  "types",
@@ -5008,8 +5019,6 @@ dependencies = [
  "clap",
  "logroller",
  "metrics",
- "serde",
- "strum 0.27.1",
  "tracing",
  "tracing-appender",
  "tracing-core",
@@ -5190,13 +5199,14 @@ dependencies = [
 name = "message_sender"
 version = "0.1.0"
 dependencies = [
+ "database",
  "ethereum_ssz",
  "message_validator",
  "openssl",
  "processor",
  "slot_clock",
  "ssv_types",
- "subnet_tracker",
+ "subnet_service",
  "thiserror 2.0.12",
  "tokio",
  "tracing",
@@ -5536,7 +5546,7 @@ dependencies = [
  "serde_json",
  "ssv_types",
  "ssz_types",
- "subnet_tracker",
+ "subnet_service",
  "task_executor",
  "thiserror 2.0.12",
  "tokio",
@@ -5834,15 +5844,12 @@ dependencies = [
 name = "operator_key"
 version = "0.1.0"
 dependencies = [
- "aes-gcm",
  "base64 0.22.1",
  "eth2_keystore",
  "openssl",
- "pbkdf2 0.12.2",
  "rand 0.9.1",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "thiserror 2.0.12",
  "zeroize",
 ]
@@ -5949,17 +5956,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "password-hash"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "346f04948ba92c43e8469c1ee6736c7563d71012b17d40745260fe106aac2166"
-dependencies = [
- "base64ct",
- "rand_core 0.6.4",
- "subtle",
-]
-
-[[package]]
 name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5982,18 +5978,8 @@ checksum = "83a0692ec44e4cf1ef28ca317f14f8f07da2d95ec3fa01f86e4467b725e60917"
 dependencies = [
  "digest 0.10.7",
  "hmac 0.12.1",
- "password-hash 0.4.2",
+ "password-hash",
  "sha2 0.10.9",
-]
-
-[[package]]
-name = "pbkdf2"
-version = "0.12.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8ed6a7761f76e3b9f92dfb0a60a6a6477c61024b775147ff0973a02653abaf2"
-dependencies = [
- "digest 0.10.7",
- "hmac 0.12.1",
 ]
 
 [[package]]
@@ -6401,6 +6387,7 @@ version = "0.1.0"
 dependencies = [
  "async-channel 1.9.0",
  "dashmap",
+ "database",
  "ethereum_ssz",
  "futures",
  "message_sender",
@@ -7185,15 +7172,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "salsa20"
-version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97a22f5af31f73a954c10289c93e8a50cc23d971e80ee446f1f6f7137a088213"
-dependencies = [
- "cipher 0.4.4",
-]
-
-[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7240,20 +7218,8 @@ checksum = "879588d8f90906e73302547e20fffefdd240eb3e0e744e142321f5d49dea0518"
 dependencies = [
  "hmac 0.11.0",
  "pbkdf2 0.8.0",
- "salsa20 0.8.1",
+ "salsa20",
  "sha2 0.9.9",
-]
-
-[[package]]
-name = "scrypt"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0516a385866c09368f0b5bcd1caff3366aace790fcd46e2bb032697bb172fd1f"
-dependencies = [
- "password-hash 0.5.0",
- "pbkdf2 0.12.2",
- "salsa20 0.10.2",
- "sha2 0.10.9",
 ]
 
 [[package]]
@@ -7559,6 +7525,7 @@ version = "0.1.0"
 dependencies = [
  "bls_lagrange",
  "dashmap",
+ "database",
  "ethereum_ssz",
  "message_sender",
  "processor",
@@ -7849,17 +7816,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "subnet_tracker"
+name = "subnet_service"
 version = "0.1.0"
 dependencies = [
  "alloy",
  "database",
  "ethereum_serde_utils",
  "serde",
+ "slot_clock",
  "ssv_types",
  "task_executor",
  "tokio",
  "tracing",
+ "types",
 ]
 
 [[package]]

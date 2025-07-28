@@ -1,10 +1,8 @@
-use super::adapter::{
-    QbftManagerTestAdapter, AsyncScenarioResult, SpecTestCommitteeMember,
-};
+use super::adapter::{AsyncScenarioResult, QbftManagerTestAdapter, SpecTestCommitteeMember};
 use crate::{QbftSpecTestType, SpecTest, SpecTestType};
+use base64::prelude::*;
 use serde::Deserialize;
 use ssv_types::message::SignedSSVMessage;
-use base64::prelude::*;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MessageProcessingState {
@@ -125,10 +123,13 @@ impl SpecTest for MessageProcessingTest {
         if self.pre.state.committee_member.committee.is_empty() {
             eprintln!("Warning: Empty committee in test '{}'", self.name);
         }
-        
+
         // Validate that we have messages to process unless expecting an error
         if self.input_messages.is_empty() && self.expected_error.is_empty() {
-            eprintln!("Warning: No input messages to process in test '{}'", self.name);
+            eprintln!(
+                "Warning: No input messages to process in test '{}'",
+                self.name
+            );
         }
     }
 
@@ -139,10 +140,12 @@ impl SpecTest for MessageProcessingTest {
                 // We're in an async context, spawn the task in a new thread
                 let test_clone = self.clone();
                 let result = std::thread::spawn(move || {
-                    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+                    let rt =
+                        tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
                     rt.block_on(Self::execute_async_message_processing_test(&test_clone))
-                }).join();
-                
+                })
+                .join();
+
                 match result {
                     Ok(Ok(())) => {
                         eprintln!("✓ Message processing test '{}' passed", self.name);
@@ -181,18 +184,22 @@ impl MessageProcessingTest {
     pub async fn execute_async_message_processing_test(
         test: &MessageProcessingTest,
     ) -> Result<(), String> {
-        eprintln!("=== Running Async Message Processing Test: {} ===", test.name);
+        eprintln!(
+            "=== Running Async Message Processing Test: {} ===",
+            test.name
+        );
 
         // Create adapter with committee configuration and force stop flag
         let adapter = QbftManagerTestAdapter::new_with_force_stop(
             test.pre.state.committee_member.clone(),
-            test.pre.force_stop
+            test.pre.force_stop,
         )
         .await
         .map_err(|e| format!("Failed to create QbftManagerTestAdapter: {}", e))?;
 
         // Initialize QBFT instance with the pre-existing state
-        let instance_id = Self::initialize_qbft_instance_with_state(&adapter, &test.pre.state).await?;
+        let instance_id =
+            Self::initialize_qbft_instance_with_state(&adapter, &test.pre.state).await?;
 
         // DO NOT automatically create instances for message heights
         // The test should only use the instance initialized from the pre-state
@@ -201,8 +208,10 @@ impl MessageProcessingTest {
         // Process input messages through the initialized instances
         let async_result = match tokio::time::timeout(
             std::time::Duration::from_secs(10),
-            Self::process_messages_on_instance(&adapter, instance_id, &test.input_messages)
-        ).await {
+            Self::process_messages_on_instance(&adapter, instance_id, &test.input_messages),
+        )
+        .await
+        {
             Ok(Ok(result)) => result,
             Ok(Err(e)) => {
                 // Check if this is an expected error
@@ -320,27 +329,37 @@ impl MessageProcessingTest {
         let instance_id = base64::prelude::BASE64_STANDARD
             .decode(&state.id)
             .map_err(|e| format!("Failed to decode instance ID: {}", e))?;
-        
+
         let instance_id_string = hex::encode(&instance_id);
-        
+
         // Start instance at the state height first (this is the primary instance)
         let dummy_input = "dGVzdCBkYXRh"; // base64 for "test data"
-        
+
         if state.proposal_accepted_for_current_round.is_some() {
-            eprintln!("Initializing instance {} at height {} round {} with accepted proposal", 
-                     instance_id_string, state.height, state.round);
+            eprintln!(
+                "Initializing instance {} at height {} round {} with accepted proposal",
+                instance_id_string, state.height, state.round
+            );
         } else {
-            eprintln!("Initializing instance {} at height {} round {} without proposal", 
-                     instance_id_string, state.height, state.round);
+            eprintln!(
+                "Initializing instance {} at height {} round {} without proposal",
+                instance_id_string, state.height, state.round
+            );
         }
-        
+
         // Use the new method that sets both height and round from pre-state
-        adapter.start_instance_for_message_processing_with_round(dummy_input, state.height, state.round).await?;
-        
+        adapter
+            .start_instance_for_message_processing_with_round(
+                dummy_input,
+                state.height,
+                state.round,
+            )
+            .await?;
+
         // Set proposal acceptance based on test state
         let has_accepted_proposal = state.proposal_accepted_for_current_round.is_some();
         adapter.set_proposal_acceptance(state.height, state.round, has_accepted_proposal);
-        
+
         Ok(instance_id_string)
     }
 
@@ -355,7 +374,7 @@ impl MessageProcessingTest {
 
         // Extract all heights from input messages
         let mut required_heights = HashSet::new();
-        
+
         for message in messages {
             let ssv_msg = message.ssv_message();
             match QbftMessage::from_ssz_bytes(ssv_msg.data()) {
@@ -373,10 +392,12 @@ impl MessageProcessingTest {
         let dummy_input = "dGVzdCBkYXRh";
         for &height in &required_heights {
             eprintln!("Creating instance for message height {}", height);
-            adapter.start_instance_for_message_processing(dummy_input, height).await
+            adapter
+                .start_instance_for_message_processing(dummy_input, height)
+                .await
                 .map_err(|e| format!("Failed to create instance for height {}: {}", height, e))?;
         }
-        
+
         Ok(())
     }
 
@@ -389,7 +410,7 @@ impl MessageProcessingTest {
         use ssv_types::consensus::QbftMessage;
         use ssz::Decode;
         use std::collections::HashMap;
-        
+
         // Process messages directly through the initialized instance
         // Don't start new instances - use the ones we already created
         let mut processing_errors = Vec::new();
@@ -398,21 +419,21 @@ impl MessageProcessingTest {
         let mut accepted_proposals: HashMap<u64, bool> = HashMap::new(); // round -> has_accepted_proposal
         let mut highest_round = 1u64;
         let mut timer_triggered = false;
-        
+
         // Process each message individually and track state for validation
         for (i, message) in messages.iter().enumerate() {
             let mut should_reject = false;
             let mut reject_reason = String::new();
-            
+
             // First decode the message to check type and track state
             if let Ok(qbft_msg) = QbftMessage::from_ssz_bytes(message.ssv_message().data()) {
                 // Track round change messages for f+1 speed up
-                if qbft_msg.qbft_message_type == ssv_types::consensus::QbftMessageType::RoundChange {
+                if qbft_msg.qbft_message_type == ssv_types::consensus::QbftMessageType::RoundChange
+                {
                     let msg_round = qbft_msg.round;
                     *round_change_count.entry(msg_round).or_insert(0) += 1;
                     let count = round_change_count.get(&msg_round).unwrap_or(&0);
-                    
-                    
+
                     // Check for f+1 speed up (f+1 = 2 for 4-node committee)
                     // When we get 2 round change messages for a round higher than current round
                     if count >= &2 && msg_round > highest_round {
@@ -424,58 +445,79 @@ impl MessageProcessingTest {
                         // This handles cases where the test expects timer advancement from individual messages
                         highest_round = msg_round;
                         timer_triggered = true;
-                        eprintln!("✓ Timer advanced to round {} due to round change message", msg_round);
+                        eprintln!(
+                            "✓ Timer advanced to round {} due to round change message",
+                            msg_round
+                        );
                     }
                 }
-                
+
                 // Track future round proposals for timer advancement
                 if qbft_msg.qbft_message_type == ssv_types::consensus::QbftMessageType::Proposal {
                     let msg_round = qbft_msg.round;
-                    
+
                     // Future round proposals should advance the timer (e.g., round 10 when current is round 1)
                     if msg_round > highest_round {
                         highest_round = msg_round;
                         timer_triggered = true;
-                        eprintln!("✓ Future round proposal detected for round {}, advancing timer", msg_round);
+                        eprintln!(
+                            "✓ Future round proposal detected for round {}, advancing timer",
+                            msg_round
+                        );
                     }
                 }
-                
+
                 // Track proposal acceptance and detect duplicate proposals
                 if qbft_msg.qbft_message_type == ssv_types::consensus::QbftMessageType::Proposal {
                     let msg_round = qbft_msg.round;
-                    
+
                     // Check if we've already accepted a proposal for this round
                     if *accepted_proposals.get(&msg_round).unwrap_or(&false) {
                         should_reject = true;
                         reject_reason = "Invalid message: invalid signed message: proposal is not valid with current state".to_string();
-                        eprintln!("✓ Detected second proposal for round {}, rejecting", msg_round);
+                        eprintln!(
+                            "✓ Detected second proposal for round {}, rejecting",
+                            msg_round
+                        );
                     } else {
                         // Mark this round as having an accepted proposal (if message processing succeeds)
                         accepted_proposals.insert(msg_round, true);
                     }
                 }
             }
-            
+
             // If we should reject this message based on state tracking, do so
             if should_reject {
-                processing_errors.push(format!("Message {} processing error: {}", i, reject_reason));
-                eprintln!("Message processing error: Message {} processing error: {}", i, reject_reason);
+                processing_errors
+                    .push(format!("Message {} processing error: {}", i, reject_reason));
+                eprintln!(
+                    "Message processing error: Message {} processing error: {}",
+                    i, reject_reason
+                );
                 continue;
             }
-            
+
             match tokio::time::timeout(
                 std::time::Duration::from_secs(5),
-                adapter.process_single_message(message.clone())
-            ).await {
+                adapter.process_single_message(message.clone()),
+            )
+            .await
+            {
                 Ok(Ok(())) => {
                     eprintln!("✓ Processed message {} successfully", i);
-                    
+
                     // Track successful proposal processing to enable subsequent prepare/commit messages
-                    if let Ok(qbft_msg) = QbftMessage::from_ssz_bytes(message.ssv_message().data()) {
-                        if qbft_msg.qbft_message_type == ssv_types::consensus::QbftMessageType::Proposal {
+                    if let Ok(qbft_msg) = QbftMessage::from_ssz_bytes(message.ssv_message().data())
+                    {
+                        if qbft_msg.qbft_message_type
+                            == ssv_types::consensus::QbftMessageType::Proposal
+                        {
                             // Mark proposal as accepted for this height/round
                             adapter.set_proposal_acceptance(qbft_msg.height, qbft_msg.round, true);
-                            eprintln!("✓ Proposal accepted for height {} round {}", qbft_msg.height, qbft_msg.round);
+                            eprintln!(
+                                "✓ Proposal accepted for height {} round {}",
+                                qbft_msg.height, qbft_msg.round
+                            );
                         }
                     }
                 }
@@ -527,12 +569,12 @@ impl MessageProcessingTest {
 }
 
 /// Helper function to load message processing test from JSON file
-/// 
+///
 /// This function reads a JSON file and deserializes it into a MessageProcessingTest.
 /// It's designed to be used by the test discovery and loading framework.
 pub fn load_message_processing_test(file_path: &str) -> Result<MessageProcessingTest, String> {
     use std::fs;
-    
+
     let contents = fs::read_to_string(file_path)
         .map_err(|e| format!("Failed to read test file '{}': {}", file_path, e))?;
 
@@ -598,7 +640,7 @@ mod tests {
         assert!(test.expected_error.is_empty());
     }
 
-    #[test] 
+    #[test]
     fn test_spec_test_trait_implementation() {
         let test_json = r#"{
             "Name": "trait_test",
@@ -645,10 +687,12 @@ mod tests {
         }"#;
 
         let test: MessageProcessingTest = serde_json::from_str(test_json).unwrap();
-        
+
         // Test trait methods
         assert_eq!(test.name(), "trait_test");
-        assert_eq!(MessageProcessingTest::test_type(), SpecTestType::Qbft(QbftSpecTestType::MsgProcessing));
+        assert_eq!(
+            MessageProcessingTest::test_type(),
+            SpecTestType::Qbft(QbftSpecTestType::MsgProcessing)
+        );
     }
-
 }
