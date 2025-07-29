@@ -1,9 +1,3 @@
-#[cfg(debug_assertions)]
-use super::debug_tools::{
-    DebugReport, compare_json_structures, get_simplest_failing_test, print_debug_analysis,
-};
-#[cfg(not(debug_assertions))]
-use super::debug_tools::{DebugReport, get_simplest_failing_test};
 use super::shared::{SerializableCommitteeMember, base64_serde};
 use super::types::{AsyncScenarioResult, SpecTestCommitteeMember};
 use base64::prelude::*;
@@ -910,7 +904,7 @@ impl SimpleControllerTestAdapter {
             .map(|msgs_obj| {
                 // Process each message in the container
                 let mut msg_entries = Vec::new();
-                
+
                 for (key, msg_array) in msgs_obj {
                     if let Some(msg_vec) = msg_array.as_array() {
                         // Process each message in the array, ensuring SignedMessage comes before QBFTMessage
@@ -921,93 +915,93 @@ impl SimpleControllerTestAdapter {
                                     let signatures = sm_value.get("Signatures")
                                         .map(|v| serde_json::to_string(v).unwrap_or("[]".to_string()))
                                         .unwrap_or("[]".to_string());
-                                    
+
                                     let operator_ids = sm_value.get("OperatorIDs")
                                         .map(|v| serde_json::to_string(v).unwrap_or("[]".to_string()))
                                         .unwrap_or("[]".to_string());
-                                    
+
                                     let ssv_message = if let Some(ssv_value) = sm_value.get("SSVMessage") {
                                         // Build SSVMessage manually with exact Go field ordering: MsgType, MsgID, Data
                                         let msg_type = ssv_value.get("MsgType")
                                             .map(|v| serde_json::to_string(v).unwrap_or("0".to_string()))
                                             .unwrap_or("0".to_string());
-                                        
+
                                         let msg_id = ssv_value.get("MsgID")
                                             .map(|v| serde_json::to_string(v).unwrap_or("[]".to_string()))
                                             .unwrap_or("[]".to_string());
-                                        
+
                                         let data = ssv_value.get("Data")
                                             .map(|v| serde_json::to_string(v).unwrap_or("\"\"".to_string()))
                                             .unwrap_or("\"\"".to_string());
-                                        
+
                                         format!("{{\"MsgType\":{},\"MsgID\":{},\"Data\":{}}}", msg_type, msg_id, data)
                                     } else {
                                         "null".to_string()
                                     };
-                                    
+
                                     let full_data = sm_value.get("FullData")
                                         .map(|v| serde_json::to_string(v).unwrap_or("null".to_string()))
                                         .unwrap_or("null".to_string());
-                                    
-                                    format!("{{\"Signatures\":{},\"OperatorIDs\":{},\"SSVMessage\":{},\"FullData\":{}}}", 
+
+                                    format!("{{\"Signatures\":{},\"OperatorIDs\":{},\"SSVMessage\":{},\"FullData\":{}}}",
                                         signatures, operator_ids, ssv_message, full_data)
                                 } else {
                                     "null".to_string()
                                 };
-                                
+
                                 let qbft_message = if let Some(qm_value) = msg_obj.get("QBFTMessage") {
                                     // Build QBFTMessage manually with exact Go field ordering: MsgType, Height, Round, Identifier, Root, DataRound, RoundChangeJustification, PrepareJustification
                                     let msg_type = qm_value.get("MsgType")
                                         .map(|v| serde_json::to_string(v).unwrap_or("0".to_string()))
                                         .unwrap_or("0".to_string());
-                                    
+
                                     let height = qm_value.get("Height")
                                         .map(|v| serde_json::to_string(v).unwrap_or("0".to_string()))
                                         .unwrap_or("0".to_string());
-                                    
+
                                     let round = qm_value.get("Round")
                                         .map(|v| serde_json::to_string(v).unwrap_or("0".to_string()))
                                         .unwrap_or("0".to_string());
-                                    
+
                                     let identifier = qm_value.get("Identifier")
                                         .map(|v| serde_json::to_string(v).unwrap_or("\"\"".to_string()))
                                         .unwrap_or("\"\"".to_string());
-                                    
+
                                     let root = qm_value.get("Root")
                                         .map(|v| serde_json::to_string(v).unwrap_or("[]".to_string()))
                                         .unwrap_or("[]".to_string());
-                                    
+
                                     let data_round = qm_value.get("DataRound")
                                         .map(|v| serde_json::to_string(v).unwrap_or("0".to_string()))
                                         .unwrap_or("0".to_string());
-                                    
+
                                     let round_change_justification = qm_value.get("RoundChangeJustification")
                                         .map(|v| serde_json::to_string(v).unwrap_or("[]".to_string()))
                                         .unwrap_or("[]".to_string());
-                                    
+
                                     let prepare_justification = qm_value.get("PrepareJustification")
                                         .map(|v| serde_json::to_string(v).unwrap_or("[]".to_string()))
                                         .unwrap_or("[]".to_string());
-                                    
-                                    format!("{{\"MsgType\":{},\"Height\":{},\"Round\":{},\"Identifier\":{},\"Root\":{},\"DataRound\":{},\"RoundChangeJustification\":{},\"PrepareJustification\":{}}}", 
+
+                                    format!("{{\"MsgType\":{},\"Height\":{},\"Round\":{},\"Identifier\":{},\"Root\":{},\"DataRound\":{},\"RoundChangeJustification\":{},\"PrepareJustification\":{}}}",
                                         msg_type, height, round, identifier, root, data_round, round_change_justification, prepare_justification)
                                 } else {
                                     "null".to_string()
                                 };
-                                
+
                                 // Return with correct field ordering: SignedMessage first, then QBFTMessage
                                 format!("{{\"SignedMessage\":{},\"QBFTMessage\":{}}}", signed_message, qbft_message)
                             } else {
                                 serde_json::to_string(msg).unwrap_or("null".to_string())
                             }
                         }).collect();
-                        
+
                         if !processed_messages.is_empty() {
                             msg_entries.push(format!("\"{}\":[{}]", key, processed_messages.join(",")));
                         }
                     }
                 }
-                
+
                 format!("{{{}}}", msg_entries.join(","))
             })
             .unwrap_or("{}".to_string());
@@ -1501,24 +1495,24 @@ impl SimpleControllerTestAdapter {
             let signatures: Vec<String> = msg.signatures().iter()
                 .map(|sig| BASE64_STANDARD.encode(&**sig))
                 .collect();
-            
+
             let operator_ids: Vec<u64> = msg.operator_ids()
                 .into_iter()
                 .map(|id| id.0)
                 .collect();
-            
+
             // Extract real SSV message data and metadata instead of using placeholders
             let ssv_message_data = BASE64_STANDARD.encode(msg.ssv_message().data());
             let actual_msg_type = msg.ssv_message().msg_type().clone() as u32;
             let msg_id = msg.ssv_message().msg_id().as_ref();
-            
+
             // Extract real FullData
             let full_data = if msg.full_data().is_empty() {
                 serde_json::Value::Null
             } else {
                 json!(BASE64_STANDARD.encode(msg.full_data()))
             };
-            
+
             // Build the message structure using real message data from Go test inputs
             json!({
                 "SignedMessage": {
@@ -1551,66 +1545,4 @@ impl SimpleControllerTestAdapter {
             }
         })
     }
-
-    /// Validate a single test with maximum debug output for systematic debugging
-    pub fn validate_single_test(&self, test_name: &str) -> SingleTestResult {
-        // This is our systematic debugging entry point
-        #[cfg(debug_assertions)]
-        eprintln!("=== VALIDATING SINGLE TEST: {} ===", test_name);
-
-        // For now, return a placeholder result structure
-        // This will be expanded as we implement the debugging framework
-        SingleTestResult {
-            test_name: test_name.to_string(),
-            passed: false,
-            debug_report: None,
-            error_message: Some("Not yet implemented - framework setup in progress".to_string()),
-        }
-    }
-
-    /// Get expected hash from Go reference for a specific test
-    pub fn get_go_reference_hash(&self, test_name: &str) -> Option<String> {
-        // Map test names to their expected hashes from Go implementation
-        match test_name {
-            name if name.contains("decide current instance") => {
-                Some("d8a32eaae0b5372f5ae6db28b546a5a8dc14b593952f86344dc73e584121e11a".to_string())
-            }
-            name if name.contains("late commit") && !name.contains("past") => {
-                Some("78dc58c197a0b389e09fa72695628148c8127746600ef0401a625314a43268c6".to_string())
-            }
-            name if name.contains("late round change") => {
-                Some("42766b0b1b5b77488fc4ca00487402443bab3e020d177aec24b629417c051366".to_string())
-            }
-            _ => None,
-        }
-    }
-
-    /// Enhanced debug output using our new debugging tools
-    #[cfg(debug_assertions)]
-    pub fn debug_hash_with_analysis(&self, json_str: &str, test_name: &str) {
-        if let Some(expected_hash) = self.get_go_reference_hash(test_name) {
-            let report = compare_json_structures(json_str, &expected_hash, test_name);
-            print_debug_analysis(&report, test_name);
-        }
-    }
-
-    /// Check if this is the simplest failing test we should start with
-    pub fn is_simplest_failing_test(&self, test_name: &str) -> bool {
-        test_name.contains(get_simplest_failing_test())
-    }
-
-    /// Validate messages using basic validation
-    fn validate_messages_basic(&self, _messages: &[SignedSSVMessage]) -> Vec<String> {
-        // Basic validation - since bridge functionality is removed, return empty errors
-        Vec::new()
-    }
-}
-
-/// Result structure for single test validation
-#[derive(Debug, Clone)]
-pub struct SingleTestResult {
-    pub test_name: String,
-    pub passed: bool,
-    pub debug_report: Option<DebugReport>,
-    pub error_message: Option<String>,
 }

@@ -1,15 +1,4 @@
-use super::AdapterError;
 use ssv_types::message::SignedSSVMessageError;
-
-/// Simple error mapper for adapter functionality
-pub struct ErrorMapper;
-
-impl ErrorMapper {
-    /// Map adapter error to Go-compatible format
-    pub fn map_to_go_format(error: &AdapterError) -> String {
-        simple_error_message(error)
-    }
-}
 
 /// Map signed SSV error to Go format to match expected test patterns
 pub fn map_signed_ssv_error_to_go_format(error: &SignedSSVMessageError) -> String {
@@ -43,19 +32,5 @@ pub fn map_signed_ssv_error_to_go_format(error: &SignedSSVMessageError) -> Strin
         SignedSSVMessageError::SSVMessageError(ssv_error) => {
             format!("SSV message error: {:?}", ssv_error)
         }
-    }
-}
-
-/// Simple error message formatting for adapter errors
-pub fn simple_error_message(error: &AdapterError) -> String {
-    match error {
-        AdapterError::MessageCreation(msg) => format!("Message creation failed: {}", msg),
-        AdapterError::Validation(msg) => format!("Validation failed: {}", msg),
-        AdapterError::KeyLoading(msg) => format!("Key loading failed: {}", msg),
-        AdapterError::Signing(msg) => format!("Signing failed: {}", msg),
-        AdapterError::Config(msg) => format!("Configuration error: {}", msg),
-        AdapterError::OpenSsl(e) => format!("OpenSSL error: {}", e),
-        AdapterError::InvalidState(msg) => format!("Invalid state: {}", msg),
-        AdapterError::Base64Decode(e) => format!("Base64 decode error: {}", e),
     }
 }

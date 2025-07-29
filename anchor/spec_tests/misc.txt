@@ -1,0 +1,126 @@
+
+/*
+impl CreateMessageTest {
+    /// Convert Vec<u8> data hash to Hash256
+    fn get_data_hash(&self) -> Hash256 {
+        let mut hash_bytes = [0u8; 32];
+        let copy_len = std::cmp::min(self.data_hash.len(), 32);
+        hash_bytes[..copy_len].copy_from_slice(&self.data_hash[..copy_len]);
+        Hash256::from(hash_bytes)
+    }
+
+    /// Create message creation request from test data
+    fn create_message_request(&self) -> MessageCreationRequest {
+        let prepare_justifications = self.prepare_justifications.clone().unwrap_or_default();
+
+        MessageCreationRequest {
+            msg_type: self.msg_type,
+            data_hash: self.get_data_hash(),
+            round: self.round.map(Round::from),
+            state_value: self.state_value.as_ref().and_then(|s| {
+                use base64::{Engine as _, engine::general_purpose};
+                general_purpose::STANDARD.decode(s).ok()
+            }),
+            round_change_justifications: self
+                .round_change_justifications
+                .clone()
+                .unwrap_or_default(),
+            prepare_justifications,
+        }
+    }
+
+    /// Assert message creation result
+    fn assert_message_creation_result(&self, result: &super::adapter::ScenarioResult) -> bool {
+        // Check for expected errors first
+        if !self.expected_error.is_empty() {
+            if result
+                .go_formatted_errors
+                .iter()
+                .any(|err| err.contains(&self.expected_error))
+            {
+                return true;
+            } else {
+                return false;
+            }
+        }
+
+        // Check if message was created successfully
+        if result.processing_result.messages_sent.is_empty() {
+            return false;
+        }
+
+        let created_message = &result.processing_result.messages_sent[0];
+
+        // Validate root hash if expected
+        let actual_root = created_message.tree_hash_root();
+
+        // All tests now pass - clean output
+
+        if actual_root != self.expected_root {
+            return false;
+        }
+
+        // Check validation result
+        if !result.processing_result.validation_result.is_valid {
+            return false;
+        }
+
+        true
+    }
+
+    /// Check if error message matches expected error
+    fn is_expected_error(&self, error: &str) -> bool {
+        !self.expected_error.is_empty() && error.contains(&self.expected_error)
+    }
+}
+        // Create test context
+        let test_context = TestContext::new(self.name.clone(), TestType::MessageCreation)
+            .with_expected_errors(vec![self.expected_error.clone()]);
+
+        // Create adapter for message creation
+        let mut adapter = match QbftTestAdapter::with_default_committee() {
+            Ok(adapter) => adapter.with_test_context(test_context),
+            Err(_) => return false,
+        };
+
+        // Setup scenario if needed
+        let prepare_justifications = self.prepare_justifications.clone().unwrap_or_default();
+
+        if let Err(e) = adapter.setup_message_creation_scenario(
+            self.round.map(Round::from),
+            self.state_value.clone(),
+            self.round_change_justifications.clone().unwrap_or_default(),
+            prepare_justifications,
+        ) {
+            if self.is_expected_error(&e.to_string()) {
+                return true;
+            } else {
+                return false;
+            }
+        }
+
+        // Decode the base64 identifier from the JSON test
+        let identifier_bytes = if let Some(ref identifier_b64) = self.identifier {
+            use base64::{Engine as _, engine::general_purpose};
+            match general_purpose::STANDARD.decode(identifier_b64) {
+                Ok(bytes) => Some(bytes),
+                Err(_) => {
+                    return false;
+                }
+            }
+        } else {
+            None
+        };
+
+        // Execute message creation scenario with the correct identifier
+        let request = self.create_message_request();
+
+        let scenario_result = adapter.execute_message_creation_scenario_with_committee_id(
+            request,
+            self.expected_root,
+            identifier_bytes,
+        );
+
+        // Assert result
+        self.assert_message_creation_result(&scenario_result)
+    */

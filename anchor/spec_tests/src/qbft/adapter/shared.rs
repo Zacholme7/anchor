@@ -1,27 +1,7 @@
+use super::types::AdapterError;
 use serde::Serialize;
-use sha2::{Digest, Sha256};
-use ssv_types::domain_type::DomainType;
-use ssv_types::{Cluster, IndexSet, OperatorId};
-
-// Core QBFT imports for bridge integration
-use qbft::{Config, ConfigBuilder, ConfigBuilderError, DefaultLeaderFunction};
 use ssv_types::msgid::MessageId;
-
-use super::types::{AdapterError, SpecTestCommitteeMember};
-
-/// Shared serializable controller structure for consistent JSON formatting
-#[derive(Debug, Clone, Serialize)]
-pub struct SerializableController {
-    #[serde(rename = "Identifier")]
-    #[serde(with = "base64_serde")]
-    pub identifier: Vec<u8>,
-    #[serde(rename = "Height")]
-    pub height: u64,
-    #[serde(rename = "StoredInstances")]
-    pub stored_instances: serde_json::Value,
-    #[serde(rename = "CommitteeMember")]
-    pub committee_member: SerializableCommitteeMember,
-}
+use ssv_types::{IndexSet, OperatorId};
 
 /// Shared serializable committee member structure
 #[derive(Debug, Clone, Serialize)]
@@ -73,45 +53,6 @@ pub mod base64_serde {
     }
 }
 
-/// Shared optional base64 serialization utilities
-pub mod optional_base64_serde {
-    use base64::prelude::*;
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S>(opt_bytes: &Option<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match opt_bytes {
-            Some(bytes) => {
-                let encoded = BASE64_STANDARD.encode(bytes);
-                serializer.serialize_some(&encoded)
-            }
-            None => serializer.serialize_none(),
-        }
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let opt_encoded: Option<String> = Option::deserialize(deserializer)?;
-        match opt_encoded {
-            Some(encoded) => BASE64_STANDARD
-                .decode(encoded)
-                .map(Some)
-                .map_err(serde::de::Error::custom),
-            None => Ok(None),
-        }
-    }
-}
-
-/// Shared hash calculation utilities
-pub fn calculate_sha256_hash(data: &[u8]) -> String {
-    let hash = Sha256::digest(data);
-    hex::encode(hash)
-}
-
 /// Shared committee validation logic
 pub fn validate_committee_configuration(
     committee: &IndexSet<OperatorId>,
@@ -130,89 +71,4 @@ pub fn validate_committee_configuration(
     }
 
     Ok(())
-}
-
-/// Shared message structure validation
-pub fn validate_message_structure(
-    message: &ssv_types::message::SignedSSVMessage,
-) -> Result<(), String> {
-    if message.operator_ids().is_empty() {
-        return Err("no signers".to_string());
-    }
-
-    if message.signatures().is_empty() {
-        return Err("no signatures".to_string());
-    }
-
-    if message.signatures().len() != message.operator_ids().len() {
-        return Err("number of signatures is different than number of signers".to_string());
-    }
-
-    for signature in message.signatures() {
-        if signature.is_empty() {
-            return Err("empty signature".to_string());
-        }
-    }
-
-    for operator_id in message.operator_ids() {
-        if operator_id.0 == 0 {
-            return Err("signer ID 0 not allowed".to_string());
-        }
-    }
-
-    let mut seen_signers = std::collections::HashSet::new();
-    for operator_id in message.operator_ids() {
-        if seen_signers.contains(operator_id) {
-            return Err("non unique signer".to_string());
-        }
-        seen_signers.insert(operator_id);
-    }
-
-    Ok(())
-}
-
-/// Bridge utility functions for core QBFT integration
-/// Committee configuration conversion from spec test format to core types
-pub fn build_committee_from_spec_test(
-    member: &SpecTestCommitteeMember,
-) -> Result<(IndexSet<OperatorId>, Cluster), AdapterError> {
-    // Build operator index set from committee members
-    let mut operators = IndexSet::new();
-    for operator in &member.committee {
-        operators.insert(OperatorId(operator.operator_id));
-    }
-
-    // Build cluster information (simplified for tests)
-    let cluster = Cluster {
-        cluster_id: ssv_types::ClusterId([1u8; 32]), // Default cluster ID for spec tests
-        owner: types::Address::from([0u8; 20]),      // Default owner address
-        fee_recipient: types::Address::from([0u8; 20]), // Default fee recipient
-        liquidated: false,
-        cluster_members: operators.clone(),
-    };
-
-    Ok((operators, cluster))
-}
-
-/// Build QBFT config from spec test data
-pub fn build_qbft_config_from_spec(
-    committee: &IndexSet<OperatorId>,
-    operator_id: OperatorId,
-    instance_height: qbft::InstanceHeight,
-    max_rounds: usize,
-) -> Result<Config<DefaultLeaderFunction>, ConfigBuilderError> {
-    ConfigBuilder::new(operator_id, instance_height, committee.clone())
-        .with_max_rounds(max_rounds)
-        .build()
-}
-
-/// Create message ID for spec tests based on domain and committee
-pub fn build_message_id_for_spec_test(_domain: &DomainType, _committee_id: &[u8]) -> MessageId {
-    // Use the existing for_spectest method which creates a standard test MessageId
-    MessageId::for_spectest()
-}
-
-/// Convert core error types to Go-compatible format for spec test compatibility
-pub fn map_core_error_to_go_format(error: &dyn std::error::Error) -> String {
-    format!("Core QBFT error: {}", error)
 }

@@ -305,49 +305,8 @@ mod spec_tests {
         }
 
         #[tokio::test]
-        async fn test_qbft_controller() -> Result<(), Box<dyn std::error::Error>> {
-            // For now, let's just test that we can create the adapter successfully
-            // and run a minimal test to verify the async infrastructure works
-            use crate::qbft::adapter::{QbftManagerTestAdapter, types::SpecTestCommitteeMember};
-
-            // Test adapter creation
-            let committee_member = SpecTestCommitteeMember {
-                operator_id: ssv_types::OperatorId(1),
-                committee_id: vec![1, 2, 3, 4],
-                ssv_operator_pub_key: "test_key".to_string(),
-                faulty_nodes: 1,
-                committee: vec![
-                    crate::qbft::adapter::types::SpecTestOperator {
-                        operator_id: 1,
-                        ssv_operator_pub_key: "key1".to_string(),
-                    },
-                    crate::qbft::adapter::types::SpecTestOperator {
-                        operator_id: 2,
-                        ssv_operator_pub_key: "key2".to_string(),
-                    },
-                    crate::qbft::adapter::types::SpecTestOperator {
-                        operator_id: 3,
-                        ssv_operator_pub_key: "key3".to_string(),
-                    },
-                    crate::qbft::adapter::types::SpecTestOperator {
-                        operator_id: 4,
-                        ssv_operator_pub_key: "key4".to_string(),
-                    },
-                ],
-                domain_type: vec![0, 0, 3, 1],
-            };
-
-            let _adapter = QbftManagerTestAdapter::new(committee_member)
-                .await
-                .map_err(|e| format!("Failed to create async adapter: {}", e))?;
-
-            println!("✅ Successfully created QbftManagerTestAdapter");
-
-            // For now, just verify the sync version works
-            let result = run_tests(SpecTestType::Qbft(QbftSpecTestType::Controller));
-            assert!(result);
-
-            Ok(())
+        async fn test_qbft_controller() {
+            assert!(run_tests(SpecTestType::Qbft(QbftSpecTestType::Controller)))
         }
 
         #[test]

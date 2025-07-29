@@ -1,6 +1,4 @@
-pub mod debug_tools;
 pub mod error_mapping;
-pub mod keys;
 pub mod qbft_manager_test;
 pub mod shared;
 pub mod simple_controller_test;
@@ -25,27 +23,11 @@ pub use qbft_manager_test::QbftManagerTestAdapter;
 // Simple controller test adapter
 pub use simple_controller_test::SimpleControllerTestAdapter;
 
-// Key management utilities
-pub use keys::{
-    create_minimal_test_keys, get_operator_ids, has_operator_key, load_operator_key,
-    load_test_keys, load_test_keys_for_committee, validate_test_keys,
-};
-
 // Error mapping utilities
-pub use error_mapping::{ErrorMapper, map_signed_ssv_error_to_go_format, simple_error_message};
-
-// Debug utilities for systematic hash debugging
-#[cfg(debug_assertions)]
-pub use debug_tools::{
-    DebugReport, compare_json_structures, generate_hash_step_by_step, get_simplest_failing_test,
-    print_debug_analysis,
-};
-#[cfg(not(debug_assertions))]
-pub use debug_tools::{DebugReport, generate_hash_step_by_step, get_simplest_failing_test};
+pub use error_mapping::map_signed_ssv_error_to_go_format;
 
 // Shared utilities for adapter consolidation
 pub use shared::{
-    SerializableCommitteeMember, SerializableController, SerializableOperator, base64_serde,
-    calculate_sha256_hash, optional_base64_serde, validate_committee_configuration,
-    validate_message_structure,
+    SerializableCommitteeMember, SerializableOperator, base64_serde,
+    validate_committee_configuration,
 };

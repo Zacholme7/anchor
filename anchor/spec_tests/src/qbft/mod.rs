@@ -1,4 +1,5 @@
 pub mod adapter;
+pub mod adapters;
 mod controller_test;
 mod create_message;
 mod message_processing;
