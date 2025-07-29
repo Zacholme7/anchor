@@ -26,10 +26,6 @@ pub struct EncryptionSpecTest {
 impl EncryptionSpecTest {}
 
 impl SpecTest for EncryptionSpecTest {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
     fn setup(&mut self) {
         // No-op
     }

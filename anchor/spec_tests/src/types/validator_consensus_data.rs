@@ -22,10 +22,6 @@ pub struct ValidatorConsensusDataTest {
 }
 
 impl SpecTest for ValidatorConsensusDataTest {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
     fn setup(&mut self) {
         // No setup needed
     }

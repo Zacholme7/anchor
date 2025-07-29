@@ -53,9 +53,6 @@ impl SpecTestType {
 // different categories with different file strucutres. For each file structure, implementing the
 // required functions allows for a smooth testing process
 trait SpecTest {
-    // Retrieve the name of the test
-    fn name(&self) -> &str;
-
     // Setup a runner for the test. This will configure and construct eveything required to
     // execute the test
     fn setup(&mut self);
@@ -204,90 +201,6 @@ fn run_tests(test_type: SpecTestType) -> bool {
         result &= test_result;
     }
     result
-}
-
-// Async test runner specifically for controller tests
-async fn run_async_controller_tests() -> Result<bool, Box<dyn std::error::Error>> {
-    use qbft::ControllerTest;
-
-    let test_type = SpecTestType::Qbft(QbftSpecTestType::Controller);
-    let dir_name = test_type.to_string();
-    let test_dir = Path::new(&dir_name);
-
-    let tests: Vec<ControllerTest> = WalkDir::new(test_dir)
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let path = entry.path();
-            let variant = "ControllerSpecTest";
-
-            if path.is_file() {
-                let filename = path.file_name().map(|name| name.to_string_lossy());
-
-                let matches = filename
-                    .map(|name| {
-                        let split: HashSet<String> = name.split('.').map(String::from).collect();
-
-                        let contains_prefix = {
-                            let mut found = false;
-                            for chunk in split {
-                                if chunk.contains(variant) {
-                                    found = true;
-                                    break;
-                                }
-                            }
-                            found
-                        };
-
-                        contains_prefix && !name.contains("EncodingTest")
-                    })
-                    .unwrap_or(false);
-
-                if matches {
-                    println!("Loading async controller test {path:?}");
-                    let contents = match fs::read_to_string(path) {
-                        Ok(contents) => contents,
-                        Err(e) => {
-                            eprintln!("Failed to read test file: {path:?}, error: {e}");
-                            return None;
-                        }
-                    };
-
-                    let test: ControllerTest = match serde_json::from_str(&contents) {
-                        Ok(test) => test,
-                        Err(e) => {
-                            eprintln!("=== JSON PARSING ERROR ===");
-                            eprintln!("File: {path:?}");
-                            eprintln!("Error: {e}");
-                            eprintln!("========================");
-                            return None;
-                        }
-                    };
-
-                    return Some(test);
-                }
-            }
-            None
-        })
-        .collect();
-
-    assert!(!tests.is_empty(), "No controller tests found");
-    println!("Loaded {} async controller tests", tests.len());
-
-    let mut result = true;
-    for test in tests {
-        match ControllerTest::execute_async_test(&test).await {
-            Ok(()) => {
-                println!("✅ Async test '{}' passed!", test.name());
-            }
-            Err(e) => {
-                eprintln!("❌ Async test '{}' failed: {}", test.name(), e);
-                result = false;
-            }
-        }
-    }
-
-    Ok(result)
 }
 
 #[cfg(test)]

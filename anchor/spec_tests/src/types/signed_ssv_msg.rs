@@ -45,10 +45,6 @@ pub struct SignedSSVMessageTest {
 }
 
 impl SpecTest for SignedSSVMessageTest {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
     fn setup(&mut self) {
         // No-op
     }

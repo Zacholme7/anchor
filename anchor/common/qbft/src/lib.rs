@@ -915,8 +915,8 @@ where
             identifier: (&self.identifier).into(),
             root: data.root,
             data_round: data.data_round,
-            round_change_justification,
-            prepare_justification,
+            round_change_justification.into(),
+            prepare_justification.into(),
         };
 
         let ssv_message = SSVMessage::new(

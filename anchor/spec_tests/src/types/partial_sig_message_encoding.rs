@@ -27,10 +27,6 @@ pub struct PartialSigMessageEncodingTest {
 }
 
 impl SpecTest for PartialSigMessageEncodingTest {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
     fn setup(&mut self) {
         // No-op
     }

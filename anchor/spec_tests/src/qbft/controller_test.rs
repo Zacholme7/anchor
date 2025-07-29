@@ -68,10 +68,6 @@ pub struct ExpectedTimerState {
 }
 
 impl SpecTest for ControllerTest {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
     fn run(&self) -> bool {
         true
     }

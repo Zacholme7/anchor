@@ -27,10 +27,6 @@ pub struct BeaconVoteEncodingTest {
 }
 
 impl SpecTest for BeaconVoteEncodingTest {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
     fn setup(&mut self) {
         // No-op
     }

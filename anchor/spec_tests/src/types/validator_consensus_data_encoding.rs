@@ -28,10 +28,6 @@ pub struct ValidatorConsensusDataEncodingTest {
 }
 
 impl SpecTest for ValidatorConsensusDataEncodingTest {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
     fn setup(&mut self) {
         // No-op
     }

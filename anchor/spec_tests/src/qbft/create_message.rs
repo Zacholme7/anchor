@@ -53,10 +53,6 @@ pub struct CreateMessageTest {
 }
 
 impl SpecTest for CreateMessageTest {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
     fn setup(&mut self) {
         // Build teh state
         let starting_state = QbftStartingState { height: None };

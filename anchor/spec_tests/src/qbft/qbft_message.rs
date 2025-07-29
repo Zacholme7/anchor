@@ -27,10 +27,6 @@ pub struct QbftMessageTest {
 }
 
 impl SpecTest for QbftMessageTest {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
     fn setup(&mut self) {}
 
     fn run(&self) -> bool {

@@ -19,10 +19,6 @@ pub struct SSVMessageEncodingTest {
 }
 
 impl SpecTest for SSVMessageEncodingTest {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
     fn setup(&mut self) {
         // No-op
     }

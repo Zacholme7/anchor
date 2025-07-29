@@ -21,10 +21,6 @@ pub struct SignedSSVMessageEncodingTest {
 }
 
 impl SpecTest for SignedSSVMessageEncodingTest {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
     fn setup(&mut self) {
         // Setup any required test state
     }

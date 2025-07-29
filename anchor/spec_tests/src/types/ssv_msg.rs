@@ -21,10 +21,6 @@ pub struct SSVMessageTest {
 }
 
 impl SpecTest for SSVMessageTest {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
     fn setup(&mut self) {
         // No-op
     }

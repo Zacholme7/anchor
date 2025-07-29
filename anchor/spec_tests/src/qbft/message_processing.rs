@@ -110,10 +110,6 @@ pub struct MessageProcessingTest {
 }
 
 impl SpecTest for MessageProcessingTest {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
     fn setup(&mut self) {}
 
     fn run(&self) -> bool {
