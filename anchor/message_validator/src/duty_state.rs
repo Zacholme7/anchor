@@ -21,7 +21,7 @@ use crate::{FIRST_ROUND, ValidationFailure, message_counts::MessageCounts};
 //    data.
 
 /// DutyState manages the state for duty validation across operators and slots
-pub struct DutyState {
+pub(crate) struct DutyState {
     /// Tracks the duty state for an operator
     operators: HashMap<OperatorId, OperatorState>,
     /// The number of slots for which state is stored (defines the size of the circular buffer)
@@ -30,7 +30,7 @@ pub struct DutyState {
 
 impl DutyState {
     /// Creates a new DutyState with the specified storage capacity
-    pub fn new(stored_slot_count: usize) -> Self {
+    pub(crate) fn new(stored_slot_count: usize) -> Self {
         Self {
             operators: HashMap::new(),
             stored_slot_count,
@@ -313,7 +313,7 @@ impl SignerState {
 
         if signed_ssv_message.operator_ids().len() > 1 {
             self.seen_signers
-                .insert(signed_ssv_message.operator_ids().into());
+                .insert(signed_ssv_message.operator_ids().as_slice().into());
         }
 
         self.message_counts.record_consensus_message(

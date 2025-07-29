@@ -7,7 +7,7 @@ use types::Hash256;
 
 /// State that we want to initialize the qbft instance with
 pub struct QbftStartingState {
-    height: Option<InstanceHeight>,
+    pub height: Option<InstanceHeight>,
 }
 
 // Simple mock handler type

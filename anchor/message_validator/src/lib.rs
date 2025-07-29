@@ -34,13 +34,11 @@ use tokio::{sync::watch::Receiver, time::sleep};
 use tracing::{error, trace};
 use types::{Epoch, Slot};
 
-pub use crate::consensus_message::{
-    minimal_validate_consensus_message, validate_consensus_message,
-    validate_consensus_message_semantics,
+use crate::{
+    consensus_message::validate_consensus_message,
+    duty_state::{DutyState, OperatorState},
+    partial_signature::validate_partial_signature_message,
 };
-pub use crate::duty_state::DutyState;
-
-use crate::{duty_state::OperatorState, partial_signature::validate_partial_signature_message};
 
 const VALIDATOR_CLEANER_NAME: &str = "validator_cleaner";
 
@@ -254,7 +252,7 @@ pub enum Error {
     Processor(#[from] ::processor::Error),
 }
 
-pub struct ValidationContext<'a, S> {
+struct ValidationContext<'a, S> {
     pub signed_ssv_message: &'a SignedSSVMessage,
     pub role: Role, // Small value type can remain owned
     pub committee_info: &'a CommitteeInfo,
@@ -750,7 +748,7 @@ pub fn sync_committee_period(
         .as_u64())
 }
 
-pub fn compute_quorum_size(committee_size: usize) -> usize {
+pub(crate) fn compute_quorum_size(committee_size: usize) -> usize {
     let f = get_f(committee_size);
     f * 2 + 1
 }
@@ -793,14 +791,14 @@ mod tests {
         sign::Signer,
     };
     use ssv_types::{
-        CommitteeId, CommitteeInfo, IndexSet, OperatorId, RSA_SIGNATURE_SIZE, ValidatorIndex,
+        CommitteeId, CommitteeInfo, IndexSet, OperatorId, ValidatorIndex,
         consensus::{QbftMessage, QbftMessageType},
         domain_type::DomainType,
-        message::{MsgType, SSVMessage, SignedSSVMessage},
+        message::{MsgType, RSA_SIGNATURE_SIZE, SSVMessage, SignedSSVMessage},
         msgid::{DutyExecutor, MessageId, Role},
     };
     use ssz::Encode;
-    use types::{Epoch, Slot, VariableList};
+    use types::{Epoch, Slot};
 
     use crate::{ValidationFailure, compute_quorum_size, hash_data};
 
@@ -856,21 +854,6 @@ mod tests {
         }
 
         pub(crate) fn build(self) -> QbftMessage {
-            // Convert Vec<SignedSSVMessage> to VariableList<VariableList<u8, _>, U13>
-            let round_change_justification_vec: Vec<_> = self
-                .round_change_justification
-                .into_iter()
-                .map(|msg| VariableList::from(msg.without_full_data().as_ssz_bytes()))
-                .collect();
-            let round_change_justification = VariableList::from(round_change_justification_vec);
-
-            let prepare_justification_vec: Vec<_> = self
-                .prepare_justification
-                .into_iter()
-                .map(|msg| VariableList::from(msg.without_full_data().as_ssz_bytes()))
-                .collect();
-            let prepare_justification = VariableList::from(prepare_justification_vec);
-
             QbftMessage {
                 qbft_message_type: self.msg_type,
                 height: 1,
@@ -878,8 +861,8 @@ mod tests {
                 identifier: (&self.identifier).into(),
                 root: Hash256::from([0u8; 32]),
                 data_round: 1,
-                round_change_justification,
-                prepare_justification,
+                round_change_justification: self.round_change_justification,
+                prepare_justification: self.prepare_justification,
             }
         }
     }
@@ -903,7 +886,7 @@ mod tests {
         let msg_id: [u8; 56] = slice
             .try_into()
             .expect("VariableList does not contain exactly 56 bytes");
-        let ssv_msg = SSVMessage::new_from_vec(
+        let ssv_msg = SSVMessage::new(
             MsgType::SSVConsensusMsgType,
             msg_id.into(),
             qbft_bytes.clone(),
@@ -914,7 +897,7 @@ mod tests {
             signers
                 .iter()
                 .enumerate()
-                .map(|(i, _)| [0xAA + i as u8; RSA_SIGNATURE_SIZE])
+                .map(|(i, _)| vec![0xAA + i as u8; RSA_SIGNATURE_SIZE])
                 .collect::<Vec<_>>()
         } else {
             pks.iter()
@@ -922,16 +905,12 @@ mod tests {
                     let p_key = PKey::from_rsa(pk.clone()).unwrap();
                     let mut signer = Signer::new(MessageDigest::sha256(), &p_key).unwrap();
                     signer.update(&ssv_msg.as_ssz_bytes()).unwrap();
-                    signer
-                        .sign_to_vec()
-                        .expect("Failed to sign message")
-                        .try_into()
-                        .expect("Signature should be 256 bytes")
+                    signer.sign_to_vec().expect("Failed to sign message")
                 })
                 .collect::<Vec<_>>()
         };
 
-        SignedSSVMessage::new_from_vecs(signatures, signers, ssv_msg, full_data)
+        SignedSSVMessage::new(signatures, signers, ssv_msg, full_data)
             .expect("SignedSSVMessage should be created")
     }
 

@@ -59,7 +59,7 @@ impl SpecTest for CreateMessageTest {
 
     fn setup(&mut self) {
         // Build teh state
-        let starting_state = QbftStartingState {};
+        let starting_state = QbftStartingState { height: None };
         self.qbft_adapter = Some(QbftAdapter::new_with_state(starting_state));
     }
 
