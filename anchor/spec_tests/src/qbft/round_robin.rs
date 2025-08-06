@@ -1,4 +1,4 @@
-use super::adapter::types::SpecTestCommitteeMember;
+use super::adapters::spec_types::SpecTestCommitteeMember;
 use crate::{QbftSpecTestType, SpecTest, SpecTestType};
 use indexmap::IndexSet;
 use qbft::{DefaultLeaderFunction, InstanceHeight, LeaderFunction};

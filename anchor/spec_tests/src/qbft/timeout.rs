@@ -1,4 +1,4 @@
-use super::adapter::{QbftTestAdapter, TestContext, TestType};
+use super::adapters::spec_types::SpecTestCommitteeMember;
 use crate::{QbftSpecTestType, SpecTest, SpecTestType};
 use serde::Deserialize;
 use ssv_types::{Round, message::SignedSSVMessage};
@@ -35,7 +35,7 @@ pub struct TimeoutTestPre {
 #[derive(Debug, Clone, Deserialize)]
 pub struct QbftInstanceState {
     #[serde(rename = "CommitteeMember")]
-    pub committee_member: super::adapter::SpecTestCommitteeMember,
+    pub committee_member: SpecTestCommitteeMember,
     #[serde(rename = "ID")]
     pub id: String,
     #[serde(rename = "Round")]
@@ -89,7 +89,10 @@ impl SpecTest for TimeoutTest {
         // No setup needed for timeout tests
     }
 
-    fn run(&self) -> bool {}
+    fn run(&self) -> bool {
+        // TODO: Implement timeout test logic
+        false
+    }
 
     fn test_type() -> SpecTestType {
         SpecTestType::Qbft(QbftSpecTestType::Timeout)

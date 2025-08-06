@@ -1,13 +1,9 @@
-use super::adapter::{
-    MessageCreationRequest, QbftTestAdapter, SpecTestCommitteeMember, TestContext, TestType,
-};
 use super::adapters::qbft::*;
+use super::adapters::spec_types::SpecTestCommitteeMember;
 use crate::utils::deserializers::qbft_deserializers::deserialize_qbft_message_type;
 use crate::{QbftSpecTestType, SpecTest, SpecTestType};
-use base64;
 use serde::Deserialize;
 use ssv_types::{
-    Round,
     consensus::{QbftMessage, QbftMessageType},
     message::{SSVMessage, SignedSSVMessage},
 };
@@ -15,7 +11,7 @@ use ssz::Decode;
 use tree_hash::TreeHash;
 use types::Hash256;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Deserialize)]
 pub struct CreateMessageTest {
     #[serde(rename = "Name")]
     pub name: String,

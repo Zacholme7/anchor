@@ -1,9 +1,5 @@
-use super::adapter::{
-    ScenarioResult, simple_controller_test::SimpleControllerTestAdapter,
-    types::SpecTestCommitteeMember,
-};
+use super::adapters::spec_types::SpecTestCommitteeMember;
 use crate::{QbftSpecTestType, SpecTest, SpecTestType};
-use base64::prelude::*;
 use serde::Deserialize;
 use ssv_types::message::SignedSSVMessage;
 

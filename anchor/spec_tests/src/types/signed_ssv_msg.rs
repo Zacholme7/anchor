@@ -8,9 +8,7 @@ use ssv_types::{
 };
 use ssz::Encode;
 
-use crate::{
-    SpecTest, SpecTestType, qbft::map_signed_ssv_error_to_go_format, types::TypesSpecTestType,
-};
+use crate::{SpecTest, SpecTestType, types::TypesSpecTestType};
 
 // Intermediate test-specific SignedSSVMessage that can handle null SSVMessage
 #[derive(Debug, Clone, Deserialize)]
@@ -176,13 +174,15 @@ impl SignedSSVMessageTest {
         );
 
         // Create our SignedSSVMessage
+        todo!()
+        /*
         SignedSSVMessage::new(
             signatures,
             test_msg.operator_ids.clone().unwrap_or_default(),
             ssv_message.clone(),
             full_data_bytes,
         )
-        .map_err(|e| map_signed_ssv_error_to_go_format(&e))
+            */
     }
 
     fn check_expected_error(&self, error_msg: &str) -> bool {

@@ -195,9 +195,6 @@ fn run_tests(test_type: SpecTestType) -> bool {
     for mut test in tests {
         test.setup();
         let test_result = test.run();
-        if !test_result {
-            eprintln!("❌ Test '{}' failed!", test.name());
-        }
         result &= test_result;
     }
     result
