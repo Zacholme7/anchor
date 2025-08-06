@@ -176,7 +176,7 @@ impl SignedSSVMessageTest {
         );
 
         // Create our SignedSSVMessage
-        SignedSSVMessage::new_from_vecs(
+        SignedSSVMessage::new(
             signatures,
             test_msg.operator_ids.clone().unwrap_or_default(),
             ssv_message.clone(),

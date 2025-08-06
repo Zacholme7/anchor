@@ -3,7 +3,6 @@ use std::sync::Arc;
 use database::OwnOperatorId;
 use message_validator::{DutiesProvider, MessageAcceptance, Validator};
 use openssl::{
-    error::ErrorStack,
     hash::MessageDigest,
     pkey::{PKey, Private},
     rsa::Rsa,
@@ -13,11 +12,10 @@ use slot_clock::SlotClock;
 use ssv_types::{CommitteeId, consensus::UnsignedSSVMessage, message::SignedSSVMessage};
 use ssz::Encode;
 use subnet_service::SubnetId;
-use thiserror::Error;
 use tokio::sync::{mpsc, mpsc::error::TrySendError, watch};
 use tracing::{debug, error, warn};
 
-use crate::{Error, MessageCallback, MessageSender};
+use crate::{Error, MessageCallback, MessageSender, SigningError};
 
 const SIGNER_NAME: &str = "message_sign_and_send";
 const SENDER_NAME: &str = "message_send";
@@ -61,7 +59,7 @@ impl<S: SlotClock + 'static, D: DutiesProvider> MessageSender for Arc<NetworkMes
                             return;
                         }
                     };
-                    let message = match SignedSSVMessage::new_from_vecs(
+                    let message = match SignedSSVMessage::new(
                         vec![signature],
                         vec![operator_id],
                         message.ssv_message,
@@ -164,12 +162,4 @@ impl<S: SlotClock + 'static, D: DutiesProvider> NetworkMessageSender<S, D> {
         }
         Ok(signature)
     }
-}
-
-#[derive(Debug, Error)]
-enum SigningError {
-    #[error("Signing error: {0}")]
-    SignerError(#[from] ErrorStack),
-    #[error("Ciphertext has {0} bytes, expected 256")]
-    IncorrectCiphertextLength(usize),
 }
