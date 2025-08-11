@@ -185,6 +185,7 @@ pub struct SSVMessage {
     msg_type: MsgType,
 
     #[serde(rename = "MsgID")]
+    #[serde(deserialize_with = "crate::message::deserialize_hex_message_id")]
     msg_id: MessageId,
 
     #[serde(rename = "Data")]
@@ -606,15 +607,16 @@ impl SignedSSVMessage {
             return Err(SignedSSVMessageError::NoSignatures);
         }
 
-        if !self.operator_ids.is_sorted() {
-            return Err(SignedSSVMessageError::SignersNotSorted);
-        }
-
         // Note: Len Signers & Operators will only be > 1 after commit aggregation
 
-        // Rule: Signer can't be zero
+        // Rule: Signer can't be zero (check this before sorted check since [1,2,0] should error as ZeroSigner)
         if self.operator_ids.iter().any(|&id| *id == 0) {
             return Err(SignedSSVMessageError::ZeroSigner);
+        }
+
+        // Rule: Signers must be sorted
+        if !self.operator_ids.is_sorted() {
+            return Err(SignedSSVMessageError::SignersNotSorted);
         }
 
         // Rule: Signers must be unique
@@ -699,6 +701,26 @@ where
         )),
         _ => Err(D::Error::custom("Expected null or a base64 string")),
     }
+}
+
+pub fn deserialize_hex_message_id<'de, D>(deserializer: D) -> Result<MessageId, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let hex_string = String::deserialize(deserializer)?;
+    let bytes = hex::decode(&hex_string)
+        .map_err(|e| D::Error::custom(format!("Failed to decode hex MessageId: {}", e)))?;
+
+    if bytes.len() != 56 {
+        return Err(D::Error::custom(format!(
+            "MessageId must be 56 bytes, got {}",
+            bytes.len()
+        )));
+    }
+
+    let mut array = [0u8; 56];
+    array.copy_from_slice(&bytes);
+    Ok(MessageId::from(array))
 }
 
 #[cfg(test)]

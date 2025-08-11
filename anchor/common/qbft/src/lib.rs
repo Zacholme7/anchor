@@ -15,7 +15,7 @@ use ssv_types::{
 };
 use ssz::{Decode, Encode};
 use tracing::{debug, error, warn};
-use types::Hash256;
+use types::{Hash256, FixedBytesExtended};
 
 use crate::msg_container::MessageContainer;
 
@@ -888,22 +888,34 @@ where
             vec![]
         };
 
-        if matches!(msg_type, QbftMessageType::RoundChange)
-            && let (Some(last_prepared_value), Some(last_prepared_round)) =
+        // Special handling for RoundChange messages
+        if matches!(msg_type, QbftMessageType::RoundChange) {
+            // Check if we have a prepared value from a previous round
+            if let (Some(last_prepared_value), Some(last_prepared_round)) =
                 (self.last_prepared_value, self.last_prepared_round)
-        {
-            return MessageData::new(
-                last_prepared_round.get() as u64,
-                self.current_round.get() as u64,
-                last_prepared_value,
-                self.data
-                    .get(&last_prepared_value)
-                    .map(|d| d.as_ssz_bytes())
-                    .unwrap_or_else(|| {
-                        warn!("Data misisng for last prepared value");
-                        vec![]
-                    }),
-            );
+            {
+                // We have prepare justifications - use the hash of last prepared value
+                return MessageData::new(
+                    last_prepared_round.get() as u64,
+                    self.current_round.get() as u64,
+                    last_prepared_value,
+                    self.data
+                        .get(&last_prepared_value)
+                        .map(|d| d.as_ssz_bytes())
+                        .unwrap_or_else(|| {
+                            warn!("Data missing for last prepared value");
+                            vec![]
+                        }),
+                );
+            } else {
+                // No prepare justifications - use empty root (like Go does)
+                return MessageData::new(
+                    0,  // NoRound
+                    self.current_round.get() as u64,
+                    Hash256::zero(),  // Empty root, NOT data_hash
+                    vec![],  // No full data
+                );
+            }
         }
 
         // Standard message data for Proposal, Prepare, and Commit
@@ -1176,7 +1188,29 @@ where
     }
 
     // Expose the ability to create new unsigned messages for spec testing
-    #[cfg(test)]
+    /// Helper function for spec tests to set the current round
+    pub fn set_current_round_spec(&mut self, round: Round) {
+        self.current_round = round;
+    }
+    
+    /// Helper function for spec tests to set last prepared round and value
+    pub fn set_last_prepared_spec(&mut self, round: Round, value: D::Hash, full_data: D) {
+        self.last_prepared_round = Some(round);
+        self.last_prepared_value = Some(value);
+        // Store the full data so it can be included in the message
+        self.data.insert(value, Arc::new(full_data));
+    }
+    
+    /// Helper function for spec tests to add a prepare justification
+    pub fn add_prepare_justification_spec(&mut self, round: Round, operator_id: OperatorId, msg: WrappedQbftMessage) {
+        self.prepare_container.add_message(round, operator_id, &msg);
+    }
+    
+    /// Helper function for spec tests to store data for proposals
+    pub fn store_data_spec(&mut self, hash: D::Hash, data: D) {
+        self.data.insert(hash, Arc::new(data));
+    }
+
     pub fn new_unsigned_message_spec(
         &self,
         msg_type: QbftMessageType,

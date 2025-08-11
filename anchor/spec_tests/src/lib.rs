@@ -2,7 +2,7 @@
 #![recursion_limit = "512"]
 
 pub mod qbft;
-mod types;
+pub mod types;
 mod utils;
 use std::{
     collections::{HashMap, HashSet},
@@ -13,16 +13,14 @@ use std::{
 
 use qbft::QbftSpecTestType;
 use serde::de::DeserializeOwned;
-use types::TypesSpecTestType;
 use walkdir::WalkDir;
 
-use crate::{qbft::*, types::*};
+use crate::qbft::*;
 
 // All Spec Test Variants. Maps to an inner variant type that describes specific tests
 #[derive(Eq, PartialEq, Hash, Debug)]
 enum SpecTestType {
     Qbft(QbftSpecTestType),
-    Types(TypesSpecTestType),
 }
 
 // Maps a test category to its respective spec test location. Do not change!
@@ -30,7 +28,6 @@ impl fmt::Display for SpecTestType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             SpecTestType::Qbft(_) => write!(f, "ssv-spec/qbft/spectest/generate/tests"),
-            SpecTestType::Types(_) => write!(f, "ssv-spec/types/spectest/generate/tests"),
         }
     }
 }
@@ -39,11 +36,7 @@ impl SpecTestType {
     /// Some tests are encoding tests. They share a prefix but have a different fielname and
     /// structure
     pub fn is_encoding(&self) -> bool {
-        if let SpecTestType::Types(type_test) = self {
-            type_test.is_encoding()
-        } else {
-            false
-        }
+        false
     }
 }
 
@@ -89,21 +82,6 @@ static TEST_LOADERS: LazyLock<Loaders> = register_test_loaders!(
     QbftMessageTest,
     RoundRobinTest,
     TimeoutTest,
-    // Types tests
-    // -----------
-    BeaconVoteEncodingTest, // got
-    ConsensusDataProposerTest,
-    EncryptionSpecTest,
-    MaxMsgSizeTest,
-    PartialSigMsgSpecTest,         // got
-    PartialSigMessageEncodingTest, // got
-    SignedSSVMessageTest,          // got
-    SignedSSVMessageEncodingTest,  // got
-    SSVMessageTest,                // got
-    SSVMessageEncodingTest,
-    SSZSpecTest,                        // got
-    ValidatorConsensusDataTest,         // got
-    ValidatorConsensusDataEncodingTest, // got
 );
 
 // Register a test in the loader. This inserts a mapping from SpecTestType -> loading closure
@@ -144,7 +122,6 @@ fn run_tests(test_type: SpecTestType) -> bool {
             // Get the inner variant string to check in filenames
             let variant = match &test_type {
                 SpecTestType::Qbft(inner) => inner.to_string(),
-                SpecTestType::Types(inner) => inner.to_string(),
             };
 
             if path.is_file() {
@@ -239,114 +216,6 @@ mod spec_tests {
         #[test]
         fn test_qbft_timeout() {
             assert!(run_tests(SpecTestType::Qbft(QbftSpecTestType::Timeout)))
-        }
-    }
-
-    // All type specific spec tests
-    mod type_tests {
-        use super::*;
-
-        #[test]
-        // Beacon vote encoding
-        fn test_types_encoding_beacon_vote() {
-            assert!(run_tests(SpecTestType::Types(
-                TypesSpecTestType::BeaconVoteEncoding
-            )))
-        }
-
-        #[test]
-        #[ignore]
-        // Consensus data proposer test
-        fn test_types_consensus_data_proposer() {
-            assert!(run_tests(SpecTestType::Types(
-                TypesSpecTestType::ConsensusDataProposer
-            )))
-        }
-
-        #[test]
-        // Encryption test
-        fn test_types_encryption_test() {
-            assert!(run_tests(SpecTestType::Types(
-                TypesSpecTestType::Encryption
-            )))
-        }
-
-        #[test]
-        // Max msg size tests
-        fn test_types_max_message_size() {
-            assert!(run_tests(SpecTestType::Types(
-                TypesSpecTestType::MaxMsgSize
-            )))
-        }
-
-        #[test]
-        // Partial sig message encoding
-        fn test_types_partial_sig_message() {
-            assert!(run_tests(SpecTestType::Types(
-                TypesSpecTestType::PartialSigMessage
-            )))
-        }
-
-        #[test]
-        // Partial sig message encoding
-        fn test_types_encoding_partial_sig_message() {
-            assert!(run_tests(SpecTestType::Types(
-                TypesSpecTestType::PartialSigMessageEncoding
-            )))
-        }
-
-        #[test]
-        // Signed ssv message test
-        fn test_types_signed_ssv_message() {
-            assert!(run_tests(SpecTestType::Types(
-                TypesSpecTestType::SignedSSVMsg
-            )))
-        }
-
-        #[test]
-        // Signed SSV Message Encoding
-        fn test_types_encoding_signed_ssv_message() {
-            assert!(run_tests(SpecTestType::Types(
-                TypesSpecTestType::SignedSSVMsgEncoding
-            )))
-        }
-
-        #[test]
-        // SSV Message test
-        fn test_types_ssv_message() {
-            assert!(run_tests(SpecTestType::Types(TypesSpecTestType::SSVMsg)))
-        }
-
-        #[test]
-        // Signed SSV Message Encoding
-        fn test_types_encoding_ssv_message() {
-            assert!(run_tests(SpecTestType::Types(
-                TypesSpecTestType::SSVMsgEncoding
-            )))
-        }
-
-        #[test]
-        #[ignore]
-        // SSZ withdrawals marshalling test
-        fn test_types_ssz() {
-            assert!(run_tests(SpecTestType::Types(TypesSpecTestType::Ssz)))
-        }
-
-        #[test]
-        #[ignore]
-        // Validator consensus data encoding
-        fn test_types_validator_consensus_data() {
-            assert!(run_tests(SpecTestType::Types(
-                TypesSpecTestType::ValidatorConsensusData
-            )))
-        }
-
-        #[test]
-        // Validator consensus data encoding
-        fn test_types_encoding_validator_consensus_data() {
-            assert!(run_tests(SpecTestType::Types(
-                TypesSpecTestType::ValidatorConsensusDataEncoding
-            )))
         }
     }
 }

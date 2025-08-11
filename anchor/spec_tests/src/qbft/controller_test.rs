@@ -1,12 +1,17 @@
 use super::adapters::spec_types::SpecTestCommitteeMember;
+use crate::types::TestSignedSSVMessage;
+use crate::utils::deserializers::{
+    deserialize_base64, deserialize_base64_option, deserialize_hex_hash256_option,
+};
 use crate::{QbftSpecTestType, SpecTest, SpecTestType};
 use serde::Deserialize;
-use ssv_types::message::SignedSSVMessage;
+use types::Hash256;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TestController {
     #[serde(rename = "Identifier")]
-    pub identifier: String, // Base64 encoded
+    #[serde(deserialize_with = "deserialize_base64")]
+    pub identifier: Vec<u8>,
     #[serde(rename = "Height")]
     pub height: u64,
     #[serde(rename = "StoredInstances")]
@@ -36,11 +41,13 @@ pub struct RunInstanceData {
     #[serde(rename = "Height")]
     pub height: Option<u64>,
     #[serde(rename = "InputValue")]
-    pub input_value: Option<String>,
+    #[serde(deserialize_with = "deserialize_base64_option")]
+    pub input_value: Option<Vec<u8>>,
     #[serde(rename = "InputMessages")]
-    pub input_messages: Option<Vec<SignedSSVMessage>>,
+    pub input_messages: Option<Vec<TestSignedSSVMessage>>,
     #[serde(rename = "ControllerPostRoot")]
-    pub controller_post_root: Option<String>,
+    #[serde(deserialize_with = "deserialize_hex_hash256_option")]
+    pub controller_post_root: Option<Hash256>,
     #[serde(rename = "ExpectedDecidedState")]
     pub expected_decided_state: Option<ExpectedDecidedState>,
     #[serde(rename = "ExpectedTimerState")]
@@ -52,7 +59,8 @@ pub struct ExpectedDecidedState {
     #[serde(rename = "DecidedCnt")]
     pub decided_count: u64,
     #[serde(rename = "DecidedVal")]
-    pub decided_value: Option<String>,
+    #[serde(deserialize_with = "deserialize_base64_option")]
+    pub decided_value: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

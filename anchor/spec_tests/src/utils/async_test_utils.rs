@@ -1222,7 +1222,7 @@ impl AsyncQbftTestSetup {
                 // Expected: fa70f913fcdff614974c065aaf8511f9... (mismatched commit)
                 // vs normal: c914c3f0fed335263e5b44062e6c29b4... (normal commits)
                 if root_area.starts_with(&[0xfa, 0x70, 0xf9, 0x13]) {
-                    return true; // This is the mismatched commit data  
+                    return true; // This is the mismatched commit data
                 }
             }
         }

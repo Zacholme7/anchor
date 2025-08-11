@@ -1,14 +1,16 @@
 use super::adapters::spec_types::SpecTestCommitteeMember;
+use crate::types::TestSignedSSVMessage;
+use crate::utils::deserializers::{deserialize_base64, deserialize_base64_option, deserialize_hex};
 use crate::{QbftSpecTestType, SpecTest, SpecTestType};
 use serde::Deserialize;
-use ssv_types::message::SignedSSVMessage;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MessageProcessingState {
     #[serde(rename = "CommitteeMember")]
     pub committee_member: SpecTestCommitteeMember,
     #[serde(rename = "ID")]
-    pub id: String,
+    #[serde(deserialize_with = "deserialize_base64")]
+    pub id: Vec<u8>,
     #[serde(rename = "Round")]
     pub round: u64,
     #[serde(rename = "Height")]
@@ -16,12 +18,14 @@ pub struct MessageProcessingState {
     #[serde(rename = "LastPreparedRound")]
     pub last_prepared_round: u64,
     #[serde(rename = "LastPreparedValue")]
+    #[serde(deserialize_with = "deserialize_base64_option")]
     pub last_prepared_value: Option<Vec<u8>>,
     #[serde(rename = "ProposalAcceptedForCurrentRound")]
     pub proposal_accepted_for_current_round: Option<AcceptedProposal>,
     #[serde(rename = "Decided")]
     pub decided: bool,
     #[serde(rename = "DecidedValue")]
+    #[serde(deserialize_with = "deserialize_base64_option")]
     pub decided_value: Option<Vec<u8>>,
     #[serde(rename = "ProposeContainer")]
     pub propose_container: MessageContainer,
@@ -36,7 +40,7 @@ pub struct MessageProcessingState {
 #[derive(Debug, Clone, Deserialize)]
 pub struct AcceptedProposal {
     #[serde(rename = "SignedMessage")]
-    pub signed_message: SignedSSVMessage,
+    pub signed_message: TestSignedSSVMessage,
     #[serde(rename = "QBFTMessage")]
     pub qbft_message: QbftMessageData,
 }
@@ -50,8 +54,10 @@ pub struct QbftMessageData {
     #[serde(rename = "Round")]
     pub round: u64,
     #[serde(rename = "Identifier")]
-    pub identifier: String,
+    #[serde(deserialize_with = "deserialize_base64")]
+    pub identifier: Vec<u8>,
     #[serde(rename = "Root")]
+    #[serde(deserialize_with = "deserialize_hex")]
     pub root: Vec<u8>,
     #[serde(rename = "DataRound")]
     pub data_round: u64,
@@ -64,7 +70,7 @@ pub struct QbftMessageData {
 #[derive(Debug, Clone, Deserialize)]
 pub struct MessageContainer {
     #[serde(rename = "Msgs")]
-    pub msgs: std::collections::HashMap<String, SignedSSVMessage>,
+    pub msgs: std::collections::HashMap<String, TestSignedSSVMessage>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -75,7 +81,8 @@ pub struct MessageProcessingPre {
     #[serde(rename = "State")]
     pub state: MessageProcessingState,
     #[serde(rename = "StartValue")]
-    pub start_value: String,
+    #[serde(deserialize_with = "deserialize_base64")]
+    pub start_value: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -97,11 +104,12 @@ pub struct MessageProcessingTest {
     #[serde(rename = "Pre")]
     pub pre: MessageProcessingPre,
     #[serde(rename = "InputMessages")]
-    pub input_messages: Vec<SignedSSVMessage>,
+    pub input_messages: Vec<TestSignedSSVMessage>,
     #[serde(rename = "OutputMessages")]
-    pub output_messages: Option<Vec<SignedSSVMessage>>,
+    pub output_messages: Option<Vec<TestSignedSSVMessage>>,
     #[serde(rename = "PostRoot")]
-    pub post_root: Option<String>,
+    #[serde(deserialize_with = "deserialize_base64_option")]
+    pub post_root: Option<Vec<u8>>,
     #[serde(rename = "ExpectedError")]
     pub expected_error: String,
     #[serde(rename = "ExpectedTimerState")]

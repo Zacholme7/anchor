@@ -48,9 +48,14 @@ impl SpecTest for RoundRobinTest {
         let committee_ids: Vec<OperatorId> = self
             .share
             .committee
-            .iter()
-            .map(|member| OperatorId::from(member.operator_id))
-            .collect();
+            .as_ref()
+            .map(|committee| {
+                committee
+                    .iter()
+                    .map(|member| OperatorId::from(member.operator_id))
+                    .collect()
+            })
+            .unwrap_or_default();
 
         for i in 0..self.heights.len() {
             let height = self.heights[i];
