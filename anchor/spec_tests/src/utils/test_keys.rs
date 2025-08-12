@@ -58,6 +58,11 @@ impl TestKeySet {
             ]),
         }
     }
+    
+    /// Get the public key for an operator (extracted from their private key)
+    pub fn get_operator_public_key(&self, operator_id: OperatorId) -> Option<Rsa<Private>> {
+        self.operator_keys.get(&operator_id).cloned()
+    }
 }
 
 pub fn secret_key_from_hex(hex: &str) -> SecretKey {

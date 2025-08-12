@@ -9,9 +9,9 @@ use serde::Deserialize;
 use ssv_types::consensus::{QbftMessage, QbftMessageType};
 use ssv_types::message::SignedSSVMessage;
 use ssz::Decode;
+use std::cell::RefCell;
 use tree_hash::TreeHash;
 use types::Hash256;
-use std::cell::RefCell;
 
 #[derive(Deserialize)]
 pub struct CreateMessageTest {
@@ -115,7 +115,7 @@ impl SpecTest for CreateMessageTest {
             round: self.round.map(|r| ssv_types::Round::from(r)),
         };
         let mut adapter = QbftAdapter::new_with_state(starting_state);
-        
+
         // For RoundChange messages with prepare justifications AND StateValue, set up the state
         // Go sets LastPreparedValue = test.StateValue, so if StateValue is null, LastPreparedValue is null
         if self.msg_type == ssv_types::consensus::QbftMessageType::RoundChange {
@@ -127,27 +127,20 @@ impl SpecTest for CreateMessageTest {
                         .iter()
                         .filter_map(|msg| msg.clone().try_into().ok())
                         .collect();
-                    
+
                     // Setup prepare justifications with StateValue
                     let state_value = self.value.as_ref().map(|v| v.as_slice());
-                    if let Err(e) = adapter.setup_prepare_justifications(&prepare_msgs, state_value) {
-                        println!("Failed to setup prepare justifications: {}", e);
-                    }
+                    // If setup fails, it will be caught when the test runs
+                    let _ = adapter.setup_prepare_justifications(&prepare_msgs, state_value);
                 }
                 // If StateValue is null, don't setup (LastPreparedValue remains null)
             }
         }
-        
+
         self.qbft_adapter = RefCell::new(Some(adapter));
     }
 
     fn run(&self) -> bool {
-        println!("Running test: {}", self.name);
-        println!("  CreateType: {:?}", self.msg_type);
-        println!("  Round: {:?}", self.round);
-        println!("  ExpectedRoot: {}", self.expected_root);
-        println!("  ExpectedError: '{}'", self.expected_error);
-
         if let Some(mut adapter) = self.qbft_adapter.borrow_mut().take() {
             // Convert TestSignedSSVMessage to SignedSSVMessage
             let rc_justifications = self.round_change_justifications.as_ref().map(|msgs| {
@@ -155,11 +148,12 @@ impl SpecTest for CreateMessageTest {
                     .filter_map(|msg| msg.clone().try_into().ok())
                     .collect()
             });
-            let prep_justifications: Option<Vec<SignedSSVMessage>> = self.prepare_justifications.as_ref().map(|msgs| {
-                msgs.iter()
-                    .filter_map(|msg| msg.clone().try_into().ok())
-                    .collect()
-            });
+            let prep_justifications: Option<Vec<SignedSSVMessage>> =
+                self.prepare_justifications.as_ref().map(|msgs| {
+                    msgs.iter()
+                        .filter_map(|msg| msg.clone().try_into().ok())
+                        .collect()
+                });
 
             // Use the Value field as raw data (matches Go)
             // The adapter will hash it to get the root
@@ -174,79 +168,46 @@ impl SpecTest for CreateMessageTest {
                 self.round
             };
 
-            println!("  Calling create_message with:");
-            println!("    msg_type: {:?}", self.msg_type);
-            println!("    data_bytes len: {}", data_bytes.len());
-            println!("    round_param: {:?}", round_param);
-            println!(
-                "    rc_justifications: {} msgs",
-                rc_justifications
-                    .as_ref()
-                    .map(|j: &Vec<_>| j.len())
-                    .unwrap_or(0)
-            );
-            println!(
-                "    prep_justifications: {} msgs",
-                prep_justifications
-                    .as_ref()
-                    .map(|j: &Vec<_>| j.len())
-                    .unwrap_or(0)
-            );
-
-            
             // For RoundChange: only pass prepare justifications if we have StateValue AND quorum
             // Go's getRoundChangeJustification returns nil if no LastPreparedValue (which comes from StateValue)
-            let prep_justifications_to_pass = if self.msg_type == ssv_types::consensus::QbftMessageType::RoundChange {
-                // First check if we have StateValue
-                if self.value.is_some() {
-                    // Now check for quorum
-                    if let Some(ref preps) = prep_justifications {
-                        // Count unique signers to check quorum
-                        let mut unique_signers = std::collections::HashSet::new();
-                        for msg in preps {
-                            for op_id in msg.operator_ids() {
-                                unique_signers.insert(*op_id);
+            let prep_justifications_to_pass =
+                if self.msg_type == ssv_types::consensus::QbftMessageType::RoundChange {
+                    // First check if we have StateValue
+                    if self.value.is_some() {
+                        // Now check for quorum
+                        if let Some(ref preps) = prep_justifications {
+                            if has_quorum(preps) {
+                                // Have StateValue AND quorum, include justifications
+                                prep_justifications
+                            } else {
+                                // Have StateValue but no quorum, don't include justifications
+                                None
                             }
-                        }
-                        // For 4-node committee, quorum is 3
-                        if unique_signers.len() >= 3 {
-                            // Have StateValue AND quorum, include justifications
-                            prep_justifications
                         } else {
-                            // Have StateValue but no quorum, don't include justifications
                             None
                         }
                     } else {
+                        // No StateValue, never include justifications
                         None
                     }
                 } else {
-                    // No StateValue, never include justifications
-                    None
-                }
-            } else {
-                // For other message types, pass as-is
-                prep_justifications
-            };
-            
-            let signed_ssv_message = match adapter.create_message(
-                self.msg_type,
-                data_bytes,
-                &rc_justifications,
-                &prep_justifications_to_pass,
-                round_param,
-            ) {
-                Ok(msg) => msg,
-                Err(_e) => {
-                    // check the expected errors
-                    todo!()
-                }
-            };
+                    // For other message types, pass as-is
+                    prep_justifications
+                };
+
+            let signed_ssv_message = adapter
+                .create_message(
+                    self.msg_type,
+                    data_bytes,
+                    &rc_justifications,
+                    &prep_justifications_to_pass,
+                    round_param,
+                )
+                .expect("create_message should not fail for valid test cases");
 
             // compare the roots
             let root = signed_ssv_message.tree_hash_root();
-            println!("  Actual root: {}", root);
             if root != self.expected_root {
-                println!("  ROOT MISMATCH!");
                 return false;
             }
 
@@ -262,12 +223,12 @@ impl SpecTest for CreateMessageTest {
                 return false;
             };
 
-            // todo!() we dont have this
+            // TODO: QbftMessage validation is not implemented in our types yet
             //if qbft_message.validate().is_err() {
             //    return false;
             //}
 
-            // State comparison: todo!()
+            // State comparison is not needed for create message tests
             return true;
         }
         false
@@ -276,4 +237,16 @@ impl SpecTest for CreateMessageTest {
     fn test_type() -> SpecTestType {
         SpecTestType::Qbft(QbftSpecTestType::CreateMessage)
     }
+}
+
+/// Check if a set of messages has quorum (3 out of 4 for test committee)
+fn has_quorum(messages: &[SignedSSVMessage]) -> bool {
+    let mut unique_signers = std::collections::HashSet::new();
+    for msg in messages {
+        for op_id in msg.operator_ids() {
+            unique_signers.insert(*op_id);
+        }
+    }
+    // For 4-node committee, quorum is 3
+    unique_signers.len() >= 3
 }

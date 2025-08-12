@@ -1227,4 +1227,34 @@ where
             round,
         )
     }
+
+    /// Helper for spec tests to add messages directly to containers
+    pub fn add_message_to_container_spec(&mut self, msg: &WrappedQbftMessage) {
+        let round = Round::from(msg.qbft_message.round);
+        
+        for operator_id in msg.signed_message.operator_ids() {
+            match msg.qbft_message.qbft_message_type {
+                QbftMessageType::Proposal => self.propose_container.add_message(round, *operator_id, msg),
+                QbftMessageType::Prepare => self.prepare_container.add_message(round, *operator_id, msg),
+                QbftMessageType::Commit => self.commit_container.add_message(round, *operator_id, msg),
+                QbftMessageType::RoundChange => self.round_change_container.add_message(round, *operator_id, msg),
+            };
+        }
+    }
+
+    /// Helper for spec tests to check if instance is decided
+    pub fn is_decided_spec(&self) -> bool {
+        matches!(self.state, InstanceState::Complete)
+    }
+
+    /// Helper function for spec tests to set proposal accepted state
+    pub fn set_proposal_accepted_spec(&mut self, accepted: bool, root: Option<D::Hash>) {
+        self.proposal_accepted_for_current_round = accepted;
+        self.proposal_root = root;
+    }
+
+    /// Helper function for spec tests to set instance state
+    pub fn set_state_spec(&mut self, state: InstanceState) {
+        self.state = state;
+    }
 }
