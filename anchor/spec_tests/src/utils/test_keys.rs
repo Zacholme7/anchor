@@ -1,8 +1,14 @@
 use std::{collections::HashMap, str::FromStr, sync::LazyLock};
 
 use hex::FromHex;
-use openssl::{pkey::Private, rsa::Rsa};
-use ssv_types::OperatorId;
+use openssl::{
+    hash::MessageDigest,
+    pkey::{PKey, Private},
+    rsa::Rsa,
+    sign::Verifier,
+};
+use ssv_types::{OperatorId, message::SignedSSVMessage};
+use ssz::Encode;
 use types::{PublicKeyBytes, SecretKey};
 
 // Reimplementation of required testing infrastruture
@@ -62,6 +68,53 @@ impl TestKeySet {
     /// Get the public key for an operator (extracted from their private key)
     pub fn get_operator_public_key(&self, operator_id: OperatorId) -> Option<Rsa<Private>> {
         self.operator_keys.get(&operator_id).cloned()
+    }
+
+    /// Verify RSA signatures on a list of SignedSSVMessages
+    pub fn verify_signed_messages(&self, messages: &[SignedSSVMessage]) -> Result<(), String> {
+        for (msg_idx, msg) in messages.iter().enumerate() {
+            // Get the message bytes
+            let msg_bytes = msg.ssv_message().as_ssz_bytes();
+
+            // Verify each signature
+            for (sig_idx, (operator_id, signature)) in msg
+                .operator_ids()
+                .iter()
+                .zip(msg.signatures().iter())
+                .enumerate()
+            {
+                // Get the RSA key for this operator
+                let rsa_key = self
+                    .get_operator_public_key(*operator_id)
+                    .ok_or_else(|| format!("No key found for operator {}", operator_id))?;
+
+                // Create a PKey from the RSA key (contains both public and private)
+                let pkey = PKey::from_rsa(rsa_key)
+                    .map_err(|e| format!("Failed to create PKey: {:?}", e))?;
+
+                // Create a verifier with SHA256
+                let mut verifier = Verifier::new(MessageDigest::sha256(), &pkey)
+                    .map_err(|e| format!("Failed to create verifier: {:?}", e))?;
+
+                // Update with the message bytes (verifier will hash internally)
+                verifier
+                    .update(&msg_bytes)
+                    .map_err(|e| format!("Failed to update verifier: {:?}", e))?;
+
+                // Verify the signature
+                let valid = verifier
+                    .verify(signature)
+                    .map_err(|e| format!("Failed to verify signature: {:?}", e))?;
+
+                if !valid {
+                    return Err(format!(
+                        "Invalid signature for message {} from operator {} (sig idx {})",
+                        msg_idx, operator_id, sig_idx
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 }
 

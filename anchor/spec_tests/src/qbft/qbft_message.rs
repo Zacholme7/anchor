@@ -1,59 +1,13 @@
 use crate::utils::deserializers::deserialize_base64_list_option;
+use crate::utils::error_mapping::{
+    map_conversion_error, map_signed_message_error_short, map_ssz_decode_error,
+};
 use crate::{QbftSpecTestType, SpecTest, SpecTestType, types::TestSignedSSVMessage};
 use serde::Deserialize;
 use ssv_types::consensus::QbftMessage;
 use ssv_types::message::{SignedSSVMessage, SignedSSVMessageError};
 use ssz::{Decode, Encode};
 use tree_hash::TreeHash;
-
-/// Maps our internal SignedSSVMessageError to the expected error strings from SSV spec tests
-fn map_error_to_spec_string(error: &SignedSSVMessageError) -> Option<&'static str> {
-    match error {
-        SignedSSVMessageError::NoSigners => Some("no signers"),
-        SignedSSVMessageError::DuplicatedSigner => Some("non unique signer"),
-        SignedSSVMessageError::ZeroSigner => Some("signer ID 0 not allowed"),
-        _ => None,
-    }
-}
-
-/// Maps conversion errors (String) to spec error strings
-fn map_conversion_error_to_spec_string(error: &str) -> Option<&'static str> {
-    if error.contains("NoSigners") {
-        Some("no signers")
-    } else if error.contains("DuplicatedSigner") {
-        Some("non unique signer")
-    } else if error.contains("ZeroSigner") {
-        Some("signer ID 0 not allowed")
-    } else if error.contains("SignersNotSorted") {
-        // This should only happen for actual sorting issues now
-        None
-    } else {
-        None
-    }
-}
-
-/// Maps SSZ decode errors to spec error strings based on test context
-/// These errors occur when trying to decode invalid QBFT messages
-fn map_ssz_error_to_spec_string(test_name: &str, error: &str) -> Option<&'static str> {
-    // Map based on the error type and test context
-    if error.contains("NoMatchingVariant") {
-        // This happens when the message type is invalid
-        Some("message type is invalid")
-    } else if error.contains("InvalidByteLength { len: 0, expected: 8 }") {
-        if test_name.contains("identifier") {
-            Some("message identifier is invalid")
-        } else if test_name.contains("type") {
-            Some("message type is invalid")
-        } else {
-            None
-        }
-    } else if error.contains("InvalidLengthPrefix") {
-        // This is an "incorrect size" error
-        Some("incorrect size")
-    } else {
-        None
-    }
-}
 
 #[derive(Deserialize)]
 pub struct QbftMessageTest {
@@ -75,8 +29,6 @@ pub struct QbftMessageTest {
 }
 
 impl SpecTest for QbftMessageTest {
-    fn setup(&mut self) {}
-
     fn run(&self) -> bool {
         let mut last_error: Option<SignedSSVMessageError> = None;
         let mut conversion_error: Option<String> = None;
@@ -133,11 +85,12 @@ impl SpecTest for QbftMessageTest {
         if !self.expected_error.is_empty() {
             // Test expects an error - check if we have a matching one
             let actual_error_string = if let Some(ref err) = last_error {
-                map_error_to_spec_string(err)
+                // For short form errors in this test type
+                map_signed_message_error_short(err)
             } else if let Some(ref err) = conversion_error {
-                map_conversion_error_to_spec_string(err)
+                map_conversion_error(err)
             } else if let Some(ref err) = ssz_decode_error {
-                map_ssz_error_to_spec_string(&self.name, err)
+                map_ssz_decode_error(&self.name, err)
             } else {
                 // No error was captured - check test name for expected behavior
                 // Some tests pass validation but have invalid data that should be caught

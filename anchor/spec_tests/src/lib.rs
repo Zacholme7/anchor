@@ -47,8 +47,8 @@ impl SpecTestType {
 // required functions allows for a smooth testing process
 trait SpecTest {
     // Setup a runner for the test. This will configure and construct eveything required to
-    // execute the test
-    fn setup(&mut self);
+    // execute the test. Default implementation does nothing.
+    fn setup(&mut self) {}
 
     // Run the test and verify that the output is what we were expecting.
     fn run(&self) -> bool;

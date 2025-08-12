@@ -1,4 +1,5 @@
 use super::adapters::spec_types::SpecTestCommitteeMember;
+use super::common_types::ExpectedTimerState;
 use crate::types::TestSignedSSVMessage;
 use crate::utils::deserializers::{
     deserialize_base64, deserialize_base64_option, deserialize_hex_hash256_option,
@@ -63,21 +64,10 @@ pub struct ExpectedDecidedState {
     pub decided_value: Option<Vec<u8>>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct ExpectedTimerState {
-    #[serde(rename = "Timeouts")]
-    pub timeouts: u64,
-    #[serde(rename = "Round")]
-    pub round: Option<u64>,
-}
-
 impl SpecTest for ControllerTest {
     fn run(&self) -> bool {
+        // TODO: Implement controller test logic
         true
-    }
-
-    fn setup(&mut self) {
-        // No setup needed for controller tests
     }
 
     fn test_type() -> SpecTestType {

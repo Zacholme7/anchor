@@ -1,7 +1,11 @@
+use super::adapters::qbft::QbftAdapter;
 use super::adapters::spec_types::SpecTestCommitteeMember;
+use super::common_types::{AcceptedProposal, ExpectedTimerState, MessageContainer};
 use crate::types::TestSignedSSVMessage;
-use crate::utils::deserializers::{deserialize_base64, deserialize_base64_option, deserialize_hex};
+use crate::utils::deserializers::{deserialize_base64, deserialize_base64_option};
+use crate::utils::test_keys::TestKeySet;
 use crate::{QbftSpecTestType, SpecTest, SpecTestType};
+
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -38,42 +42,6 @@ pub struct MessageProcessingState {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct AcceptedProposal {
-    #[serde(rename = "SignedMessage")]
-    pub signed_message: TestSignedSSVMessage,
-    #[serde(rename = "QBFTMessage")]
-    pub qbft_message: QbftMessageData,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct QbftMessageData {
-    #[serde(rename = "MsgType")]
-    pub msg_type: u64,
-    #[serde(rename = "Height")]
-    pub height: u64,
-    #[serde(rename = "Round")]
-    pub round: u64,
-    #[serde(rename = "Identifier")]
-    #[serde(deserialize_with = "deserialize_base64")]
-    pub identifier: Vec<u8>,
-    #[serde(rename = "Root")]
-    #[serde(deserialize_with = "deserialize_hex")]
-    pub root: Vec<u8>,
-    #[serde(rename = "DataRound")]
-    pub data_round: u64,
-    #[serde(rename = "RoundChangeJustification")]
-    pub round_change_justification: Vec<serde_json::Value>,
-    #[serde(rename = "PrepareJustification")]
-    pub prepare_justification: Vec<serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct MessageContainer {
-    #[serde(rename = "Msgs")]
-    pub msgs: std::collections::HashMap<String, TestSignedSSVMessage>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
 pub struct MessageProcessingPre {
     #[serde(rename = "forceStop")]
     #[serde(default)]
@@ -83,14 +51,6 @@ pub struct MessageProcessingPre {
     #[serde(rename = "StartValue")]
     #[serde(deserialize_with = "deserialize_base64")]
     pub start_value: Vec<u8>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct ExpectedTimerState {
-    #[serde(rename = "Timeouts")]
-    pub timeouts: u64,
-    #[serde(rename = "Round")]
-    pub round: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -117,22 +77,14 @@ pub struct MessageProcessingTest {
 }
 
 impl SpecTest for MessageProcessingTest {
-    fn setup(&mut self) {}
-
     fn run(&self) -> bool {
-        use super::adapters::qbft::QbftAdapter;
-        use crate::utils::test_keys::TestKeySet;
-
         // Get test keys
         let test_keys = TestKeySet::four_share_set();
 
         // Create adapter from Pre state
         let mut adapter = match QbftAdapter::from_message_processing_pre(&self.pre, &test_keys) {
             Ok(a) => a,
-            Err(e) => {
-                println!("Failed to create adapter for {}: {}", self.name, e);
-                return false;
-            }
+            Err(_) => return false,
         };
 
         // Process each input message
@@ -151,23 +103,10 @@ impl SpecTest for MessageProcessingTest {
                 Some(e) if e == self.expected_error => {
                     // Expected error matched
                 }
-                Some(e) => {
-                    println!(
-                        "ERROR: Wrong error for {}: got '{}', expected '{}'",
-                        self.name, e, self.expected_error
-                    );
-                    return false;
-                }
-                None => {
-                    println!(
-                        "ERROR: Expected error '{}' but none occurred for {}",
-                        self.expected_error, self.name
-                    );
-                    return false;
-                }
+                Some(_) => return false,
+                None => return false,
             }
-        } else if let Some(e) = last_error {
-            println!("ERROR: Unexpected error for {}: {}", self.name, e);
+        } else if last_error.is_some() {
             return false;
         }
 
@@ -175,12 +114,6 @@ impl SpecTest for MessageProcessingTest {
         if let Some(expected_msgs) = &self.output_messages {
             let captured = adapter.get_captured_messages();
             if captured.len() != expected_msgs.len() {
-                println!(
-                    "ERROR: Message count mismatch for {}: got {}, expected {}",
-                    self.name,
-                    captured.len(),
-                    expected_msgs.len()
-                );
                 return false;
             }
 

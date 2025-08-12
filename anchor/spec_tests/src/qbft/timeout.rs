@@ -1,17 +1,13 @@
 use super::adapters::qbft::QbftAdapter;
 use super::adapters::spec_types::SpecTestCommitteeMember;
+use super::common_types::{AcceptedProposal, ExpectedTimerState, MessageContainer};
 use crate::types::TestSignedSSVMessage;
 use crate::utils::deserializers::{
     deserialize_base64, deserialize_base64_option, deserialize_hex_hash256,
 };
 use crate::utils::test_keys::TestKeySet;
 use crate::{QbftSpecTestType, SpecTest, SpecTestType};
-use openssl::hash::MessageDigest;
-use openssl::pkey::PKey;
-use openssl::sign::Verifier;
-use serde::{Deserialize, Serialize};
-use ssv_types::message::SignedSSVMessage;
-use ssz::Decode;
+use serde::Deserialize;
 use tree_hash::TreeHash;
 use types::Hash256;
 
@@ -81,33 +77,7 @@ pub struct QbftInstanceState {
     pub round_change_container: MessageContainer,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct AcceptedProposal {
-    #[serde(rename = "SignedMessage")]
-    pub signed_message: TestSignedSSVMessage,
-    #[serde(rename = "QBFTMessage")]
-    pub qbft_message: serde_json::Value, // Raw JSON for now
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct MessageContainer {
-    #[serde(rename = "Msgs")]
-    pub msgs: serde_json::Value, // Raw JSON for now
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct ExpectedTimerState {
-    #[serde(rename = "Timeouts")]
-    pub timeouts: u64,
-    #[serde(rename = "Round")]
-    pub round: u64,
-}
-
 impl SpecTest for TimeoutTest {
-    fn setup(&mut self) {
-        // No setup needed for timeout tests
-    }
-
     fn run(&self) -> bool {
         // Get test keys
         let test_keys = TestKeySet::four_share_set();
@@ -115,10 +85,7 @@ impl SpecTest for TimeoutTest {
         // Create adapter from Pre state
         let mut adapter = match QbftAdapter::from_timeout_pre(&self.pre, &test_keys) {
             Ok(a) => a,
-            Err(e) => {
-                println!("Failed to create adapter for {}: {}", self.name, e);
-                return false;
-            }
+            Err(_) => return false,
         };
 
         // Record initial round
@@ -161,9 +128,11 @@ impl SpecTest for TimeoutTest {
 
         // Check timer state if provided
         if let Some(expected_timer) = &self.expected_timer_state {
-            // Validate the round
-            if new_round != expected_timer.round {
-                return false;
+            // Validate the round if specified
+            if let Some(expected_round) = expected_timer.round {
+                if new_round != expected_round {
+                    return false;
+                }
             }
 
             // Validate the timeout count
@@ -177,7 +146,7 @@ impl SpecTest for TimeoutTest {
         let captured = adapter.get_captured_messages();
 
         // Verify signatures on all captured messages
-        if verify_signed_messages(&captured, &test_keys).is_err() {
+        if test_keys.verify_signed_messages(&captured).is_err() {
             return false;
         }
 
@@ -233,57 +202,4 @@ impl SpecTest for TimeoutTest {
     fn test_type() -> SpecTestType {
         SpecTestType::Qbft(QbftSpecTestType::Timeout)
     }
-}
-
-/// Verify RSA signatures on a list of SignedSSVMessages
-fn verify_signed_messages(
-    messages: &[SignedSSVMessage],
-    test_keys: &crate::utils::test_keys::TestKeySet,
-) -> Result<(), String> {
-    use ssz::Encode;
-
-    for (msg_idx, msg) in messages.iter().enumerate() {
-        // Get the message bytes
-        let msg_bytes = msg.ssv_message().as_ssz_bytes();
-
-        // Verify each signature
-        for (sig_idx, (operator_id, signature)) in msg
-            .operator_ids()
-            .iter()
-            .zip(msg.signatures().iter())
-            .enumerate()
-        {
-            // Get the RSA key for this operator
-            let rsa_key = test_keys
-                .get_operator_public_key(*operator_id)
-                .ok_or_else(|| format!("No key found for operator {}", operator_id))?;
-
-            // Create a PKey from the RSA key (contains both public and private)
-            let pkey =
-                PKey::from_rsa(rsa_key).map_err(|e| format!("Failed to create PKey: {:?}", e))?;
-
-            // Create a verifier with SHA256
-            let mut verifier = Verifier::new(MessageDigest::sha256(), &pkey)
-                .map_err(|e| format!("Failed to create verifier: {:?}", e))?;
-
-            // Update with the message bytes (verifier will hash internally)
-            verifier
-                .update(&msg_bytes)
-                .map_err(|e| format!("Failed to update verifier: {:?}", e))?;
-
-            // Verify the signature
-            let valid = verifier
-                .verify(signature)
-                .map_err(|e| format!("Failed to verify signature: {:?}", e))?;
-
-            if !valid {
-                return Err(format!(
-                    "Invalid signature for message {} from operator {} (sig idx {})",
-                    msg_idx, operator_id, sig_idx
-                ));
-            }
-        }
-    }
-
-    Ok(())
 }

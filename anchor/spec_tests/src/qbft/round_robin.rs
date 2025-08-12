@@ -40,10 +40,6 @@ fn round_robin_proposer(committee: &[OperatorId], height: u64, round: u64) -> Op
 }
 
 impl SpecTest for RoundRobinTest {
-    fn setup(&mut self) {
-        // No-op
-    }
-
     fn run(&self) -> bool {
         let committee_ids: Vec<OperatorId> = self
             .share
