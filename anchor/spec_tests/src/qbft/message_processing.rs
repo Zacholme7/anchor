@@ -120,8 +120,80 @@ impl SpecTest for MessageProcessingTest {
     fn setup(&mut self) {}
 
     fn run(&self) -> bool {
+        use super::adapters::qbft::QbftAdapter;
+        use crate::utils::test_keys::TestKeySet;
+
+        // Get test keys
+        let test_keys = TestKeySet::four_share_set();
+
+        // Create adapter from Pre state
+        let mut adapter = match QbftAdapter::from_message_processing_pre(&self.pre, &test_keys) {
+            Ok(a) => a,
+            Err(e) => {
+                println!("Failed to create adapter for {}: {}", self.name, e);
+                return false;
+            }
+        };
+
+        // Process each input message
+        let mut last_error = None;
+        for msg in &self.input_messages {
+            if let Err(e) = adapter.process_message(msg) {
+                last_error = Some(e);
+                // Don't break - continue processing all messages
+                // Go tests continue processing even after errors
+            }
+        }
+
+        // Check error expectations
+        if !self.expected_error.is_empty() {
+            match last_error {
+                Some(e) if e == self.expected_error => {
+                    // Expected error matched
+                }
+                Some(e) => {
+                    println!(
+                        "ERROR: Wrong error for {}: got '{}', expected '{}'",
+                        self.name, e, self.expected_error
+                    );
+                    return false;
+                }
+                None => {
+                    println!(
+                        "ERROR: Expected error '{}' but none occurred for {}",
+                        self.expected_error, self.name
+                    );
+                    return false;
+                }
+            }
+        } else if let Some(e) = last_error {
+            println!("ERROR: Unexpected error for {}: {}", self.name, e);
+            return false;
+        }
+
+        // Check output messages
+        if let Some(expected_msgs) = &self.output_messages {
+            let captured = adapter.get_captured_messages();
+            if captured.len() != expected_msgs.len() {
+                println!(
+                    "ERROR: Message count mismatch for {}: got {}, expected {}",
+                    self.name,
+                    captured.len(),
+                    expected_msgs.len()
+                );
+                return false;
+            }
+
+            // For now, just check counts - full message validation can be added later
+            // (similar to timeout tests)
+        }
+
+        // TODO: Check timer state if provided
+        // TODO: Check post-state root (same JSON issues as timeout tests)
+
         true
     }
+
     fn test_type() -> SpecTestType {
         SpecTestType::Qbft(QbftSpecTestType::MsgProcessing)
     }
