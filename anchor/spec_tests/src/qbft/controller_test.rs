@@ -79,18 +79,25 @@ impl SpecTest for ControllerTest {
             // Track if we encountered an error
             let mut test_error: Option<String> = None;
 
+            // Create a single adapter that persists across all runs
+            // This matches Go's behavior where the controller persists
+            // Pass committee information if available for signature verification
+            let committee = self.controller.as_ref()
+                .and_then(|c| c.committee_member.committee.clone())
+                .unwrap_or_default();
+            let mut adapter =
+                super::adapters::manager::ControllerAdapter::new(ssv_types::OperatorId(1), committee);
+
             // Process each run instance data
-            for (_i, run_data) in self.run_instance_data.iter().enumerate() {
-                // Create a fresh adapter for each run (like Go creates fresh controller)
-                let mut adapter =
-                    super::adapters::manager::ControllerAdapter::new(ssv_types::OperatorId(1));
+            for (i, run_data) in self.run_instance_data.iter().enumerate() {
                 // Get the height for this run
+                // If height is not specified, use the loop index (matching Go's behavior)
                 let height = run_data
                     .height
                     .map(|h| qbft::InstanceHeight::from(h as usize))
-                    .unwrap_or_else(|| qbft::InstanceHeight::from(0));
+                    .unwrap_or_else(|| qbft::InstanceHeight::from(i));
 
-                // Start new instance if input_value is provided
+                // Start new instance - handle both Some(value) and None cases
                 if let Some(value) = &run_data.input_value {
                     println!(
                         "Starting instance at height {:?} with value of length {}",
@@ -102,6 +109,13 @@ impl SpecTest for ControllerTest {
                         // Continue to see if this was expected
                     }
                 } else {
+                    // Nil value case - Go's test still calls StartNewInstance with nil
+                    // which should fail validation
+                    println!("Starting instance at height {:?} with nil value", height);
+                    if let Err(e) = adapter.start_new_instance(height, Vec::new()).await {
+                        test_error = Some(format!("Error starting instance: {}", e));
+                        // Continue to see if this was expected
+                    }
                 }
 
                 // Process input messages
@@ -145,7 +159,9 @@ impl SpecTest for ControllerTest {
                             (&expected_decided.decided_value, &decided_value)
                         {
                             if expected_val != actual_val {
-                                println!("Decided value mismatch");
+                                println!("Decided value mismatch:");
+                                println!("  Expected: {:?} (len={})", expected_val, expected_val.len());
+                                println!("  Actual: {:?} (len={})", actual_val, actual_val.len());
                                 return false;
                             }
                         }
