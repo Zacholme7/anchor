@@ -7669,10 +7669,13 @@ dependencies = [
 name = "spec_tests"
 version = "0.1.0"
 dependencies = [
+ "async-channel 1.9.0",
  "base64 0.22.1",
  "bls",
+ "database",
  "ethereum_ssz",
  "ethereum_ssz_derive",
+ "futures",
  "hex",
  "indexmap 2.9.0",
  "message_sender",
@@ -7680,6 +7683,7 @@ dependencies = [
  "openssl",
  "operator_key",
  "parking_lot",
+ "processor",
  "qbft",
  "qbft_manager",
  "rand 0.9.1",
@@ -7688,8 +7692,11 @@ dependencies = [
  "sha2 0.10.9",
  "slot_clock",
  "ssv_types",
+ "task_executor",
  "thiserror 2.0.12",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "tree_hash",
  "tree_hash_derive",
  "types",

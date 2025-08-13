@@ -5,7 +5,7 @@ use openssl::rsa::Rsa;
 use openssl::sign::Signer;
 use qbft::{ConfigBuilder, InstanceHeight, InstanceState};
 use qbft::{DefaultLeaderFunction, Qbft, UnsignedWrappedQbftMessage, WrappedQbftMessage};
-use ssv_types::consensus::{BeaconVote, QbftMessage, QbftMessageType, UnsignedSSVMessage};
+use ssv_types::consensus::{QbftMessage, QbftMessageType, UnsignedSSVMessage};
 use ssv_types::message::SignedSSVMessage;
 use ssv_types::msgid::MessageId;
 use ssv_types::{IndexSet, OperatorId, Round};
@@ -13,7 +13,8 @@ use ssz::{Decode, Encode};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use types::{FixedBytesExtended, Hash256};
+use types::{Hash256, Checkpoint};
+use ssv_types::consensus::BeaconVote;
 
 /// State that we want to initialize the qbft instance with
 pub struct QbftStartingState {
@@ -39,6 +40,32 @@ pub struct QbftAdapter {
 }
 
 impl QbftAdapter {
+    /// Create a BeaconVote from test data bytes or hash
+    fn create_beacon_vote_from_bytes(data: &[u8]) -> BeaconVote {
+        use sha2::{Digest, Sha256};
+        
+        // If data is 32 bytes, use it directly as hash, otherwise hash it
+        let hash = if data.len() == 32 {
+            Hash256::from_slice(data)
+        } else {
+            let mut hasher = Sha256::new();
+            hasher.update(data);
+            let hash_bytes: [u8; 32] = hasher.finalize().into();
+            Hash256::from(hash_bytes)
+        };
+        
+        BeaconVote {
+            block_root: hash,
+            source: Checkpoint {
+                epoch: types::Epoch::new(0),
+                root: hash,
+            },
+            target: Checkpoint {
+                epoch: types::Epoch::new(1),
+                root: hash,
+            },
+        }
+    }
     /// Build a QBFT instance with starting state
     pub fn new_with_state(state: QbftStartingState) -> Self {
         let height = state.height.unwrap_or(InstanceHeight::from(0));
@@ -106,17 +133,7 @@ impl QbftAdapter {
 
         let mut instance = Qbft::new(
             config,
-            BeaconVote {
-                block_root: Hash256::zero(),
-                source: types::Checkpoint {
-                    epoch: types::Epoch::new(0),
-                    root: Hash256::zero(),
-                },
-                target: types::Checkpoint {
-                    epoch: types::Epoch::new(0),
-                    root: Hash256::zero(),
-                },
-            },
+            Self::create_beacon_vote_from_bytes(&[]),
             identifier,
             mock_handler,
         );
@@ -186,18 +203,9 @@ impl QbftAdapter {
                 let prepared_value_hash = sha256(state_value);
                 let prepared_value = Hash256::from_slice(&prepared_value_hash);
 
-                // Create a dummy BeaconVote to store as the full data
-                let dummy_vote = BeaconVote {
-                    block_root: prepared_value,
-                    source: types::Checkpoint {
-                        epoch: types::Epoch::new(0),
-                        root: Hash256::zero(),
-                    },
-                    target: types::Checkpoint {
-                        epoch: types::Epoch::new(0),
-                        root: Hash256::zero(),
-                    },
-                };
+                // Create test data to store as the full data
+                let bytes: &[u8] = prepared_value.as_ref();
+                let dummy_vote = Self::create_beacon_vote_from_bytes(bytes);
 
                 // Set last prepared round and value with full data
                 self.instance.set_last_prepared_spec(
@@ -228,17 +236,8 @@ impl QbftAdapter {
             let hash = Hash256::from_slice(&hash_bytes);
 
             // Store dummy data for the proposal
-            let dummy_vote = BeaconVote {
-                block_root: hash,
-                source: types::Checkpoint {
-                    epoch: types::Epoch::new(0),
-                    root: Hash256::zero(),
-                },
-                target: types::Checkpoint {
-                    epoch: types::Epoch::new(0),
-                    root: Hash256::zero(),
-                },
-            };
+            let bytes: &[u8] = hash.as_ref();
+            let dummy_vote = Self::create_beacon_vote_from_bytes(bytes);
             self.instance.store_data_spec(hash, dummy_vote);
 
             // For proposals, full_data is the original data
@@ -486,17 +485,8 @@ impl QbftAdapter {
                 let prepared_value = Hash256::from_slice(&prepared_hash);
 
                 // Create dummy vote for storage
-                let dummy_vote = BeaconVote {
-                    block_root: prepared_value,
-                    source: types::Checkpoint {
-                        epoch: types::Epoch::new(0),
-                        root: Hash256::zero(),
-                    },
-                    target: types::Checkpoint {
-                        epoch: types::Epoch::new(0),
-                        root: Hash256::zero(),
-                    },
-                };
+                let bytes: &[u8] = prepared_value.as_ref();
+                let dummy_vote = Self::create_beacon_vote_from_bytes(bytes);
 
                 adapter.instance.set_last_prepared_spec(
                     Round::from(pre.state.last_prepared_round),
@@ -621,27 +611,9 @@ impl QbftAdapter {
                 .map_err(|e| format!("Failed to decode full_data: {:?}", e))?;
 
             if !raw_data.is_empty() && qbft_message.qbft_message_type == QbftMessageType::Proposal {
-                // For proposals, convert raw data to BeaconVote format
-                // The test data is just raw bytes, but core QBFT expects BeaconVote
-                use openssl::sha::sha256;
-                let hash = sha256(&raw_data);
-                let root = Hash256::from_slice(&hash);
-
-                // Create a BeaconVote that matches what the core expects
-                let beacon_vote = BeaconVote {
-                    block_root: root,
-                    source: types::Checkpoint {
-                        epoch: types::Epoch::new(0),
-                        root: Hash256::zero(),
-                    },
-                    target: types::Checkpoint {
-                        epoch: types::Epoch::new(0),
-                        root: Hash256::zero(),
-                    },
-                };
-
-                // Encode the BeaconVote as SSZ
-                beacon_vote.as_ssz_bytes()
+                // For proposals, use the raw test data directly
+                // Create BeaconVote from test data
+                raw_data.clone()
             } else {
                 // For non-proposals or empty data, keep as is
                 raw_data

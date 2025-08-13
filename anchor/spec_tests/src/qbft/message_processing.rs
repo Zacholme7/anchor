@@ -1,6 +1,7 @@
 use super::adapters::qbft::QbftAdapter;
-use super::adapters::spec_types::SpecTestCommitteeMember;
-use super::common_types::{AcceptedProposal, ExpectedTimerState, MessageContainer};
+use super::adapters::spec_types::{
+    AcceptedProposal, ExpectedTimerState, MessageContainer, SpecTestCommitteeMember,
+};
 use crate::types::TestSignedSSVMessage;
 use crate::utils::deserializers::{deserialize_base64, deserialize_base64_option};
 use crate::utils::test_keys::TestKeySet;
