@@ -1,6 +1,5 @@
 use super::adapters::qbft::*;
-use super::adapters::spec_types::SpecTestCommitteeMember;
-use crate::types::TestSignedSSVMessage;
+use super::adapters::spec_types::{SpecTestCommitteeMember, TestSignedSSVMessage};
 use crate::utils::deserializers::{
     deserialize_base64_option, deserialize_create_type, deserialize_hex, deserialize_hex_hash256,
 };
@@ -8,6 +7,7 @@ use crate::{QbftSpecTestType, SpecTest, SpecTestType};
 use serde::Deserialize;
 use ssv_types::consensus::{QbftMessage, QbftMessageType};
 use ssv_types::message::SignedSSVMessage;
+use ssv_types::msgid::MessageId;
 use ssz::Decode;
 use std::cell::RefCell;
 use tree_hash::TreeHash;
@@ -61,7 +61,7 @@ impl SpecTest for CreateMessageTest {
         // Always use the identifier from JSON (it's always [1,2,3,4,0,0,...])
         let identifier = self.identifier.as_ref().and_then(|bytes| {
             if bytes.len() == 56 {
-                Some(ssv_types::msgid::MessageId::from(
+                Some(MessageId::from(
                     <[u8; 56]>::try_from(bytes.as_slice()).ok()?,
                 ))
             } else {

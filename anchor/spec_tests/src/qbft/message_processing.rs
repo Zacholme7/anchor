@@ -1,8 +1,8 @@
 use super::adapters::qbft::QbftAdapter;
 use super::adapters::spec_types::{
     AcceptedProposal, ExpectedTimerState, MessageContainer, SpecTestCommitteeMember,
+    TestSignedSSVMessage,
 };
-use crate::types::TestSignedSSVMessage;
 use crate::utils::deserializers::{deserialize_base64, deserialize_base64_option};
 use crate::utils::test_keys::TestKeySet;
 use crate::{QbftSpecTestType, SpecTest, SpecTestType};
@@ -85,12 +85,15 @@ impl SpecTest for MessageProcessingTest {
         // Create adapter from Pre state
         let mut adapter = match QbftAdapter::from_message_processing_pre(&self.pre, &test_keys) {
             Ok(a) => a,
-            Err(_) => return false,
+            Err(e) => {
+                eprintln!("FAILED {}: Failed to create adapter: {}", self.name, e);
+                return false;
+            }
         };
 
         // Process each input message
         let mut last_error = None;
-        for msg in &self.input_messages {
+        for (_i, msg) in self.input_messages.iter().enumerate() {
             if let Err(e) = adapter.process_message(msg) {
                 last_error = Some(e);
                 // Don't break - continue processing all messages
@@ -104,10 +107,23 @@ impl SpecTest for MessageProcessingTest {
                 Some(e) if e == self.expected_error => {
                     // Expected error matched
                 }
-                Some(_) => return false,
-                None => return false,
+                Some(e) => {
+                    eprintln!(
+                        "FAILED {}: Expected error '{}', got '{}'",
+                        self.name, self.expected_error, e
+                    );
+                    return false;
+                }
+                None => {
+                    eprintln!(
+                        "FAILED {}: Expected error '{}', got none",
+                        self.name, self.expected_error
+                    );
+                    return false;
+                }
             }
-        } else if last_error.is_some() {
+        } else if let Some(e) = last_error {
+            eprintln!("FAILED {}: Unexpected error: {}", self.name, e);
             return false;
         }
 
@@ -115,6 +131,12 @@ impl SpecTest for MessageProcessingTest {
         if let Some(expected_msgs) = &self.output_messages {
             let captured = adapter.get_captured_messages();
             if captured.len() != expected_msgs.len() {
+                eprintln!(
+                    "FAILED {}: Expected {} output messages, got {}",
+                    self.name,
+                    expected_msgs.len(),
+                    captured.len()
+                );
                 return false;
             }
 

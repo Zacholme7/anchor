@@ -1,8 +1,9 @@
+use crate::adapters::spec_types::TestSignedSSVMessage;
 use crate::utils::deserializers::deserialize_base64_list_option;
 use crate::utils::error_mapping::{
     map_conversion_error, map_signed_message_error_short, map_ssz_decode_error,
 };
-use crate::{QbftSpecTestType, SpecTest, SpecTestType, types::TestSignedSSVMessage};
+use crate::{QbftSpecTestType, SpecTest, SpecTestType};
 use serde::Deserialize;
 use ssv_types::consensus::QbftMessage;
 use ssv_types::message::{SignedSSVMessage, SignedSSVMessageError};
@@ -82,6 +83,7 @@ impl SpecTest for QbftMessageTest {
             }
         }
 
+        // todo!() can we clean this up?
         if !self.expected_error.is_empty() {
             // Test expects an error - check if we have a matching one
             let actual_error_string = if let Some(ref err) = last_error {

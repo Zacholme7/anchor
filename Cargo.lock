@@ -6419,6 +6419,7 @@ dependencies = [
  "indexmap 2.9.0",
  "sha2 0.10.9",
  "ssv_types",
+ "thiserror 2.0.12",
  "tracing",
  "tracing-subscriber",
  "types",

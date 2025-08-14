@@ -1,5 +1,6 @@
-use super::adapters::spec_types::{ExpectedTimerState, SpecTestCommitteeMember};
-use crate::types::TestSignedSSVMessage;
+use super::adapters::spec_types::{
+    ExpectedTimerState, SpecTestCommitteeMember, TestSignedSSVMessage,
+};
 use crate::utils::deserializers::{
     deserialize_base64, deserialize_base64_option, deserialize_hex_hash256_option,
 };
@@ -74,19 +75,21 @@ impl SpecTest for ControllerTest {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
 
         rt.block_on(async {
-            println!("Running controller test: {}", self.name);
-
             // Track if we encountered an error
             let mut test_error: Option<String> = None;
 
             // Create a single adapter that persists across all runs
             // This matches Go's behavior where the controller persists
             // Pass committee information if available for signature verification
-            let committee = self.controller.as_ref()
+            let committee = self
+                .controller
+                .as_ref()
                 .and_then(|c| c.committee_member.committee.clone())
                 .unwrap_or_default();
-            let mut adapter =
-                super::adapters::manager::ControllerAdapter::new(ssv_types::OperatorId(1), committee);
+            let mut adapter = super::adapters::manager::ControllerAdapter::new(
+                ssv_types::OperatorId(1),
+                committee,
+            );
 
             // Process each run instance data
             for (i, run_data) in self.run_instance_data.iter().enumerate() {
@@ -99,11 +102,6 @@ impl SpecTest for ControllerTest {
 
                 // Start new instance - handle both Some(value) and None cases
                 if let Some(value) = &run_data.input_value {
-                    println!(
-                        "Starting instance at height {:?} with value of length {}",
-                        height,
-                        value.len()
-                    );
                     if let Err(e) = adapter.start_new_instance(height, value.clone()).await {
                         test_error = Some(format!("Error starting instance: {}", e));
                         // Continue to see if this was expected
@@ -111,7 +109,6 @@ impl SpecTest for ControllerTest {
                 } else {
                     // Nil value case - Go's test still calls StartNewInstance with nil
                     // which should fail validation
-                    println!("Starting instance at height {:?} with nil value", height);
                     if let Err(e) = adapter.start_new_instance(height, Vec::new()).await {
                         test_error = Some(format!("Error starting instance: {}", e));
                         // Continue to see if this was expected
@@ -123,16 +120,13 @@ impl SpecTest for ControllerTest {
                     let mut decided_count = 0;
                     let mut decided_value: Option<Vec<u8>> = None;
 
-                    for (i, msg) in messages.iter().enumerate() {
-                        println!("Processing message {}", i);
+                    for (_i, msg) in messages.iter().enumerate() {
                         match adapter.process_msg(msg).await {
                             Ok(Some(decided)) => {
-                                println!("Message {} returned decision", i);
                                 decided_count += 1;
                                 decided_value = Some(decided);
                             }
                             Ok(None) => {
-                                println!("Message {} processed, no decision", i);
                                 // Message processed but not decided yet
                             }
                             Err(e) => {
@@ -148,10 +142,6 @@ impl SpecTest for ControllerTest {
                     // Verify decided state if expected
                     if let Some(expected_decided) = &run_data.expected_decided_state {
                         if expected_decided.decided_count != decided_count as u64 {
-                            println!(
-                                "Decided count mismatch: expected {}, got {}",
-                                expected_decided.decided_count, decided_count
-                            );
                             return false;
                         }
 
@@ -159,9 +149,6 @@ impl SpecTest for ControllerTest {
                             (&expected_decided.decided_value, &decided_value)
                         {
                             if expected_val != actual_val {
-                                println!("Decided value mismatch:");
-                                println!("  Expected: {:?} (len={})", expected_val, expected_val.len());
-                                println!("  Actual: {:?} (len={})", actual_val, actual_val.len());
                                 return false;
                             }
                         }
@@ -175,15 +162,10 @@ impl SpecTest for ControllerTest {
             if !self.expected_error.is_empty() {
                 // We expect an error
                 if test_error.is_none() {
-                    println!("Expected error '{}' but got none", self.expected_error);
                     return false;
                 }
-                // For now, just check that we got some error
-                // TODO: Verify the error message matches expected
-                println!("Got expected error: {:?}", test_error);
-            } else if let Some(err) = test_error {
+            } else if let Some(_err) = test_error {
                 // We don't expect an error but got one
-                println!("Unexpected error: {}", err);
                 return false;
             }
 

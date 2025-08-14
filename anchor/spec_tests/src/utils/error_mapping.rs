@@ -1,4 +1,79 @@
+use qbft::QbftError;
 use ssv_types::message::SignedSSVMessageError;
+
+/// Maps QbftError to spec test error strings
+pub fn map_qbft_error(error: &QbftError) -> String {
+    match error {
+        // Message validation errors
+        QbftError::InvalidSignature => "invalid signed message: invalid signature".to_string(),
+        QbftError::SignerNotInCommittee => "invalid signed message: signer not in committee".to_string(),
+        QbftError::DuplicateSigners => "invalid signed message: duplicate signers".to_string(),
+        QbftError::WrongHeight => "invalid signed message: wrong msg height".to_string(),
+        QbftError::WrongRound => "invalid signed message: wrong msg round".to_string(),
+        QbftError::PastRound => "invalid signed message: past round".to_string(),
+        QbftError::InvalidMessageType => "invalid signed message: invalid message type".to_string(),
+        QbftError::InvalidFullData => "invalid signed message: H(data) != root".to_string(),
+
+        // Proposal specific
+        QbftError::ProposalNotFromLeader => "invalid signed message: proposal leader invalid".to_string(),
+        QbftError::ProposalAlreadyReceived => "invalid signed message: proposal already received".to_string(),
+        QbftError::ProposalMissingData => "invalid signed message: proposal missing data".to_string(),
+
+        // Round change justifications
+        QbftError::RoundChangeJustificationNoQuorum =>
+            "invalid signed message: proposal not justified: change round has no quorum".to_string(),
+        QbftError::RoundChangeJustificationWrongRound =>
+            "invalid signed message: round change justification invalid: wrong msg round".to_string(),
+        QbftError::RoundChangeJustificationInvalidMessage =>
+            "invalid signed message: round change justification invalid: invalid message".to_string(),
+        QbftError::RoundChangeJustificationDecodeFailed =>
+            "invalid signed message: round change justification invalid: decode failed".to_string(),
+        QbftError::RoundChangeJustificationNotRoundChange =>
+            "invalid signed message: round change justification invalid: not a round change".to_string(),
+        QbftError::RoundChangeJustificationValidationFailed =>
+            "invalid signed message: round change justification invalid: msg signature invalid: crypto/rsa: verification error".to_string(),
+        QbftError::RoundChangeJustificationInvalidSignature =>
+            "invalid signed message: round change justification invalid: msg signature invalid: crypto/rsa: verification error".to_string(),
+        QbftError::RoundChangeJustificationDuplicateMsg =>
+            "invalid signed message: no justifications quorum".to_string(),
+
+        // Prepare justifications
+        QbftError::PrepareJustificationNotEnough =>
+            "invalid signed message: proposal not justified: change round msg not valid: no justifications quorum".to_string(),
+        QbftError::PrepareJustificationWrongRound =>
+            "invalid signed message: proposal not justified: change round msg not valid: round change justification invalid: wrong msg round".to_string(),
+        QbftError::PrepareJustificationValueMismatch =>
+            "invalid signed message: proposal not justified: signed prepare not valid".to_string(),
+        QbftError::PrepareJustificationDecodeFailed =>
+            "invalid signed message: prepare justification invalid: decode failed".to_string(),
+        QbftError::PrepareJustificationNotPrepare =>
+            "invalid signed message: prepare justification invalid: not a prepare".to_string(),
+        QbftError::PrepareJustificationValidationFailed =>
+            "invalid signed message: prepare justification invalid: validation failed".to_string(),
+        QbftError::PrepareJustificationRootMismatch =>
+            "invalid signed message: proposal not justified: change round msg not valid: round change justification invalid: proposed data mismatch".to_string(),
+        QbftError::PrepareJustificationInvalidValue =>
+            "invalid signed message: proposal not justified: change round msg not valid: round change justification invalid: proposed data mismatch".to_string(),
+        QbftError::ProposalInvalidValue =>
+            "invalid signed message: proposal not justified: proposal fullData invalid: invalid value".to_string(),
+
+        // State errors
+        QbftError::InstanceAlreadyDecided => "instance already decided".to_string(),
+        QbftError::InvalidState => "invalid signed message: proposal is not valid with current state".to_string(),
+        QbftError::NoProposalAccepted => "invalid signed message: did not receive proposal for this round".to_string(),
+        QbftError::NotPreparedYet => "invalid signed message: did not prepare yet".to_string(),
+        QbftError::ProposedDataMismatch => "invalid signed message: proposed data mismatch".to_string(),
+
+        // Message format errors
+        QbftError::NoSigners => "invalid signed message: no signers".to_string(),
+        QbftError::MultipleSignersNotAllowed => "invalid signed message: msg allows 1 signer".to_string(),
+
+        // Other
+        QbftError::ForceStopped => "instance stopped processing messages".to_string(),
+        QbftError::RoundCutoff => "instance stopped processing messages".to_string(),
+        QbftError::Unknown(msg) => msg.clone(),
+    }
+}
 
 /// Maps our internal SignedSSVMessageError to the expected error strings from Go spec tests
 pub fn map_signed_message_error(error: &SignedSSVMessageError) -> String {
@@ -65,24 +140,4 @@ pub fn map_ssz_decode_error(test_name: &str, error: &str) -> Option<&'static str
     } else {
         None
     }
-}
-
-/// Standard QBFT validation error messages that match Go implementation
-pub mod qbft_errors {
-    pub const INSTANCE_STOPPED: &str = "instance stopped processing messages";
-    pub const PAST_ROUND: &str = "invalid signed message: past round";
-    pub const WRONG_HEIGHT: &str = "invalid signed message: wrong msg height";
-    pub const SIGNER_NOT_IN_COMMITTEE: &str = "invalid signed message: signer not in committee";
-    pub const MSG_ALLOWS_ONE_SIGNER: &str = "invalid signed message: msg allows 1 signer";
-    pub const NO_SIGNERS: &str = "invalid signed message: no signers";
-    pub const PROPOSAL_LEADER_INVALID: &str = "invalid signed message: proposal leader invalid";
-    pub const PROPOSAL_NOT_VALID_STATE: &str =
-        "invalid signed message: proposal is not valid with current state";
-    pub const PROPOSAL_NOT_JUSTIFIED_NO_QUORUM: &str = "invalid signed message: proposal not justified: change round msg not valid: no justifications quorum";
-    pub const PROPOSAL_NOT_JUSTIFIED_NO_RC_QUORUM: &str =
-        "invalid signed message: proposal not justified: change round has no quorum";
-    pub const DID_NOT_RECEIVE_PROPOSAL: &str =
-        "invalid signed message: did not receive proposal for this round";
-    pub const DID_NOT_PREPARE_YET: &str = "invalid signed message: did not prepare yet";
-    pub const PROPOSED_DATA_MISMATCH: &str = "invalid signed message: proposed data mismatch";
 }
