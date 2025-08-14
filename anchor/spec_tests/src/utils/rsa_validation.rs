@@ -24,7 +24,11 @@ pub fn validate_rsa_signatures(
     // Validate round change justification signatures only
     for rc_bytes in &wrapped.qbft_message.round_change_justification {
         let rc_msg = SignedSSVMessage::from_ssz_bytes(rc_bytes).map_err(|_| {
-            "invalid signed message: round change justification invalid: decode failed".to_string()
+            if msg_type == QbftMessageType::Proposal {
+                "invalid signed message: proposal not justified: change round msg not valid: decode failed".to_string()
+            } else {
+                "invalid signed message: round change justification invalid: decode failed".to_string()
+            }
         })?;
 
         // Only check RSA signatures - let core handle all protocol validation
@@ -42,7 +46,12 @@ pub fn validate_rsa_signatures(
                 &sig_array,
                 test_keys,
             ) {
-                return Err("invalid signed message: round change justification invalid: msg signature invalid: crypto/rsa: verification error".to_string());
+                // Different error messages based on parent message type
+                if msg_type == QbftMessageType::Proposal {
+                    return Err("invalid signed message: proposal not justified: change round msg not valid: msg signature invalid: crypto/rsa: verification error".to_string());
+                } else {
+                    return Err("invalid signed message: round change justification invalid: msg signature invalid: crypto/rsa: verification error".to_string());
+                }
             }
         }
     }

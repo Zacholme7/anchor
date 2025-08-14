@@ -33,9 +33,15 @@ pub fn map_qbft_error(error: &QbftError) -> String {
         QbftError::RoundChangeJustificationValidationFailed =>
             "invalid signed message: round change justification invalid: msg signature invalid: crypto/rsa: verification error".to_string(),
         QbftError::RoundChangeJustificationInvalidSignature =>
-            "invalid signed message: round change justification invalid: msg signature invalid: crypto/rsa: verification error".to_string(),
+            "invalid signed message: proposal not justified: change round msg not valid: msg signature invalid: crypto/rsa: verification error".to_string(),
         QbftError::RoundChangeJustificationDuplicateMsg =>
+            "invalid signed message: proposal not justified: change round has no quorum".to_string(),
+        QbftError::RoundChangeJustificationInvalidPrepares =>
+            "invalid signed message: proposal not justified: change round msg not valid: no justifications quorum".to_string(),
+        QbftError::StandaloneRoundChangeNoQuorum =>
             "invalid signed message: no justifications quorum".to_string(),
+        QbftError::RoundChangeJustificationMultiSigner =>
+            "invalid signed message: round change justification invalid: msg allows 1 signer".to_string(),
 
         // Prepare justifications
         QbftError::PrepareJustificationNotEnough =>
@@ -49,7 +55,7 @@ pub fn map_qbft_error(error: &QbftError) -> String {
         QbftError::PrepareJustificationNotPrepare =>
             "invalid signed message: prepare justification invalid: not a prepare".to_string(),
         QbftError::PrepareJustificationValidationFailed =>
-            "invalid signed message: prepare justification invalid: validation failed".to_string(),
+            "invalid signed message: proposal not justified: signed prepare not valid".to_string(),
         QbftError::PrepareJustificationRootMismatch =>
             "invalid signed message: proposal not justified: change round msg not valid: round change justification invalid: proposed data mismatch".to_string(),
         QbftError::PrepareJustificationInvalidValue =>
