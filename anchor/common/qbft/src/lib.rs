@@ -1841,7 +1841,9 @@ where
                     return Err(QbftError::ProposalAlreadyReceived);
                 }
 
-                if self.proposal_accepted_for_current_round {
+                // Only reject if we've already accepted a proposal for THIS round
+                // Allow proposals for future rounds even if we have a proposal for current round
+                if self.proposal_accepted_for_current_round && msg_round == self.current_round {
                     return Err(QbftError::InvalidState);
                 }
 

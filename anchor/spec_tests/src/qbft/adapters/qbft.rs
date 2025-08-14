@@ -423,27 +423,26 @@ impl QbftAdapter {
     pub fn process_message(&mut self, msg: &TestSignedSSVMessage) -> Result<(), String> {
         // Check if instance is already decided
         if self.instance.is_decided_spec() {
-            // For post-decided tests, when we receive certain messages (Proposal, Prepare),
-            // we should respond with a decided (commit) message
-            // This matches Go behavior where decided nodes inform others
+            // For post-decided tests, proposals should return an error
+            // Other messages may trigger a decided response
             if let Some(ref ssv_msg) = msg.ssv_message {
                 if let Ok(qbft_msg) = QbftMessage::from_ssz_bytes(ssv_msg.data()) {
                     match qbft_msg.qbft_message_type {
-                        QbftMessageType::Proposal | QbftMessageType::Prepare => {
-                            // Only send aggregated commit if we have one
-                            // Don't create a new commit message - we've already sent our individual commit
+                        QbftMessageType::Proposal => {
+                            // Proposals after decided should return an error
+                            return Err("invalid signed message: proposal is not valid with current state".to_string());
+                        }
+                        QbftMessageType::Prepare => {
+                            // For prepare messages, send aggregated commit if we have one
                             if let Some(decided_msg) = self.instance.get_aggregated_commit() {
-                                // If we have a real aggregated commit, use it
                                 self.captured_messages.borrow_mut().push(decided_msg);
                             }
-                            // Note: We don't create a new commit here because we've already
-                            // sent our commit when we reached prepare quorum
                         }
                         _ => {}
                     }
                 }
             }
-            // No error - message is ignored after potentially sending decided
+            // Non-proposal messages are silently ignored after decided
             return Ok(());
         }
 
