@@ -430,26 +430,14 @@ impl QbftAdapter {
                 if let Ok(qbft_msg) = QbftMessage::from_ssz_bytes(ssv_msg.data()) {
                     match qbft_msg.qbft_message_type {
                         QbftMessageType::Proposal | QbftMessageType::Prepare => {
-                            // Create and send a decided message
-                            // Get the decided value from the instance state
+                            // Only send aggregated commit if we have one
+                            // Don't create a new commit message - we've already sent our individual commit
                             if let Some(decided_msg) = self.instance.get_aggregated_commit() {
                                 // If we have a real aggregated commit, use it
                                 self.captured_messages.borrow_mut().push(decided_msg);
-                            } else {
-                                // Otherwise create a simple commit message for the test
-                                // This handles the case where we started in decided state
-                                // The test expects us to send a commit message
-                                let commit_data = self.create_message(
-                                    QbftMessageType::Commit,
-                                    &[],   // Commit uses empty data
-                                    &None, // No justifications
-                                    &None,
-                                    None, // Current round
-                                );
-                                if let Ok(commit_msg) = commit_data {
-                                    self.captured_messages.borrow_mut().push(commit_msg);
-                                }
                             }
+                            // Note: We don't create a new commit here because we've already
+                            // sent our commit when we reached prepare quorum
                         }
                         _ => {}
                     }
