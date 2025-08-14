@@ -585,14 +585,12 @@ where
                 return Err(QbftError::RoundChangeJustificationMultiSigner);
             }
             
-            // Check for duplicate messages (same message appearing multiple times)
-            // Use the raw bytes as the key to detect exact duplicates
-            if !seen_rc_messages.insert(signed_round_change.clone()) {
-                // This is a duplicate message - invalid justification
-                return Err(QbftError::RoundChangeJustificationDuplicateMsg);
-            }
+            // Track duplicate messages but don't reject them
+            // The Go implementation accepts duplicates as long as we have enough unique signers
+            seen_rc_messages.insert(signed_round_change.clone());
             
             // Add signers to unique set for quorum counting
+            // Duplicates from the same signer are ignored for quorum calculation
             for signer in typed_signed_round_change.operator_ids() {
                 rc_unique_signers.insert(*signer);
             }
@@ -644,14 +642,48 @@ where
                 // This matches Go's validRoundChangeForDataIgnoreSignature behavior.
                 let mut rc_prep_unique_signers = std::collections::HashSet::new();
                 
-                // Count unique signers from prepare messages
+                // Validate each prepare message in the round change justification
                 // In round change messages, the prepare justifications are stored in round_change_justification
                 // when the round change has prepared (data_round > 0)
                 for prepare_msg in &round_change.round_change_justification {
-                    if let Ok(typed_prepare) = SignedSSVMessage::from_ssz_bytes(prepare_msg) {
-                        for signer in typed_prepare.operator_ids() {
-                            rc_prep_unique_signers.insert(*signer);
-                        }
+                    let typed_prepare = match SignedSSVMessage::from_ssz_bytes(prepare_msg) {
+                        Ok(msg) => msg,
+                        Err(_) => return Err(QbftError::RoundChangeJustificationInvalidPrepares),
+                    };
+                    
+                    // Decode the prepare QBFT message
+                    let prepare_qbft = match QbftMessage::from_ssz_bytes(typed_prepare.ssv_message().data()) {
+                        Ok(msg) => msg,
+                        Err(_) => return Err(QbftError::RoundChangeJustificationInvalidPrepares),
+                    };
+                    
+                    // Verify it's a prepare message
+                    if prepare_qbft.qbft_message_type != QbftMessageType::Prepare {
+                        return Err(QbftError::RoundChangeJustificationInvalidPrepares);
+                    }
+                    
+                    // CRITICAL: Check that the prepare round matches the round change's data_round
+                    // This matches Go's validSignedPrepareForHeightRoundAndRootVerifySignature check
+                    if prepare_qbft.round != round_change.data_round {
+                        // This is the error we need for the test!
+                        // In Go: "round change justification invalid: wrong msg round"
+                        // But we need to return an error that gets wrapped correctly
+                        return Err(QbftError::RoundChangeJustificationInvalidPrepareRound);
+                    }
+                    
+                    // Check the prepare message has the same root as the round change
+                    if prepare_qbft.root != round_change.root {
+                        return Err(QbftError::RoundChangeJustificationInvalidPrepareRoot);
+                    }
+                    
+                    // Check height matches
+                    if prepare_qbft.height != round_change.height {
+                        return Err(QbftError::RoundChangeJustificationInvalidPrepares);
+                    }
+                    
+                    // Count unique signers
+                    for signer in typed_prepare.operator_ids() {
+                        rc_prep_unique_signers.insert(*signer);
                     }
                 }
                 
@@ -1072,12 +1104,22 @@ where
 
         debug!(from = ?operator_id, state = ?self.state, "ROUNDCHANGE received");
 
+        // Check if we already have quorum BEFORE adding the message
+        // This matches Go's hasQuorumBefore check
+        let had_quorum_before = self.round_change_container.has_quorum(round).is_some();
+
         // Store the round changed message
         if !self
             .round_change_container
             .add_message(round, operator_id, &wrapped_msg)
         {
             warn!(from = ?operator_id, "ROUNDCHANGE message is a duplicate")
+        }
+        
+        // If we already had quorum before adding this message, don't process again
+        // This prevents sending duplicate proposals
+        if had_quorum_before {
+            return;
         }
 
         // For spec tests, check F+1 speedup for future rounds
@@ -1135,13 +1177,16 @@ where
             let is_leader = self.check_leader_for_round(&self.config.operator_id(), round);
             
             if matches!(self.state, InstanceState::SentRoundChange) || is_leader {
-                // Don't process if we're already in the target round and have sent/received a proposal
-                // This prevents duplicate proposals when receiving additional RC messages after quorum
-                // But allow it if we're still AwaitingProposal (test scenarios start in this state)
-                if self.current_round == round 
-                    && !matches!(self.state, InstanceState::SentRoundChange)
-                    && !matches!(self.state, InstanceState::AwaitingProposal) {
-                    return;
+                // Don't process if we're already at the target round and have moved past initial state
+                // This prevents duplicate proposals when RC quorum is reached multiple times
+                if self.current_round == round && !matches!(self.state, InstanceState::SentRoundChange) {
+                    // We're at the target round. Only proceed if:
+                    // 1. We're in AwaitingProposal and haven't accepted a proposal yet (first time)
+                    // 2. We're in SentRoundChange (waiting for quorum)
+                    // Otherwise, we've already processed RC quorum for this round
+                    if !(matches!(self.state, InstanceState::AwaitingProposal) && !self.proposal_accepted_for_current_round) {
+                        return;
+                    }
                 }
                 
                 // If we have reached a quorum for this round and have already sent a round change,

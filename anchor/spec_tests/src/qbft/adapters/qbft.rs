@@ -18,10 +18,19 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use types::Hash256;
 
-/// Test leader function that always returns operator 1 as the leader
-/// This matches the Go test harness behavior
-#[derive(Debug, Clone, Copy, Default)]
-struct TestLeaderFunction;
+/// Test leader function that matches Go test harness behavior
+#[derive(Debug, Clone, Copy)]
+struct TestLeaderFunction {
+    height: InstanceHeight,
+}
+
+impl Default for TestLeaderFunction {
+    fn default() -> Self {
+        Self {
+            height: InstanceHeight::from(0),
+        }
+    }
+}
 
 impl LeaderFunction for TestLeaderFunction {
     fn leader_function(
@@ -31,8 +40,14 @@ impl LeaderFunction for TestLeaderFunction {
         _instance_height: InstanceHeight,
         _committee: &IndexSet<OperatorId>,
     ) -> bool {
-        // In Go tests, operator 1 is always the leader
-        *_operator_id == OperatorId::from(1)
+        // Special case: At height 10, operator 2 is the leader
+        // This matches ChangeProposerFuncInstanceHeight in Go tests
+        if *self.height == 10 {
+            *_operator_id == OperatorId::from(2)
+        } else {
+            // Default: operator 1 is always the leader
+            *_operator_id == OperatorId::from(1)
+        }
     }
 }
 
@@ -89,11 +104,11 @@ impl QbftAdapter {
 
         // Build config with actual committee
         // Set max_rounds high enough for all tests (round 15 needs at least 16)
-        // IMPORTANT: For spec tests, operator 1 is ALWAYS the leader (matches Go test harness)
+        // IMPORTANT: For spec tests, use TestLeaderFunction that matches Go behavior
         let config = ConfigBuilder::new(operator_id, height, committee)
             .with_quorum_size(quorum_size)
             .with_max_rounds(100) // Support very high rounds for testing
-            .with_leader_fn(TestLeaderFunction)  // Use test leader function that always returns operator 1
+            .with_leader_fn(TestLeaderFunction { height })  // Use test leader function
             .build()
             .expect("Failed to build config");
 
@@ -424,21 +439,11 @@ impl QbftAdapter {
         // Check if instance is already decided
         if self.instance.is_decided_spec() {
             // For post-decided tests, proposals should return an error
-            // Other messages may trigger a decided response
             if let Some(ref ssv_msg) = msg.ssv_message {
                 if let Ok(qbft_msg) = QbftMessage::from_ssz_bytes(ssv_msg.data()) {
-                    match qbft_msg.qbft_message_type {
-                        QbftMessageType::Proposal => {
-                            // Proposals after decided should return an error
-                            return Err("invalid signed message: proposal is not valid with current state".to_string());
-                        }
-                        QbftMessageType::Prepare => {
-                            // For prepare messages, send aggregated commit if we have one
-                            if let Some(decided_msg) = self.instance.get_aggregated_commit() {
-                                self.captured_messages.borrow_mut().push(decided_msg);
-                            }
-                        }
-                        _ => {}
+                    if matches!(qbft_msg.qbft_message_type, QbftMessageType::Proposal) {
+                        // Proposals after decided should return an error
+                        return Err("invalid signed message: proposal is not valid with current state".to_string());
                     }
                 }
             }

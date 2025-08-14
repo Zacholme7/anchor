@@ -54,6 +54,10 @@ pub enum QbftError {
     
     RoundChangeJustificationInvalidPrepares,
     
+    RoundChangeJustificationInvalidPrepareRound,
+    
+    RoundChangeJustificationInvalidPrepareRoot,
+    
     StandaloneRoundChangeNoQuorum,
     
     RoundChangeJustificationMultiSigner,
