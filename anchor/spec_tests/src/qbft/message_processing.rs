@@ -93,12 +93,14 @@ impl SpecTest for MessageProcessingTest {
 
         // Process each input message
         let mut last_error = None;
-        for (_i, msg) in self.input_messages.iter().enumerate() {
+        for (i, msg) in self.input_messages.iter().enumerate() {
+            eprintln!("DEBUG {}: Processing input message {}", self.name, i);
             if let Err(e) = adapter.process_message(msg) {
                 last_error = Some(e);
                 // Don't break - continue processing all messages
                 // Go tests continue processing even after errors
             }
+            eprintln!("DEBUG {}: After message {}, captured {} messages", self.name, i, adapter.get_captured_messages().len());
         }
 
         // Check error expectations

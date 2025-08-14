@@ -98,10 +98,15 @@ impl QbftAdapter {
             let signed = SignedSSVMessage::new(
                 vec![signature],
                 vec![op_id],
-                msg.unsigned_message.ssv_message,
+                msg.unsigned_message.ssv_message.clone(),
                 full_data,
             )
             .expect("Failed to create signed message");
+
+            // Debug: Log what message we're sending
+            if let Ok(qbft_msg) = QbftMessage::from_ssz_bytes(msg.unsigned_message.ssv_message.data()) {
+                eprintln!("DEBUG: Handler sending {:?} for round {}", qbft_msg.qbft_message_type, qbft_msg.round);
+            }
 
             captured_clone.borrow_mut().push(signed);
         });

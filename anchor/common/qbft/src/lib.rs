@@ -1092,8 +1092,8 @@ where
             // Check all rounds from current+1 onwards that we have messages for
             // We need to check beyond just the current message's round
             // because F+1 speedup considers ALL future round messages
-            for check_round in 1..=100 {  // Check up to round 100 (arbitrary high limit)
-                let check_round = Round::from(self.current_round.get() + check_round as u64);
+            for round_offset in 1..=100 {  // Check up to round 100 (arbitrary high limit)
+                let check_round = Round::from(self.current_round.get() as u64 + round_offset);
                 let messages = self.round_change_container.get_messages_for_round(check_round);
                 if !messages.is_empty() {
                     for msg in messages {
@@ -1112,10 +1112,15 @@ where
             // If we have F+1 unique operators for future rounds
             if unique_operators.len() > self.config.get_f() {
                 if let Some(target_round) = min_round {
-                    // Advance to the minimum future round and send round change
-                    self.set_round(target_round);
+                    eprintln!("DEBUG: F+1 speedup: {} unique operators, advancing to round {}", unique_operators.len(), target_round);
+                    // Advance to the minimum future round
+                    // Don't use set_round() as it calls start_round() which may send a proposal
+                    self.current_round.set(target_round);
+                    // Set state to SentRoundChange
                     self.state = InstanceState::SentRoundChange;
-                    self.send_round_change(Hash256::default());
+                    // Send round change with our prepared value if we have one
+                    let data_hash = self.last_prepared_value.clone().unwrap_or_default();
+                    self.send_round_change(data_hash);
                     return;
                 }
             }
