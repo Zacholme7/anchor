@@ -133,19 +133,17 @@ impl SpecTest for MessageProcessingTest {
         if let Some(expected_msgs) = &self.output_messages {
             let captured = adapter.get_captured_messages();
             if captured.len() != expected_msgs.len() {
-                if self.name == "previously prepared proposal" || self.name == "round change happy flow" || self.name == "round change not prepared" {
-                    eprintln!("DEBUG: Captured messages for '{}':", self.name);
-                    for (i, msg) in captured.iter().enumerate() {
-                        if let Ok(qbft_msg) = QbftMessage::from_ssz_bytes(msg.ssv_message().data()) {
-                            eprintln!("  {}: {:?} round {}", i, qbft_msg.qbft_message_type, qbft_msg.round);
-                        }
+                eprintln!("DEBUG: Captured messages for '{}':", self.name);
+                for (i, msg) in captured.iter().enumerate() {
+                    if let Ok(qbft_msg) = QbftMessage::from_ssz_bytes(msg.ssv_message().data()) {
+                        eprintln!("  {}: {:?} round {}", i, qbft_msg.qbft_message_type, qbft_msg.round);
                     }
-                    eprintln!("Expected messages:");
-                    for (i, msg) in expected_msgs.iter().enumerate() {
-                        if let Some(ssv_msg) = &msg.ssv_message {
-                            if let Ok(qbft_msg) = QbftMessage::from_ssz_bytes(ssv_msg.data()) {
-                                eprintln!("  {}: {:?} round {}", i, qbft_msg.qbft_message_type, qbft_msg.round);
-                            }
+                }
+                eprintln!("Expected messages:");
+                for (i, msg) in expected_msgs.iter().enumerate() {
+                    if let Some(ssv_msg) = &msg.ssv_message {
+                        if let Ok(qbft_msg) = QbftMessage::from_ssz_bytes(ssv_msg.data()) {
+                            eprintln!("  {}: {:?} round {}", i, qbft_msg.qbft_message_type, qbft_msg.round);
                         }
                     }
                 }

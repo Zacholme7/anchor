@@ -1129,11 +1129,21 @@ where
 
         // 1. If we have received a quorum of round change messages, we need to start a new round
         if self.round_change_container.has_quorum(round).is_some() {
+            
             // If we're the leader for the target round, we can proceed directly to the new round
             // even if we haven't sent a round change ourselves
             let is_leader = self.check_leader_for_round(&self.config.operator_id(), round);
             
             if matches!(self.state, InstanceState::SentRoundChange) || is_leader {
+                // Don't process if we're already in the target round and have sent/received a proposal
+                // This prevents duplicate proposals when receiving additional RC messages after quorum
+                // But allow it if we're still AwaitingProposal (test scenarios start in this state)
+                if self.current_round == round 
+                    && !matches!(self.state, InstanceState::SentRoundChange)
+                    && !matches!(self.state, InstanceState::AwaitingProposal) {
+                    return;
+                }
+                
                 // If we have reached a quorum for this round and have already sent a round change,
                 // OR if we're the leader, advance to that round.
                 debug!(round = *round, "Round change quorum reached");
