@@ -8,6 +8,8 @@ use crate::utils::test_keys::TestKeySet;
 use crate::{QbftSpecTestType, SpecTest, SpecTestType};
 
 use serde::Deserialize;
+use ssv_types::consensus::QbftMessage;
+use ssz::Decode;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MessageProcessingState {
@@ -93,14 +95,12 @@ impl SpecTest for MessageProcessingTest {
 
         // Process each input message
         let mut last_error = None;
-        for (i, msg) in self.input_messages.iter().enumerate() {
-            eprintln!("DEBUG {}: Processing input message {}", self.name, i);
+        for (_i, msg) in self.input_messages.iter().enumerate() {
             if let Err(e) = adapter.process_message(msg) {
                 last_error = Some(e);
                 // Don't break - continue processing all messages
                 // Go tests continue processing even after errors
             }
-            eprintln!("DEBUG {}: After message {}, captured {} messages", self.name, i, adapter.get_captured_messages().len());
         }
 
         // Check error expectations
@@ -133,6 +133,22 @@ impl SpecTest for MessageProcessingTest {
         if let Some(expected_msgs) = &self.output_messages {
             let captured = adapter.get_captured_messages();
             if captured.len() != expected_msgs.len() {
+                if self.name == "previously prepared proposal" || self.name == "round change happy flow" || self.name == "round change not prepared" {
+                    eprintln!("DEBUG: Captured messages for '{}':", self.name);
+                    for (i, msg) in captured.iter().enumerate() {
+                        if let Ok(qbft_msg) = QbftMessage::from_ssz_bytes(msg.ssv_message().data()) {
+                            eprintln!("  {}: {:?} round {}", i, qbft_msg.qbft_message_type, qbft_msg.round);
+                        }
+                    }
+                    eprintln!("Expected messages:");
+                    for (i, msg) in expected_msgs.iter().enumerate() {
+                        if let Some(ssv_msg) = &msg.ssv_message {
+                            if let Ok(qbft_msg) = QbftMessage::from_ssz_bytes(ssv_msg.data()) {
+                                eprintln!("  {}: {:?} round {}", i, qbft_msg.qbft_message_type, qbft_msg.round);
+                            }
+                        }
+                    }
+                }
                 eprintln!(
                     "FAILED {}: Expected {} output messages, got {}",
                     self.name,

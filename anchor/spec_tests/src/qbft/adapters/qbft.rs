@@ -6,8 +6,8 @@ use crate::utils::rsa_validation::validate_rsa_signatures;
 use crate::utils::test_keys::TestKeySet;
 use openssl::pkey::Private;
 use openssl::rsa::Rsa;
-use qbft::{ConfigBuilder, InstanceHeight, InstanceState};
-use qbft::{DefaultLeaderFunction, Qbft, UnsignedWrappedQbftMessage, WrappedQbftMessage};
+use qbft::{ConfigBuilder, InstanceHeight, InstanceState, LeaderFunction};
+use qbft::{Qbft, UnsignedWrappedQbftMessage, WrappedQbftMessage};
 use ssv_types::consensus::BeaconVote;
 use ssv_types::consensus::{QbftMessage, QbftMessageType, UnsignedSSVMessage};
 use ssv_types::message::SignedSSVMessage;
@@ -17,6 +17,24 @@ use ssz::Decode;
 use std::cell::RefCell;
 use std::rc::Rc;
 use types::Hash256;
+
+/// Test leader function that always returns operator 1 as the leader
+/// This matches the Go test harness behavior
+#[derive(Debug, Clone, Copy, Default)]
+struct TestLeaderFunction;
+
+impl LeaderFunction for TestLeaderFunction {
+    fn leader_function(
+        &self,
+        _operator_id: &OperatorId,
+        _round: Round,
+        _instance_height: InstanceHeight,
+        _committee: &IndexSet<OperatorId>,
+    ) -> bool {
+        // In Go tests, operator 1 is always the leader
+        *_operator_id == OperatorId::from(1)
+    }
+}
 
 /// State that we want to initialize the qbft instance with
 pub struct QbftStartingState {
@@ -33,7 +51,7 @@ type MockHandler = Box<dyn FnMut(UnsignedWrappedQbftMessage)>;
 
 // Adapter over our core qbft instance
 pub struct QbftAdapter {
-    instance: Qbft<DefaultLeaderFunction, BeaconVote, MockHandler>,
+    instance: Qbft<TestLeaderFunction, BeaconVote, MockHandler>,
     operator_rsa_key: Option<Rsa<Private>>,
     operator_id: OperatorId,
     // Store original state value bytes for fulldata
@@ -71,9 +89,11 @@ impl QbftAdapter {
 
         // Build config with actual committee
         // Set max_rounds high enough for all tests (round 15 needs at least 16)
+        // IMPORTANT: For spec tests, operator 1 is ALWAYS the leader (matches Go test harness)
         let config = ConfigBuilder::new(operator_id, height, committee)
             .with_quorum_size(quorum_size)
             .with_max_rounds(100) // Support very high rounds for testing
+            .with_leader_fn(TestLeaderFunction)  // Use test leader function that always returns operator 1
             .build()
             .expect("Failed to build config");
 
@@ -103,10 +123,6 @@ impl QbftAdapter {
             )
             .expect("Failed to create signed message");
 
-            // Debug: Log what message we're sending
-            if let Ok(qbft_msg) = QbftMessage::from_ssz_bytes(msg.unsigned_message.ssv_message.data()) {
-                eprintln!("DEBUG: Handler sending {:?} for round {}", qbft_msg.qbft_message_type, qbft_msg.round);
-            }
 
             captured_clone.borrow_mut().push(signed);
         });

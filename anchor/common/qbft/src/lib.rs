@@ -1112,7 +1112,6 @@ where
             // If we have F+1 unique operators for future rounds
             if unique_operators.len() > self.config.get_f() {
                 if let Some(target_round) = min_round {
-                    eprintln!("DEBUG: F+1 speedup: {} unique operators, advancing to round {}", unique_operators.len(), target_round);
                     // Advance to the minimum future round
                     // Don't use set_round() as it calls start_round() which may send a proposal
                     self.current_round.set(target_round);
@@ -1130,9 +1129,13 @@ where
 
         // 1. If we have received a quorum of round change messages, we need to start a new round
         if self.round_change_container.has_quorum(round).is_some() {
-            if matches!(self.state, InstanceState::SentRoundChange) {
+            // If we're the leader for the target round, we can proceed directly to the new round
+            // even if we haven't sent a round change ourselves
+            let is_leader = self.check_leader_for_round(&self.config.operator_id(), round);
+            
+            if matches!(self.state, InstanceState::SentRoundChange) || is_leader {
                 // If we have reached a quorum for this round and have already sent a round change,
-                // advance to that round.
+                // OR if we're the leader, advance to that round.
                 debug!(round = *round, "Round change quorum reached");
 
                 // We have reached consensus on a round change, we can start a new round now
@@ -1143,11 +1146,19 @@ where
             }
         } else {
             // 2. If we receive f+1 round change messages, we need to send our own round-change
-            //    message
+            //    message (unless we're the leader for the target round)
             let num_messages_for_round = self.round_change_container.num_messages_for_round(round);
             if num_messages_for_round > self.config.get_f()
                 && !(matches!(self.state, InstanceState::SentRoundChange))
             {
+                // If we're the leader for the target round, don't send a round change
+                // We'll wait for quorum and send the proposal directly
+                if self.check_leader_for_round(&self.config.operator_id(), round) {
+                    // Mark state to show we're waiting for RC quorum  
+                    // We don't change round yet - wait for quorum
+                    return;
+                }
+
                 // Set the state so SendRoundChange so we include Round + 1 in message
                 self.state = InstanceState::SentRoundChange;
 
