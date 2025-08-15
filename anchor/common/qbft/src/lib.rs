@@ -1708,6 +1708,20 @@ where
     pub fn is_decided_spec(&self) -> bool {
         matches!(self.state, InstanceState::Complete)
     }
+    
+    /// Get the decided data if the instance is complete
+    pub fn get_decided_data_spec(&self) -> Option<D> 
+    where
+        D: Clone,
+    {
+        if matches!(self.state, InstanceState::Complete) {
+            // Return the start data since that's what was decided
+            // Need to dereference Arc and clone the inner value
+            Some((*self.start_data).clone())
+        } else {
+            None
+        }
+    }
 
     /// Helper function for spec tests to set proposal accepted state
     pub fn set_proposal_accepted_spec(&mut self, accepted: bool, root: Option<D::Hash>) {

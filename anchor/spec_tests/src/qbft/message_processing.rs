@@ -136,14 +136,20 @@ impl SpecTest for MessageProcessingTest {
                 eprintln!("DEBUG: Captured messages for '{}':", self.name);
                 for (i, msg) in captured.iter().enumerate() {
                     if let Ok(qbft_msg) = QbftMessage::from_ssz_bytes(msg.ssv_message().data()) {
-                        eprintln!("  {}: {:?} round {}", i, qbft_msg.qbft_message_type, qbft_msg.round);
+                        eprintln!(
+                            "  {}: {:?} round {}",
+                            i, qbft_msg.qbft_message_type, qbft_msg.round
+                        );
                     }
                 }
                 eprintln!("Expected messages:");
                 for (i, msg) in expected_msgs.iter().enumerate() {
                     if let Some(ssv_msg) = &msg.ssv_message {
                         if let Ok(qbft_msg) = QbftMessage::from_ssz_bytes(ssv_msg.data()) {
-                            eprintln!("  {}: {:?} round {}", i, qbft_msg.qbft_message_type, qbft_msg.round);
+                            eprintln!(
+                                "  {}: {:?} round {}",
+                                i, qbft_msg.qbft_message_type, qbft_msg.round
+                            );
                         }
                     }
                 }

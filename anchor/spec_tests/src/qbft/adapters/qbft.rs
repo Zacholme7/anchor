@@ -108,7 +108,7 @@ impl QbftAdapter {
         let config = ConfigBuilder::new(operator_id, height, committee)
             .with_quorum_size(quorum_size)
             .with_max_rounds(100) // Support very high rounds for testing
-            .with_leader_fn(TestLeaderFunction { height })  // Use test leader function
+            .with_leader_fn(TestLeaderFunction { height }) // Use test leader function
             .build()
             .expect("Failed to build config");
 
@@ -137,7 +137,6 @@ impl QbftAdapter {
                 full_data,
             )
             .expect("Failed to create signed message");
-
 
             captured_clone.borrow_mut().push(signed);
         });
@@ -345,7 +344,7 @@ impl QbftAdapter {
         &mut self,
         accepted: &AcceptedProposal,
         current_round: u64,
-        set_prepared: bool,  // Whether to also set last_prepared
+        set_prepared: bool, // Whether to also set last_prepared
     ) -> Result<(), String> {
         // Parse the QBFT message from the accepted proposal
         let ssv_msg = accepted
@@ -383,8 +382,11 @@ impl QbftAdapter {
         if set_prepared {
             let bytes: &[u8] = qbft_msg.root.as_ref();
             let dummy_vote = create_beacon_vote_from_bytes(bytes);
-            self.instance
-                .set_last_prepared_spec(Round::from(current_round), qbft_msg.root, dummy_vote);
+            self.instance.set_last_prepared_spec(
+                Round::from(current_round),
+                qbft_msg.root,
+                dummy_vote,
+            );
         }
 
         // Set instance state to Prepare (we accepted a proposal and are waiting for prepares)
@@ -443,7 +445,10 @@ impl QbftAdapter {
                 if let Ok(qbft_msg) = QbftMessage::from_ssz_bytes(ssv_msg.data()) {
                     if matches!(qbft_msg.qbft_message_type, QbftMessageType::Proposal) {
                         // Proposals after decided should return an error
-                        return Err("invalid signed message: proposal is not valid with current state".to_string());
+                        return Err(
+                            "invalid signed message: proposal is not valid with current state"
+                                .to_string(),
+                        );
                     }
                 }
             }

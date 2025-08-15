@@ -219,20 +219,26 @@ impl TestSignedSSVMessage {
         // Create SignedSSVMessage - this may fail for invalid messages (e.g., duplicate signers)
         // We need to propagate this error so it can be matched against expected errors
         // Note: We create the message first to let validation catch issues like duplicate signers
-        let signed_ssv_message =
-            match SignedSSVMessage::new(signatures, operator_ids.clone(), ssv_message.clone(), full_data) {
-                Ok(msg) => msg,
-                Err(e) => {
-                    // Convert the error to match Go's format using centralized mapping
-                    let error_str = map_signed_message_error(&e);
-                    return Err(error_str);
-                }
-            };
-        
+        let signed_ssv_message = match SignedSSVMessage::new(
+            signatures,
+            operator_ids.clone(),
+            ssv_message.clone(),
+            full_data,
+        ) {
+            Ok(msg) => msg,
+            Err(e) => {
+                // Convert the error to match Go's format using centralized mapping
+                let error_str = map_signed_message_error(&e);
+                return Err(error_str);
+            }
+        };
+
         // Check for multi-signers after successful creation
         // Multi-signers are only allowed for commit messages
         // Note: This check is for valid messages with multiple unique signers
-        if signed_ssv_message.operator_ids().len() > 1 && qbft_message.qbft_message_type != QbftMessageType::Commit {
+        if signed_ssv_message.operator_ids().len() > 1
+            && qbft_message.qbft_message_type != QbftMessageType::Commit
+        {
             return Err("invalid signed message: msg allows 1 signer".to_string());
         }
 

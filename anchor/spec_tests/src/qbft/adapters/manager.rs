@@ -3,19 +3,58 @@ use crate::utils::message_validation::{
     extract_decided_value, identifier_to_message_id, is_decided_message, validate_signer_count,
 };
 use crate::utils::misc::{calculate_quorum, hash_data};
+use crate::utils::test_keys::TestKeySet;
 use message_sender::testing::MockMessageSender;
-use qbft::InstanceHeight;
+use qbft::{InstanceHeight, LeaderFunction};
 use qbft_manager::QbftManager;
 use slot_clock::{ManualSlotClock, SlotClock};
-use ssv_types::OperatorId;
+use ssv_types::consensus::BeaconVote;
 use ssv_types::domain_type::DomainType;
 use ssv_types::msgid::MessageId;
+use ssv_types::{IndexSet, OperatorId, Round};
+use ssz::Encode;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 use types::{Hash256, Slot};
+
+// Type alias for our QBFT instance
+type QbftInstance = qbft::Qbft<TestLeaderFunction, BeaconVote, Box<dyn FnMut(qbft::UnsignedWrappedQbftMessage)>>;
+
+/// Test leader function that matches Go test harness behavior
+#[derive(Debug, Clone, Copy)]
+struct TestLeaderFunction {
+    height: InstanceHeight,
+}
+
+impl Default for TestLeaderFunction {
+    fn default() -> Self {
+        Self {
+            height: InstanceHeight::from(0),
+        }
+    }
+}
+
+impl LeaderFunction for TestLeaderFunction {
+    fn leader_function(
+        &self,
+        _operator_id: &OperatorId,
+        _round: Round,
+        _instance_height: InstanceHeight,
+        _committee: &IndexSet<OperatorId>,
+    ) -> bool {
+        // Special case: At height 10, operator 2 is the leader
+        // This matches ChangeProposerFuncInstanceHeight in Go tests
+        if *self.height == 10 {
+            *_operator_id == OperatorId::from(2)
+        } else {
+            // Default: operator 1 is always the leader
+            *_operator_id == OperatorId::from(1)
+        }
+    }
+}
 
 /// State of an instance in the controller
 #[derive(Debug, Clone)]
@@ -139,8 +178,8 @@ impl MessageContainer {
 
 /// Adapter for QBFT controller spec tests.
 ///
-/// This adapter simulates a QBFT controller without running actual consensus.
-/// It tracks instances, validates messages, and aggregates commits to detect quorum.
+/// This adapter runs a QBFT controller with actual QBFT instances.
+/// It tracks instances, forwards messages to them, and handles decisions.
 pub struct ControllerAdapter {
     // Core components
     manager: Arc<QbftManager>,
@@ -161,6 +200,12 @@ pub struct ControllerAdapter {
     current_height: InstanceHeight,
     stored_instances: HashMap<InstanceHeight, InstanceState>, // All instances (active & decided)
     current_committee_size: usize,                            // For quorum calculation
+
+    // Test keys for RSA signature verification
+    test_keys: Option<TestKeySet>,
+
+    // Direct QBFT instances for synchronous processing (bypassing async processor)
+    qbft_instances: HashMap<InstanceHeight, QbftInstance>,
 
     // Message aggregation (mirrors Go's MsgContainer)
     message_container: MessageContainer,
@@ -259,12 +304,70 @@ impl ControllerAdapter {
             current_height: InstanceHeight::from(0),
             stored_instances: HashMap::new(),
             current_committee_size: 4, // Default to 4 operators (matching Go tests)
+            test_keys: None,           // Will be set by set_test_keys if needed
+            qbft_instances: HashMap::new(),
             message_container: MessageContainer::new(),
             instance_handles: Vec::new(),
             operator_id,
             identifier,
             committee,
         }
+    }
+
+    /// Set the test keys for RSA signature verification
+    pub fn set_test_keys(&mut self, test_keys: TestKeySet) {
+        self.test_keys = Some(test_keys);
+    }
+
+    /// Create a real QBFT instance for the given height
+    fn create_qbft_instance(
+        &self,
+        height: InstanceHeight,
+        value: &[u8],
+    ) -> Result<QbftInstance, String> {
+        use qbft::{ConfigBuilder, Qbft};
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        // Build committee from stored committee info
+        let committee: IndexSet<OperatorId> = self
+            .committee
+            .iter()
+            .map(|op| OperatorId::from(op.operator_id))
+            .collect();
+
+        // Calculate quorum size
+        let quorum_size = calculate_quorum(committee.len());
+
+        // Build config with our TestLeaderFunction
+        let config = ConfigBuilder::new(self.operator_id, height, committee)
+            .with_quorum_size(quorum_size)
+            .with_max_rounds(100)
+            .with_leader_fn(TestLeaderFunction { height })
+            .build()
+            .map_err(|e| format!("Failed to build QBFT config: {:?}", e))?;
+
+        // Create a simple handler that captures messages
+        let captured = Rc::new(RefCell::new(Vec::new()));
+        let captured_clone = captured.clone();
+
+        let handler: Box<dyn FnMut(qbft::UnsignedWrappedQbftMessage)> = 
+            Box::new(move |msg: qbft::UnsignedWrappedQbftMessage| {
+                // For controller tests, we just capture the message
+                // No need to sign or broadcast since we're testing message processing
+                captured_clone.borrow_mut().push(msg);
+            });
+
+        // Create the instance
+        let data_hash = hash_data(value);
+        let beacon_vote = crate::utils::misc::create_beacon_vote_from_bytes(data_hash.as_ref());
+
+        let instance = Qbft::new(config, beacon_vote.clone(), self.identifier.clone(), handler);
+
+        // The instance starts automatically when created
+        // No need to call start_instance_spec
+
+        Ok(instance)
     }
 
     /// Start a new QBFT instance at the given height.
@@ -307,16 +410,18 @@ impl ControllerAdapter {
         // This is important: we advance to the new height even if it's higher than current+1
         self.current_height = height;
 
-        // For controller tests, we don't actually start a QBFT instance
-        // We just mark that an instance exists at this height
-        // The actual consensus will be driven by the test messages
-        // This matches Go's behavior where test instances don't run real consensus
+        // Create and start a real QBFT instance (matching Go's behavior)
+        // The Go controller creates real instances: newInstance := c.addAndStoreNewInstance()
+        // And starts them: newInstance.Start(value, height)
 
-        // Mark this instance as active (but don't create actual QBFT instance)
+        // Create a real QBFT instance directly (bypassing async processor)
+        let instance = self.create_qbft_instance(height, &value)?;
+
+        // Store the instance
+        self.qbft_instances.insert(height, instance);
+
+        // Mark this instance as active
         self.stored_instances.insert(height, InstanceState::Active);
-
-        // Store the input value for validation (but don't use it for consensus)
-        // The real consensus data comes from the test messages
 
         Ok(())
     }
@@ -372,6 +477,7 @@ impl ControllerAdapter {
         signed_msg: &ssv_types::message::SignedSSVMessage,
         qbft_msg: &ssv_types::consensus::QbftMessage,
     ) -> Result<(), String> {
+        use crate::utils::rsa_validation::verify_rsa_signature;
         use ssv_types::consensus::QbftMessageType;
 
         let _operator_ids = signed_msg.operator_ids();
@@ -395,6 +501,25 @@ impl ControllerAdapter {
         // Must have full_data
         if signed_msg.full_data().is_empty() {
             return Err("decided message missing full_data".to_string());
+        }
+
+        // Verify RSA signatures for decided messages
+        // This is critical for the "decide wrong sig" test
+        if let Some(ref test_keys) = self.test_keys {
+            let msg_bytes = signed_msg.ssv_message().as_ssz_bytes();
+
+            for (&op_id, sig) in operator_ids.iter().zip(signed_msg.signatures().iter()) {
+                // Convert signature from VariableList to [u8; 256]
+                if sig.len() != 256 {
+                    return Err("invalid decided msg: invalid signature length".to_string());
+                }
+                let mut sig_array = [0u8; 256];
+                sig_array.copy_from_slice(&sig[..]);
+
+                if !verify_rsa_signature(msg_bytes.clone(), op_id, &sig_array, test_keys) {
+                    return Err("invalid decided msg: invalid decided msg: msg signature invalid: crypto/rsa: verification error".to_string());
+                }
+            }
         }
 
         let full_data = signed_msg.full_data();
@@ -560,7 +685,7 @@ impl ControllerAdapter {
     /// 1. Decided messages (commit with quorum) → upon_decided
     /// 2. Future messages → error
     /// 3. Messages for non-existent instances → error
-    /// 4. Messages for decided instances → error
+    /// 4. Messages for decided instances → error (except for aggregation)
     /// 5. Normal messages → aggregation and quorum checking
     pub async fn process_msg(
         &mut self,
@@ -608,8 +733,9 @@ impl ControllerAdapter {
             return Err("instance not found".to_string());
         }
 
-        // 3a. Check if instance is already decided - if so, reject non-decided messages
-        // (Decided messages were already handled above)
+        // 3a. Check if instance is already decided
+        // Reject all messages for decided instances
+        // This is required by "late commit" tests which expect rejection
         if matches!(
             self.stored_instances.get(&height),
             Some(InstanceState::Decided(_))
@@ -619,7 +745,71 @@ impl ControllerAdapter {
             );
         }
 
-        // 4. Store the message in our container for aggregation
+        // 4. Forward the message to the actual QBFT instance for validation
+        // This matches Go's inst.ProcessMsg(msg) behavior
+
+        // Get the QBFT instance for this height
+        let instance = self
+            .qbft_instances
+            .get_mut(&height)
+            .ok_or_else(|| "could not process msg: instance not found".to_string())?;
+
+        // Create wrapped message for the QBFT instance
+        let wrapped = qbft::WrappedQbftMessage {
+            signed_message: signed_msg.clone(),
+            qbft_message: qbft_msg.clone(),
+        };
+
+        // Process the message through the instance
+        // This will return an error if the message is invalid
+        if let Err(qbft_err) = instance.process_message_spec(wrapped) {
+            // Map the error to match Go's error wrapping
+            use crate::utils::error_mapping::map_qbft_error;
+            let error_msg = map_qbft_error(&qbft_err);
+            return Err(format!("could not process msg: {}", error_msg));
+        }
+
+        // Check if the instance decided after processing this message
+        if instance.is_decided_spec() {
+            // Get the decided value
+            if let Some(decided_data) = instance.get_decided_data_spec() {
+                // Extract the actual value from the BeaconVote
+                // For tests, we stored the hash in the BeaconVote, but we need the original value
+                // We should have stored it in proposal_full_data
+                let decided_value = self
+                    .message_container
+                    .get_proposal_full_data(height, round, root)
+                    .unwrap_or_else(|| {
+                        // Fallback: extract from the decided data somehow
+                        // This shouldn't happen in properly formed messages
+                        vec![]
+                    });
+
+                // Check if this instance was already decided
+                let was_previously_decided = matches!(
+                    self.stored_instances.get(&height),
+                    Some(InstanceState::Decided(_))
+                );
+
+                // Store this instance as decided
+                self.stored_instances
+                    .insert(height, InstanceState::Decided(decided_value.clone()));
+
+                // Update controller height if this is a future decided instance
+                if *height > *self.current_height {
+                    self.current_height = height;
+                }
+
+                // Return decided value only if this is the first time
+                if !was_previously_decided {
+                    return Ok(Some(decided_value));
+                } else {
+                    return Ok(None);
+                }
+            }
+        }
+
+        // 5. Store the message in our container for aggregation
         self.message_container
             .add_message(height, round, root, test_msg.clone());
 

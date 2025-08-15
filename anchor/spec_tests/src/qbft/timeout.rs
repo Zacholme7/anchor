@@ -127,7 +127,12 @@ impl SpecTest for TimeoutTest {
         // Make sure round was incremented
         let new_round = adapter.get_round();
         if new_round != initial_round + 1 {
-            eprintln!("Round not incremented: {} -> {}, expected {}", initial_round, new_round, initial_round + 1);
+            eprintln!(
+                "Round not incremented: {} -> {}, expected {}",
+                initial_round,
+                new_round,
+                initial_round + 1
+            );
             return false;
         }
 
@@ -159,30 +164,52 @@ impl SpecTest for TimeoutTest {
 
         if let Some(expected_msgs) = &self.output_messages {
             if captured.len() != expected_msgs.len() {
-                eprintln!("Message count mismatch: captured {}, expected {}", captured.len(), expected_msgs.len());
+                eprintln!(
+                    "Message count mismatch: captured {}, expected {}",
+                    captured.len(),
+                    expected_msgs.len()
+                );
                 return false;
             }
 
             // Validate each message matches expected by comparing roots
-            for (i, (captured_msg, expected_msg)) in captured.iter().zip(expected_msgs.iter()).enumerate() {
+            for (i, (captured_msg, expected_msg)) in
+                captured.iter().zip(expected_msgs.iter()).enumerate()
+            {
                 // Get the root of the expected message
                 // Note: expected_msg is TestSignedSSVMessage, we need to convert to SignedSSVMessage
                 // For now, we'll compare the SSVMessage roots since that's what contains the actual data
                 if let Some(ref expected_ssv) = expected_msg.ssv_message {
                     // Get tree hash root of the expected SSVMessage
                     let expected_root = expected_ssv.tree_hash_root();
-                    
+
                     // Decode and compare the QBFT message type
-                    use ssz::Decode;
                     use ssv_types::consensus::QbftMessage;
-                    if let Ok(captured_qbft) = QbftMessage::from_ssz_bytes(captured_msg.ssv_message().data()) {
-                        if let Ok(expected_qbft) = QbftMessage::from_ssz_bytes(expected_ssv.data()) {
-                            eprintln!("Message {}: captured type={:?}, round={}, data_round={}, expected type={:?}, round={}, data_round={}", 
-                                i, captured_qbft.qbft_message_type, captured_qbft.round, captured_qbft.data_round,
-                                expected_qbft.qbft_message_type, expected_qbft.round, expected_qbft.data_round);
-                            eprintln!("  Captured root: {:?}, Expected root: {:?}", captured_qbft.root, expected_qbft.root);
-                            eprintln!("  Captured prep justifications: {}, Expected: {}", 
-                                captured_qbft.prepare_justification.len(), expected_qbft.prepare_justification.len());
+                    use ssz::Decode;
+                    if let Ok(captured_qbft) =
+                        QbftMessage::from_ssz_bytes(captured_msg.ssv_message().data())
+                    {
+                        if let Ok(expected_qbft) = QbftMessage::from_ssz_bytes(expected_ssv.data())
+                        {
+                            eprintln!(
+                                "Message {}: captured type={:?}, round={}, data_round={}, expected type={:?}, round={}, data_round={}",
+                                i,
+                                captured_qbft.qbft_message_type,
+                                captured_qbft.round,
+                                captured_qbft.data_round,
+                                expected_qbft.qbft_message_type,
+                                expected_qbft.round,
+                                expected_qbft.data_round
+                            );
+                            eprintln!(
+                                "  Captured root: {:?}, Expected root: {:?}",
+                                captured_qbft.root, expected_qbft.root
+                            );
+                            eprintln!(
+                                "  Captured prep justifications: {}, Expected: {}",
+                                captured_qbft.prepare_justification.len(),
+                                expected_qbft.prepare_justification.len()
+                            );
                         }
                     }
 
@@ -192,7 +219,10 @@ impl SpecTest for TimeoutTest {
                     if expected_root != captured_msg.ssv_message().tree_hash_root() {
                         eprintln!("Message root mismatch!");
                         eprintln!("Expected: {:?}", expected_root);
-                        eprintln!("Captured: {:?}", captured_msg.ssv_message().tree_hash_root());
+                        eprintln!(
+                            "Captured: {:?}",
+                            captured_msg.ssv_message().tree_hash_root()
+                        );
                         return false;
                     }
                 }
