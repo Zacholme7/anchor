@@ -198,11 +198,11 @@ where
     pub fn get_round(&self) -> Round {
         self.current_round
     }
-    
+
     pub fn get_height(&self) -> InstanceHeight {
         self.instance_height
     }
-    
+
     pub fn get_committee_spec(&self) -> Vec<OperatorId> {
         self.config.committee_members().iter().cloned().collect()
     }
@@ -503,19 +503,19 @@ where
     ) -> Result<(), QbftError> {
         // RoundChange messages can have prepare justifications (round_change_justification field)
         // These are Prepare messages that justify the value being carried forward
-        
+
         // If the round change has data_round > 0, it means it has prepared
         // In this case, we need to validate the prepare justifications have quorum
         if msg.qbft_message.data_round > 0 {
             let mut unique_signers = std::collections::HashSet::new();
             let mut seen_messages = std::collections::HashSet::new();
-            
+
             for prepare_bytes in &msg.qbft_message.round_change_justification {
                 // Check for duplicate messages
                 if !seen_messages.insert(prepare_bytes.clone()) {
                     return Err(QbftError::StandaloneRoundChangeNoQuorum);
                 }
-                
+
                 // Decode the prepare message
                 let prepare_msg = SignedSSVMessage::from_ssz_bytes(prepare_bytes)
                     .map_err(|_| QbftError::RoundChangeJustificationDecodeFailed)?;
@@ -524,7 +524,7 @@ where
                 if prepare_msg.operator_ids().len() > 1 {
                     return Err(QbftError::RoundChangeJustificationMultiSigner);
                 }
-                
+
                 // Add signer to unique set
                 for signer in prepare_msg.operator_ids() {
                     unique_signers.insert(*signer);
@@ -548,7 +548,7 @@ where
                     return Err(QbftError::PrepareJustificationRootMismatch);
                 }
             }
-            
+
             // Check if we have quorum of unique signers
             if unique_signers.len() < self.config.quorum_size() {
                 return Err(QbftError::StandaloneRoundChangeNoQuorum);
@@ -584,11 +584,11 @@ where
             if typed_signed_round_change.operator_ids().len() > 1 {
                 return Err(QbftError::RoundChangeJustificationMultiSigner);
             }
-            
+
             // Track duplicate messages but don't reject them
             // The Go implementation accepts duplicates as long as we have enough unique signers
             seen_rc_messages.insert(signed_round_change.clone());
-            
+
             // Add signers to unique set for quorum counting
             // Duplicates from the same signer are ignored for quorum calculation
             for signer in typed_signed_round_change.operator_ids() {
@@ -612,14 +612,14 @@ where
                 return Err(QbftError::RoundChangeJustificationWrongRound);
             }
 
-            // For round change justifications, we need special validation that doesn't check 
+            // For round change justifications, we need special validation that doesn't check
             // against current round since they're justifications from the proposal's round
             // Check height
             if round_change.height != *self.instance_height as u64 {
                 return Err(QbftError::RoundChangeJustificationInvalidSignature);
             }
-            
-            // Check all signers are in committee  
+
+            // Check all signers are in committee
             for signer in typed_signed_round_change.operator_ids() {
                 if !self.check_committee(signer) {
                     return Err(QbftError::RoundChangeJustificationInvalidSignature);
@@ -636,12 +636,12 @@ where
                     max_prepared_round = round_change.data_round;
                     max_prepared_msg = Some(round_change.clone());
                 }
-                
+
                 // CRITICAL: When a round change message has a prepared value (data_round > 0),
                 // we must validate that its prepare justifications have quorum.
                 // This matches Go's validRoundChangeForDataIgnoreSignature behavior.
                 let mut rc_prep_unique_signers = std::collections::HashSet::new();
-                
+
                 // Validate each prepare message in the round change justification
                 // In round change messages, the prepare justifications are stored in round_change_justification
                 // when the round change has prepared (data_round > 0)
@@ -650,18 +650,21 @@ where
                         Ok(msg) => msg,
                         Err(_) => return Err(QbftError::RoundChangeJustificationInvalidPrepares),
                     };
-                    
+
                     // Decode the prepare QBFT message
-                    let prepare_qbft = match QbftMessage::from_ssz_bytes(typed_prepare.ssv_message().data()) {
-                        Ok(msg) => msg,
-                        Err(_) => return Err(QbftError::RoundChangeJustificationInvalidPrepares),
-                    };
-                    
+                    let prepare_qbft =
+                        match QbftMessage::from_ssz_bytes(typed_prepare.ssv_message().data()) {
+                            Ok(msg) => msg,
+                            Err(_) => {
+                                return Err(QbftError::RoundChangeJustificationInvalidPrepares);
+                            }
+                        };
+
                     // Verify it's a prepare message
                     if prepare_qbft.qbft_message_type != QbftMessageType::Prepare {
                         return Err(QbftError::RoundChangeJustificationInvalidPrepares);
                     }
-                    
+
                     // CRITICAL: Check that the prepare round matches the round change's data_round
                     // This matches Go's validSignedPrepareForHeightRoundAndRootVerifySignature check
                     if prepare_qbft.round != round_change.data_round {
@@ -670,23 +673,23 @@ where
                         // But we need to return an error that gets wrapped correctly
                         return Err(QbftError::RoundChangeJustificationInvalidPrepareRound);
                     }
-                    
+
                     // Check the prepare message has the same root as the round change
                     if prepare_qbft.root != round_change.root {
                         return Err(QbftError::RoundChangeJustificationInvalidPrepareRoot);
                     }
-                    
+
                     // Check height matches
                     if prepare_qbft.height != round_change.height {
                         return Err(QbftError::RoundChangeJustificationInvalidPrepares);
                     }
-                    
+
                     // Count unique signers
                     for signer in typed_prepare.operator_ids() {
                         rc_prep_unique_signers.insert(*signer);
                     }
                 }
-                
+
                 // Check if this round change has quorum of unique signers
                 if rc_prep_unique_signers.len() < self.config.quorum_size() {
                     // This round change message doesn't have valid prepare justifications
@@ -705,7 +708,7 @@ where
         if previously_prepared {
             // Count UNIQUE signers for prepare justifications
             let mut prep_unique_signers = std::collections::HashSet::new();
-            
+
             // First pass: collect unique signers from prepare messages
             for signed_prepare in &msg.qbft_message.prepare_justification {
                 if let Ok(typed_signed_prepare) = SignedSSVMessage::from_ssz_bytes(signed_prepare) {
@@ -714,7 +717,7 @@ where
                     }
                 }
             }
-            
+
             // Check if we have a quorum of UNIQUE signers
             if prep_unique_signers.len() < self.config.quorum_size() {
                 return Err(QbftError::PrepareJustificationNotEnough);
@@ -756,7 +759,7 @@ where
                 if prepare.height != *self.instance_height as u64 {
                     return Err(QbftError::PrepareJustificationValidationFailed);
                 }
-                
+
                 // Check all signers are in committee
                 for signer in typed_signed_prepare.operator_ids() {
                     if !self.check_committee(signer) {
@@ -1115,7 +1118,7 @@ where
         {
             warn!(from = ?operator_id, "ROUNDCHANGE message is a duplicate")
         }
-        
+
         // If we already had quorum before adding this message, don't process again
         // This prevents sending duplicate proposals
         if had_quorum_before {
@@ -1124,19 +1127,23 @@ where
 
         // For spec tests, check F+1 speedup for future rounds
         // This matches Go's processMsgF1 logic
-        if round > self.current_round 
-            && !matches!(self.state, InstanceState::SentRoundChange) 
-            && !matches!(self.state, InstanceState::RoundChangeConsensus) {
+        if round > self.current_round
+            && !matches!(self.state, InstanceState::SentRoundChange)
+            && !matches!(self.state, InstanceState::RoundChangeConsensus)
+        {
             // Count unique operators who have sent round change for ANY future round
             let mut unique_operators = std::collections::HashSet::new();
             let mut min_round = None;
-            
+
             // Check all rounds from current+1 onwards that we have messages for
             // We need to check beyond just the current message's round
             // because F+1 speedup considers ALL future round messages
-            for round_offset in 1..=100 {  // Check up to round 100 (arbitrary high limit)
+            for round_offset in 1..=100 {
+                // Check up to round 100 (arbitrary high limit)
                 let check_round = Round::from(self.current_round.get() as u64 + round_offset);
-                let messages = self.round_change_container.get_messages_for_round(check_round);
+                let messages = self
+                    .round_change_container
+                    .get_messages_for_round(check_round);
                 if !messages.is_empty() {
                     for msg in messages {
                         // Get the operator ID from the message
@@ -1150,7 +1157,7 @@ where
                     }
                 }
             }
-            
+
             // If we have F+1 unique operators for future rounds
             if unique_operators.len() > self.config.get_f() {
                 if let Some(target_round) = min_round {
@@ -1171,24 +1178,27 @@ where
 
         // 1. If we have received a quorum of round change messages, we need to start a new round
         if self.round_change_container.has_quorum(round).is_some() {
-            
             // If we're the leader for the target round, we can proceed directly to the new round
             // even if we haven't sent a round change ourselves
             let is_leader = self.check_leader_for_round(&self.config.operator_id(), round);
-            
+
             if matches!(self.state, InstanceState::SentRoundChange) || is_leader {
                 // Don't process if we're already at the target round and have moved past initial state
                 // This prevents duplicate proposals when RC quorum is reached multiple times
-                if self.current_round == round && !matches!(self.state, InstanceState::SentRoundChange) {
+                if self.current_round == round
+                    && !matches!(self.state, InstanceState::SentRoundChange)
+                {
                     // We're at the target round. Only proceed if:
                     // 1. We're in AwaitingProposal and haven't accepted a proposal yet (first time)
                     // 2. We're in SentRoundChange (waiting for quorum)
                     // Otherwise, we've already processed RC quorum for this round
-                    if !(matches!(self.state, InstanceState::AwaitingProposal) && !self.proposal_accepted_for_current_round) {
+                    if !(matches!(self.state, InstanceState::AwaitingProposal)
+                        && !self.proposal_accepted_for_current_round)
+                    {
                         return;
                     }
                 }
-                
+
                 // If we have reached a quorum for this round and have already sent a round change,
                 // OR if we're the leader, advance to that round.
                 debug!(round = *round, "Round change quorum reached");
@@ -1209,7 +1219,7 @@ where
                 // If we're the leader for the target round, don't send a round change
                 // We'll wait for quorum and send the proposal directly
                 if self.check_leader_for_round(&self.config.operator_id(), round) {
-                    // Mark state to show we're waiting for RC quorum  
+                    // Mark state to show we're waiting for RC quorum
                     // We don't change round yet - wait for quorum
                     return;
                 }
@@ -1708,9 +1718,9 @@ where
     pub fn is_decided_spec(&self) -> bool {
         matches!(self.state, InstanceState::Complete)
     }
-    
+
     /// Get the decided data if the instance is complete
-    pub fn get_decided_data_spec(&self) -> Option<D> 
+    pub fn get_decided_data_spec(&self) -> Option<D>
     where
         D: Clone,
     {
@@ -1855,7 +1865,7 @@ where
                     if computed_hash != wrapped_msg.qbft_message.root {
                         return Err(QbftError::InvalidFullData);
                     }
-                    
+
                     // For spec tests: check for invalid value
                     // The Go tests use []byte{1, 1, 1, 1} as TestingInvalidValueCheck
                     if wrapped_msg.signed_message.full_data() == &[1u8, 1, 1, 1] {
@@ -1866,7 +1876,7 @@ where
                 // For spec tests: validate justifications BEFORE checking leader
                 // This is because test proposals intentionally use wrong leaders to test
                 // justification validation error paths
-                
+
                 // For any proposal with round > 0, validate justifications first
                 if msg_round > Round::default() {
                     // If there are justifications, validate them (and skip leader check)
@@ -1946,14 +1956,14 @@ where
                 if !self.proposal_accepted_for_current_round {
                     return Err(QbftError::NoProposalAccepted);
                 }
-                
+
                 // Check commit data matches the accepted proposal
                 if let Some(ref proposal_root) = self.proposal_root {
                     if wrapped_msg.qbft_message.root != *proposal_root {
                         return Err(QbftError::ProposedDataMismatch);
                     }
                 }
-                
+
                 // Process the commit
                 self.received_commit(signer, msg_round, wrapped_msg);
             }
@@ -1975,5 +1985,52 @@ where
         }
 
         Ok(())
+    }
+
+    // Container access methods for spec tests
+    pub fn get_propose_container(&self) -> &MessageContainer {
+        &self.propose_container
+    }
+
+    pub fn get_prepare_container(&self) -> &MessageContainer {
+        &self.prepare_container
+    }
+
+    pub fn get_commit_container(&self) -> &MessageContainer {
+        &self.commit_container
+    }
+
+    pub fn get_round_change_container(&self) -> &MessageContainer {
+        &self.round_change_container
+    }
+
+    // State inspection methods for spec tests
+    pub fn get_state(&self) -> InstanceState {
+        self.state.clone()
+    }
+
+    pub fn get_proposal_accepted(&self) -> bool {
+        self.proposal_accepted_for_current_round
+    }
+
+    pub fn get_proposal_root(&self) -> Option<D::Hash> {
+        self.proposal_root
+    }
+
+    pub fn get_last_prepared_round(&self) -> Option<Round> {
+        self.last_prepared_round
+    }
+
+    pub fn get_last_prepared_value(&self) -> Option<D::Hash> {
+        self.last_prepared_value
+    }
+
+    // Data access methods
+    pub fn get_data(&self, hash: &D::Hash) -> Option<Arc<D>> {
+        self.data.get(hash).cloned()
+    }
+
+    pub fn get_identifier(&self) -> &MessageId {
+        &self.identifier
     }
 }

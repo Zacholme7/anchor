@@ -151,3 +151,88 @@ pub fn map_ssz_decode_error(test_name: &str, error: &str) -> Option<&'static str
         None
     }
 }
+
+/// Error types specific to qbft_message tests
+#[derive(Debug, Clone)]
+pub enum QbftMessageError {
+    SignedMessageError(SignedSSVMessageError),
+    ConversionError(crate::qbft::adapters::spec_types::TestMessageConversionError),
+    SSZDecodeError(ssz::DecodeError),
+    IdentifierInvalid,
+    IncorrectSize,
+}
+
+/// Map QbftMessageError to the expected error string for test comparison
+pub fn map_qbft_message_error(error: &QbftMessageError, test_name: &str) -> String {
+    use crate::qbft::adapters::spec_types::TestMessageConversionError;
+    
+    match error {
+        QbftMessageError::SignedMessageError(e) => {
+            // Map actual SignedSSVMessageError variants to expected strings
+            match e {
+                SignedSSVMessageError::NoSigners => "no signers".to_string(),
+                SignedSSVMessageError::DuplicatedSigner => "non unique signer".to_string(),
+                SignedSSVMessageError::ZeroSigner => "signer ID 0 not allowed".to_string(),
+                SignedSSVMessageError::SignersNotSorted => "signers not sorted".to_string(),
+                SignedSSVMessageError::NoSignatures => "no signatures".to_string(),
+                SignedSSVMessageError::TooManySignatures { .. } => "too many signatures".to_string(),
+                SignedSSVMessageError::WrongRSASignatureSize { .. } => "wrong signature size".to_string(),
+                SignedSSVMessageError::TooManyOperatorIDs { .. } => "too many operators".to_string(),
+                SignedSSVMessageError::FullDataTooLong { .. } => "full data too long".to_string(),
+                SignedSSVMessageError::SignersAndSignaturesWithDifferentLength => "signers signatures length mismatch".to_string(),
+                SignedSSVMessageError::SSVMessageError(_) => "ssv message error".to_string(),
+            }
+        }
+        QbftMessageError::ConversionError(e) => {
+            // Map TestMessageConversionError to expected strings
+            match e {
+                TestMessageConversionError::SignedSSVMessage(ssv_err) => {
+                    // Reuse the same mapping for nested SignedSSVMessageError
+                    match ssv_err {
+                        SignedSSVMessageError::NoSigners => "no signers".to_string(),
+                        SignedSSVMessageError::DuplicatedSigner => "non unique signer".to_string(),
+                        SignedSSVMessageError::ZeroSigner => "signer ID 0 not allowed".to_string(),
+                        SignedSSVMessageError::SignersNotSorted => "signers not sorted".to_string(),
+                        SignedSSVMessageError::NoSignatures => "no signatures".to_string(),
+                        SignedSSVMessageError::TooManySignatures { .. } => "too many signatures".to_string(),
+                        SignedSSVMessageError::WrongRSASignatureSize { .. } => "wrong signature size".to_string(),
+                        SignedSSVMessageError::TooManyOperatorIDs { .. } => "too many operators".to_string(),
+                        SignedSSVMessageError::FullDataTooLong { .. } => "full data too long".to_string(),
+                        SignedSSVMessageError::SignersAndSignaturesWithDifferentLength => "signers signatures length mismatch".to_string(),
+                        SignedSSVMessageError::SSVMessageError(_) => "ssv message error".to_string(),
+                    }
+                }
+                TestMessageConversionError::Base64Decode(_) => "invalid base64".to_string(),
+                TestMessageConversionError::InvalidSignatureLength { .. } => "incorrect size".to_string(),
+                TestMessageConversionError::SSZDecode(_) => "message data is invalid".to_string(),
+                TestMessageConversionError::MissingSSVMessage => "missing ssv message".to_string(),
+                TestMessageConversionError::InvalidFullData(_) => "invalid full data".to_string(),
+                TestMessageConversionError::MultiSignerNotAllowed => "msg allows 1 signer".to_string(),
+            }
+        }
+        QbftMessageError::SSZDecodeError(e) => {
+            // Unfortunately SSZ DecodeError doesn't expose its variants publicly,
+            // so we have to parse the debug string
+            let error_str = format!("{:?}", e);
+            if error_str.contains("NoMatchingVariant") {
+                "message type is invalid".to_string()
+            } else if error_str.contains("InvalidByteLength { len: 0, expected: 8 }") {
+                if test_name.contains("identifier") {
+                    "message identifier is invalid".to_string()
+                } else if test_name.contains("type") {
+                    "message type is invalid".to_string()
+                } else {
+                    "unknown error".to_string()
+                }
+            } else if error_str.contains("InvalidLengthPrefix") {
+                "message data is invalid".to_string()
+            } else if error_str.contains("InvalidByteLength") {
+                "message data is invalid".to_string()
+            } else {
+                "unknown error".to_string()
+            }
+        }
+        QbftMessageError::IdentifierInvalid => "message identifier is invalid".to_string(),
+        QbftMessageError::IncorrectSize => "incorrect size".to_string(),
+    }
+}

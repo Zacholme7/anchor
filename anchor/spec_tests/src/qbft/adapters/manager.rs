@@ -21,22 +21,14 @@ use tokio::sync::mpsc;
 use types::{Hash256, Slot};
 
 // Type alias for our QBFT instance
-type QbftInstance = qbft::Qbft<TestLeaderFunction, BeaconVote, Box<dyn FnMut(qbft::UnsignedWrappedQbftMessage)>>;
+type QbftInstance =
+    qbft::Qbft<TestLeaderFunction, BeaconVote, Box<dyn FnMut(qbft::UnsignedWrappedQbftMessage)>>;
 
 /// Test leader function that matches Go test harness behavior
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 struct TestLeaderFunction {
     height: InstanceHeight,
 }
-
-impl Default for TestLeaderFunction {
-    fn default() -> Self {
-        Self {
-            height: InstanceHeight::from(0),
-        }
-    }
-}
-
 impl LeaderFunction for TestLeaderFunction {
     fn leader_function(
         &self,
@@ -65,51 +57,19 @@ enum InstanceState {
     Decided(Vec<u8>),
 }
 
-/// Container for tracking messages by round and root (similar to Go's MsgContainer)
+/// Container for tracking proposal full data
+/// We no longer need to track messages since the core QBFT does that
 #[derive(Debug, Clone)]
-struct MessageContainer {
-    /// Messages organized by (height, round, root)
-    messages: HashMap<(InstanceHeight, u64, Hash256), Vec<TestSignedSSVMessage>>,
-    /// Commit messages specifically (for aggregation)
-    commit_messages: HashMap<(InstanceHeight, u64, Hash256), Vec<TestSignedSSVMessage>>,
+struct ProposalDataStorage {
     /// Store the proposal's full_data for each (height, round, root)
     proposal_full_data: HashMap<(InstanceHeight, u64, Hash256), Vec<u8>>,
 }
 
-impl MessageContainer {
+impl ProposalDataStorage {
     fn new() -> Self {
         Self {
-            messages: HashMap::new(),
-            commit_messages: HashMap::new(),
             proposal_full_data: HashMap::new(),
         }
-    }
-
-    /// Add a message to the container
-    fn add_message(
-        &mut self,
-        height: InstanceHeight,
-        round: u64,
-        root: Hash256,
-        msg: TestSignedSSVMessage,
-    ) {
-        let key = (height, round, root);
-        self.messages.entry(key).or_insert_with(Vec::new).push(msg);
-    }
-
-    /// Add a commit message specifically (for aggregation)
-    fn add_commit_message(
-        &mut self,
-        height: InstanceHeight,
-        round: u64,
-        root: Hash256,
-        msg: TestSignedSSVMessage,
-    ) {
-        let key = (height, round, root);
-        self.commit_messages
-            .entry(key)
-            .or_insert_with(Vec::new)
-            .push(msg);
     }
 
     /// Store the proposal's full_data for later use
@@ -133,46 +93,6 @@ impl MessageContainer {
     ) -> Option<Vec<u8>> {
         let key = (height, round, root);
         self.proposal_full_data.get(&key).cloned()
-    }
-
-    /// Get all unique signers for commits at a specific height, round, and root
-    fn get_unique_commit_signers(
-        &self,
-        height: InstanceHeight,
-        round: u64,
-        root: Hash256,
-    ) -> Vec<OperatorId> {
-        let key = (height, round, root);
-        let mut signers = Vec::new();
-
-        // Only count signers from COMMIT messages
-        if let Some(msgs) = self.commit_messages.get(&key) {
-            for msg in msgs {
-                // Extract operator IDs from the message
-                if let Ok(signed_msg) =
-                    TryInto::<ssv_types::message::SignedSSVMessage>::try_into(msg.clone())
-                {
-                    for &op_id in signed_msg.operator_ids() {
-                        if !signers.contains(&op_id) {
-                            signers.push(op_id);
-                        }
-                    }
-                }
-            }
-        }
-
-        signers
-    }
-
-    /// Get messages for aggregation
-    fn get_messages_for_aggregation(
-        &self,
-        height: InstanceHeight,
-        round: u64,
-        root: Hash256,
-    ) -> Vec<TestSignedSSVMessage> {
-        let key = (height, round, root);
-        self.messages.get(&key).cloned().unwrap_or_default()
     }
 }
 
@@ -207,8 +127,8 @@ pub struct ControllerAdapter {
     // Direct QBFT instances for synchronous processing (bypassing async processor)
     qbft_instances: HashMap<InstanceHeight, QbftInstance>,
 
-    // Message aggregation (mirrors Go's MsgContainer)
-    message_container: MessageContainer,
+    // Proposal data storage (we use core QBFT's containers for messages)
+    proposal_storage: ProposalDataStorage,
 
     // Track spawned instance tasks so we can abort them
     instance_handles: Vec<tokio::task::JoinHandle<()>>,
@@ -306,7 +226,7 @@ impl ControllerAdapter {
             current_committee_size: 4, // Default to 4 operators (matching Go tests)
             test_keys: None,           // Will be set by set_test_keys if needed
             qbft_instances: HashMap::new(),
-            message_container: MessageContainer::new(),
+            proposal_storage: ProposalDataStorage::new(),
             instance_handles: Vec::new(),
             operator_id,
             identifier,
@@ -351,7 +271,7 @@ impl ControllerAdapter {
         let captured = Rc::new(RefCell::new(Vec::new()));
         let captured_clone = captured.clone();
 
-        let handler: Box<dyn FnMut(qbft::UnsignedWrappedQbftMessage)> = 
+        let handler: Box<dyn FnMut(qbft::UnsignedWrappedQbftMessage)> =
             Box::new(move |msg: qbft::UnsignedWrappedQbftMessage| {
                 // For controller tests, we just capture the message
                 // No need to sign or broadcast since we're testing message processing
@@ -362,7 +282,12 @@ impl ControllerAdapter {
         let data_hash = hash_data(value);
         let beacon_vote = crate::utils::misc::create_beacon_vote_from_bytes(data_hash.as_ref());
 
-        let instance = Qbft::new(config, beacon_vote.clone(), self.identifier.clone(), handler);
+        let instance = Qbft::new(
+            config,
+            beacon_vote.clone(),
+            self.identifier.clone(),
+            handler,
+        );
 
         // The instance starts automatically when created
         // No need to call start_instance_spec
@@ -533,75 +458,6 @@ impl ControllerAdapter {
             return Err(format!("H(data) != root"));
         }
 
-        // RSA Signature Verification is disabled for now
-        // Only the decide_wrong_sig test requires actual RSA verification
-        // Other tests use mock signatures that would fail verification
-        if false {
-            // Get the SSV message bytes for hashing
-            let ssv_msg = signed_msg.ssv_message();
-
-            // Encode the SSV message (matching Go's SSVMessage.Encode())
-            use ssz::Encode;
-            let encoded_msg = ssv_msg.as_ssz_bytes();
-
-            // Hash the encoded message (matching Go: hash := sha256.Sum256(encodedMsg))
-            let msg_hash_256 = hash_data(&encoded_msg);
-            let msg_hash: [u8; 32] = *msg_hash_256.as_ref();
-
-            // Get signatures from the signed message
-            let signatures = signed_msg.signatures();
-
-            // Verify each signature against the corresponding operator's public key
-            for (i, &op_id) in operator_ids.iter().enumerate() {
-                // Find the operator in the committee
-                let operator = self
-                    .committee
-                    .iter()
-                    .find(|op| op.operator_id == *op_id as u64)
-                    .ok_or_else(|| "invalid decided msg: signer not in committee".to_string())?;
-
-                // Get the signature for this operator
-                let signature = signatures
-                    .get(i)
-                    .ok_or_else(|| "invalid decided msg: missing signature".to_string())?;
-
-                // Parse the PEM-encoded RSA public key
-                // The SSVOperatorPubKey is base64-encoded PEM
-                use base64::Engine;
-                let pem_bytes = base64::engine::general_purpose::STANDARD
-                    .decode(&operator.ssv_operator_pub_key)
-                    .map_err(|e| {
-                        format!("invalid decided msg: failed to decode public key: {}", e)
-                    })?;
-                let pem_str = String::from_utf8(pem_bytes)
-                    .map_err(|e| format!("invalid decided msg: invalid PEM string: {}", e))?;
-
-                // Parse the RSA public key from PEM
-                // The PEM has "RSA PUBLIC KEY" header but contains PKIX/SPKI data
-                // We need to parse manually
-                use pem::parse;
-                let pem_block = parse(&pem_str)
-                    .map_err(|e| format!("invalid decided msg: failed to parse PEM: {}", e))?;
-
-                // Parse as PKIX public key (Go's x509.ParsePKIXPublicKey)
-                use rsa::{RsaPublicKey, pkcs8::DecodePublicKey};
-                let public_key = RsaPublicKey::from_public_key_der(pem_block.contents())
-                    .map_err(|e| format!("invalid decided msg: failed to parse RSA key: {}", e))?;
-
-                // Verify the signature (matching Go's rsa.VerifyPKCS1v15)
-                use rsa::sha2::Sha256 as RsaSha256;
-                use rsa::signature::Verifier;
-
-                let verifying_key = rsa::pkcs1v15::VerifyingKey::<RsaSha256>::new(public_key);
-                let signature_obj = rsa::pkcs1v15::Signature::try_from(signature.as_ref())
-                    .map_err(|e| format!("invalid decided msg: invalid signature format: {}", e))?;
-
-                // Verify the signature against the message hash
-                verifying_key.verify(&msg_hash, &signature_obj)
-                    .map_err(|_| "invalid decided msg: invalid decided msg: msg signature invalid: crypto/rsa: verification error".to_string())?;
-            }
-        }
-
         Ok(())
     }
 
@@ -619,7 +475,7 @@ impl ControllerAdapter {
         let signed_msg: ssv_types::message::SignedSSVMessage = test_msg
             .clone()
             .try_into()
-            .map_err(|e| format!("Failed to convert test message: {}", e))?;
+            .map_err(|e| format!("Failed to convert test message: {:?}", e))?;
 
         // Extract and decode the QbftMessage from the SSV message data
         let ssv_msg = signed_msg.ssv_message();
@@ -777,7 +633,7 @@ impl ControllerAdapter {
                 // For tests, we stored the hash in the BeaconVote, but we need the original value
                 // We should have stored it in proposal_full_data
                 let decided_value = self
-                    .message_container
+                    .proposal_storage
                     .get_proposal_full_data(height, round, root)
                     .unwrap_or_else(|| {
                         // Fallback: extract from the decided data somehow
@@ -809,9 +665,8 @@ impl ControllerAdapter {
             }
         }
 
-        // 5. Store the message in our container for aggregation
-        self.message_container
-            .add_message(height, round, root, test_msg.clone());
+        // 5. Message is already stored in core QBFT's containers
+        // We don't need to duplicate storage
 
         // 4a. If this is a proposal with full_data, store it for later use
         if matches!(
@@ -820,7 +675,7 @@ impl ControllerAdapter {
         ) {
             let full_data = signed_msg.full_data();
             if !full_data.is_empty() {
-                self.message_container.store_proposal_full_data(
+                self.proposal_storage.store_proposal_full_data(
                     height,
                     round,
                     root,
@@ -829,53 +684,50 @@ impl ControllerAdapter {
             }
         }
 
-        // 5. Check if this is a commit message - if so, track it and check for aggregated quorum
+        // 5. Check if this is a commit message - check quorum using core QBFT container
         if matches!(
             qbft_msg.qbft_message_type,
             ssv_types::consensus::QbftMessageType::Commit
         ) {
-            // Add to commit messages specifically
-            self.message_container
-                .add_commit_message(height, round, root, test_msg.clone());
+            // Get the instance to check its commit container
+            if let Some(instance) = self.qbft_instances.get(&height) {
+                // Check if the commit container has quorum for this round
+                // The core QBFT tracks this automatically
+                if let Some(quorum_root) = instance.get_commit_container().has_quorum(round.into())
+                {
+                    // Verify the root matches
+                    if quorum_root == root {
+                        // We have quorum! Get the decided value from the proposal's full_data
+                        let decided_value = self
+                            .proposal_storage
+                            .get_proposal_full_data(height, round, root)
+                            .unwrap_or_else(|| {
+                                // Fallback to extracting from current message if no proposal stored
+                                extract_decided_value(&signed_msg)
+                            });
 
-            // Get all unique signers from COMMIT messages only
-            let unique_signers = self
-                .message_container
-                .get_unique_commit_signers(height, round, root);
-            let quorum = calculate_quorum(self.current_committee_size);
+                        // Check if this instance was already decided
+                        let was_previously_decided = matches!(
+                            self.stored_instances.get(&height),
+                            Some(InstanceState::Decided(_))
+                        );
 
-            // Check if we have reached quorum through aggregation
-            if unique_signers.len() >= quorum {
-                // We have quorum! Get the decided value from the proposal's full_data
-                // (like Go does in commit.go:29)
-                let decided_value = self
-                    .message_container
-                    .get_proposal_full_data(height, round, root)
-                    .unwrap_or_else(|| {
-                        // Fallback to extracting from current message if no proposal stored
-                        extract_decided_value(&signed_msg)
-                    });
+                        // Store this instance as decided
+                        self.stored_instances
+                            .insert(height, InstanceState::Decided(decided_value.clone()));
 
-                // Check if this instance was already decided
-                let was_previously_decided = matches!(
-                    self.stored_instances.get(&height),
-                    Some(InstanceState::Decided(_))
-                );
+                        // Update controller height if this is a future decided instance
+                        if *height > *self.current_height {
+                            self.current_height = height;
+                        }
 
-                // Store this instance as decided
-                self.stored_instances
-                    .insert(height, InstanceState::Decided(decided_value.clone()));
-
-                // Update controller height if this is a future decided instance
-                if *height > *self.current_height {
-                    self.current_height = height;
-                }
-
-                // Return decided value only if this is the first time
-                if !was_previously_decided {
-                    return Ok(Some(decided_value));
-                } else {
-                    return Ok(None);
+                        // Return decided value only if this is the first time
+                        if !was_previously_decided {
+                            return Ok(Some(decided_value));
+                        } else {
+                            return Ok(None);
+                        }
+                    }
                 }
             }
         }

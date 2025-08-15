@@ -9,6 +9,7 @@ use crate::utils::deserializers::{
 use crate::utils::test_keys::TestKeySet;
 use crate::{QbftSpecTestType, SpecTest, SpecTestType};
 use serde::Deserialize;
+use ssv_types::message::SignedSSVMessage;
 use tree_hash::TreeHash;
 use types::Hash256;
 
@@ -84,13 +85,7 @@ impl SpecTest for TimeoutTest {
         let test_keys = TestKeySet::four_share_set();
 
         // Create adapter from Pre state
-        let mut adapter = match QbftAdapter::from_timeout_pre(&self.pre, &test_keys) {
-            Ok(a) => a,
-            Err(e) => {
-                eprintln!("Failed to create adapter: {}", e);
-                return false;
-            }
-        };
+        let mut adapter = QbftAdapter::from_timeout_pre(&self.pre, &test_keys);
 
         // Record initial round
         let initial_round = adapter.get_round();
@@ -127,12 +122,6 @@ impl SpecTest for TimeoutTest {
         // Make sure round was incremented
         let new_round = adapter.get_round();
         if new_round != initial_round + 1 {
-            eprintln!(
-                "Round not incremented: {} -> {}, expected {}",
-                initial_round,
-                new_round,
-                initial_round + 1
-            );
             return false;
         }
 
@@ -154,102 +143,28 @@ impl SpecTest for TimeoutTest {
 
         // Check output messages
         let captured = adapter.get_captured_messages();
-        eprintln!("Captured {} messages after timeout", captured.len());
 
         // Verify signatures on all captured messages
         if test_keys.verify_signed_messages(&captured).is_err() {
-            eprintln!("Failed to verify signatures on captured messages");
             return false;
         }
 
         if let Some(expected_msgs) = &self.output_messages {
             if captured.len() != expected_msgs.len() {
-                eprintln!(
-                    "Message count mismatch: captured {}, expected {}",
-                    captured.len(),
-                    expected_msgs.len()
-                );
                 return false;
             }
 
             // Validate each message matches expected by comparing roots
-            for (i, (captured_msg, expected_msg)) in
-                captured.iter().zip(expected_msgs.iter()).enumerate()
-            {
-                // Get the root of the expected message
-                // Note: expected_msg is TestSignedSSVMessage, we need to convert to SignedSSVMessage
-                // For now, we'll compare the SSVMessage roots since that's what contains the actual data
-                if let Some(ref expected_ssv) = expected_msg.ssv_message {
-                    // Get tree hash root of the expected SSVMessage
-                    let expected_root = expected_ssv.tree_hash_root();
-
-                    // Decode and compare the QBFT message type
-                    use ssv_types::consensus::QbftMessage;
-                    use ssz::Decode;
-                    if let Ok(captured_qbft) =
-                        QbftMessage::from_ssz_bytes(captured_msg.ssv_message().data())
-                    {
-                        if let Ok(expected_qbft) = QbftMessage::from_ssz_bytes(expected_ssv.data())
-                        {
-                            eprintln!(
-                                "Message {}: captured type={:?}, round={}, data_round={}, expected type={:?}, round={}, data_round={}",
-                                i,
-                                captured_qbft.qbft_message_type,
-                                captured_qbft.round,
-                                captured_qbft.data_round,
-                                expected_qbft.qbft_message_type,
-                                expected_qbft.round,
-                                expected_qbft.data_round
-                            );
-                            eprintln!(
-                                "  Captured root: {:?}, Expected root: {:?}",
-                                captured_qbft.root, expected_qbft.root
-                            );
-                            eprintln!(
-                                "  Captured prep justifications: {}, Expected: {}",
-                                captured_qbft.prepare_justification.len(),
-                                expected_qbft.prepare_justification.len()
-                            );
-                        }
-                    }
-
-                    // Compare the SSVMessage roots (since full SignedSSVMessage includes signatures which may differ)
-                    // Go compares full message roots, but for our test purposes comparing SSVMessage is sufficient
-                    // todo!() revisit this???
-                    if expected_root != captured_msg.ssv_message().tree_hash_root() {
-                        eprintln!("Message root mismatch!");
-                        eprintln!("Expected: {:?}", expected_root);
-                        eprintln!(
-                            "Captured: {:?}",
-                            captured_msg.ssv_message().tree_hash_root()
-                        );
-                        return false;
-                    }
+            for (captured_msg, expected_msg) in captured.iter().zip(expected_msgs.iter()) {
+                let expected_msg: SignedSSVMessage =
+                    expected_msg.clone().try_into().expect("Valid Message");
+                if captured_msg.tree_hash_root() != expected_msg.tree_hash_root() {
+                    return false;
                 }
             }
         }
 
         // TODO: Post-state root validation
-        // We've implemented the infrastructure for post-state root validation to match Go's behavior,
-        // but there are subtle differences in JSON serialization between serde_json and Go's json.Marshal
-        // that prevent exact byte-for-byte matching of the state root hash.
-        //
-        // The implementation correctly:
-        // - Uses alphabetical field ordering
-        // - Handles null/nil values properly
-        // - Encodes base64 and hex correctly
-        // - Sets ProposalAcceptedForCurrentRound to null after timeout
-        // - Increments the round number
-        //
-        // However, the JSON encoders produce slightly different output (3768 vs 4835 bytes),
-        // likely due to differences in how nested structures are serialized.
-        //
-        // Since we validate all the critical state changes individually above (round increment,
-        // messages, signatures, timer state), the functional correctness is assured even without
-        // the exact state root match.
-        //
-        // Future work: Investigate using a custom JSON serializer that exactly matches Go's output,
-        // or implement a different comparison mechanism that's more forgiving of formatting differences.
 
         true
     }

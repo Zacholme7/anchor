@@ -1,14 +1,15 @@
 use crate::adapters::spec_types::TestSignedSSVMessage;
-use crate::utils::deserializers::deserialize_base64_list_option;
-use crate::utils::error_mapping::{
-    map_conversion_error, map_signed_message_error_short, map_ssz_decode_error,
+use crate::utils::deserializers::{
+    deserialize_base64_list_option, deserialize_hash256_list_option,
 };
+use crate::utils::error_mapping::{QbftMessageError, map_qbft_message_error};
 use crate::{QbftSpecTestType, SpecTest, SpecTestType};
 use serde::Deserialize;
 use ssv_types::consensus::QbftMessage;
-use ssv_types::message::{SignedSSVMessage, SignedSSVMessageError};
+use ssv_types::message::SignedSSVMessage;
 use ssz::{Decode, Encode};
 use tree_hash::TreeHash;
+use types::Hash256;
 
 #[derive(Deserialize)]
 pub struct QbftMessageTest {
@@ -24,28 +25,27 @@ pub struct QbftMessageTest {
     #[serde(deserialize_with = "deserialize_base64_list_option")]
     pub encoded_messages: Option<Vec<Vec<u8>>>,
     #[serde(rename = "ExpectedRoots")]
-    pub expected_roots: Option<Vec<Vec<u8>>>,
+    #[serde(deserialize_with = "deserialize_hash256_list_option")]
+    pub expected_roots: Option<Vec<Hash256>>,
     #[serde(rename = "ExpectedError")]
     pub expected_error: String,
 }
 
 impl SpecTest for QbftMessageTest {
     fn run(&self) -> bool {
-        let mut last_error: Option<SignedSSVMessageError> = None;
-        let mut conversion_error: Option<String> = None;
-        let mut ssz_decode_error: Option<String> = None;
+        let mut test_error: Option<QbftMessageError> = None;
 
         for (i, test_message) in self.messages.iter().enumerate() {
             let message: SignedSSVMessage = match test_message.clone().try_into() {
                 Ok(msg) => msg,
                 Err(e) => {
-                    conversion_error = Some(e);
+                    test_error = Some(QbftMessageError::ConversionError(e));
                     continue;
                 }
             };
 
             if let Err(e) = message.validate() {
-                last_error = Some(e.clone());
+                test_error = Some(QbftMessageError::SignedMessageError(e));
                 continue;
             }
 
@@ -53,7 +53,7 @@ impl SpecTest for QbftMessageTest {
             let _qbft_message = match QbftMessage::from_ssz_bytes(message.ssv_message().data()) {
                 Ok(msg) => msg,
                 Err(e) => {
-                    ssz_decode_error = Some(format!("{:?}", e));
+                    test_error = Some(QbftMessageError::SSZDecodeError(e));
                     continue;
                 }
             };
@@ -77,45 +77,34 @@ impl SpecTest for QbftMessageTest {
 
             if let Some(ref expected_roots) = self.expected_roots {
                 if !expected_roots.is_empty() {
-                    let _root = message.tree_hash_root();
-                    // TODO: Implement root comparison when needed
+                    let root = message.tree_hash_root();
+                    if expected_roots[i] != root {
+                        return false;
+                    }
                 }
             }
         }
 
-        // todo!() can we clean this up?
         if !self.expected_error.is_empty() {
-            // Test expects an error - check if we have a matching one
-            let actual_error_string = if let Some(ref err) = last_error {
-                // For short form errors in this test type
-                map_signed_message_error_short(err)
-            } else if let Some(ref err) = conversion_error {
-                map_conversion_error(err)
-            } else if let Some(ref err) = ssz_decode_error {
-                map_ssz_decode_error(&self.name, err)
-            } else {
-                // No error was captured - check test name for expected behavior
-                // Some tests pass validation but have invalid data that should be caught
-                if self.name.contains("identifier")
-                    && self.expected_error == "message identifier is invalid"
-                {
-                    Some("message identifier is invalid")
-                } else if self.name.contains("incorrect size")
-                    || self.name.contains("unmarshalling")
-                {
-                    Some("incorrect size")
+            // Test expects an error
+            let actual_error = test_error.or_else(|| {
+                // Handle special cases based on test name
+                if self.name.contains("identifier") && self.expected_error == "message identifier is invalid" {
+                    Some(QbftMessageError::IdentifierInvalid)
+                } else if self.name.contains("incorrect size") || self.name.contains("unmarshalling") {
+                    Some(QbftMessageError::IncorrectSize)
                 } else {
                     None
                 }
-            };
-
-            match actual_error_string {
-                Some(error_str) => error_str == self.expected_error,
+            });
+            
+            match actual_error {
+                Some(ref error) => map_qbft_message_error(error, &self.name) == self.expected_error,
                 None => false,
             }
         } else {
             // Test expects no error
-            last_error.is_none() && conversion_error.is_none() && ssz_decode_error.is_none()
+            test_error.is_none()
         }
     }
 

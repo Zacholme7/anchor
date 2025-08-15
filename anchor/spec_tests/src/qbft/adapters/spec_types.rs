@@ -7,10 +7,29 @@ use serde::Deserialize;
 use ssv_types::{
     OperatorId,
     consensus::{QbftMessage, QbftMessageType},
-    message::{SSVMessage, SignedSSVMessage},
+    message::{SSVMessage, SignedSSVMessage, SignedSSVMessageError},
 };
 use ssz::{Decode, Encode};
 use std::collections::HashMap;
+
+/// Error type for test message conversion
+#[derive(Debug, Clone)]
+pub enum TestMessageConversionError {
+    /// Base64 decode error
+    Base64Decode(String),
+    /// Invalid signature length
+    InvalidSignatureLength { expected: usize, got: usize },
+    /// SSZ decode error
+    SSZDecode(String),
+    /// SignedSSVMessage creation error
+    SignedSSVMessage(SignedSSVMessageError),
+    /// Multi-signer not allowed for this message type
+    MultiSignerNotAllowed,
+    /// Missing SSV message
+    MissingSSVMessage,
+    /// Invalid full data encoding
+    InvalidFullData(String),
+}
 
 /// Committee member as defined by the spec. Used for parsing
 /// and then covnerted into our internal types
@@ -104,7 +123,7 @@ pub struct TestSignedSSVMessage {
 }
 
 impl TryFrom<TestSignedSSVMessage> for SignedSSVMessage {
-    type Error = String;
+    type Error = TestMessageConversionError;
 
     fn try_from(test_msg: TestSignedSSVMessage) -> Result<Self, Self::Error> {
         // Convert signatures from base64 strings to [u8; 256] arrays
@@ -112,13 +131,13 @@ impl TryFrom<TestSignedSSVMessage> for SignedSSVMessage {
         for sig_str in &test_msg.signatures {
             let sig_bytes = BASE64_STANDARD
                 .decode(sig_str.as_bytes())
-                .map_err(|e| format!("Failed to decode signature: {}", e))?;
+                .map_err(|e| TestMessageConversionError::Base64Decode(e.to_string()))?;
 
             if sig_bytes.len() != 256 {
-                return Err(format!(
-                    "Invalid signature length: expected 256, got {}",
-                    sig_bytes.len()
-                ));
+                return Err(TestMessageConversionError::InvalidSignatureLength {
+                    expected: 256,
+                    got: sig_bytes.len(),
+                });
             }
 
             let mut sig_array = [0u8; 256];
@@ -130,13 +149,13 @@ impl TryFrom<TestSignedSSVMessage> for SignedSSVMessage {
         let ssv_message = test_msg
             .ssv_message
             .clone()
-            .ok_or_else(|| "SSVMessage is None".to_string())?;
+            .ok_or(TestMessageConversionError::MissingSSVMessage)?;
 
         // Decode full_data from base64 string to bytes
         let full_data_bytes = match &test_msg.full_data {
             Some(base64_str) => BASE64_STANDARD
                 .decode(base64_str.as_bytes())
-                .map_err(|e| format!("failed to decode base64 full_data: {}", e))?,
+                .map_err(|e| TestMessageConversionError::InvalidFullData(e.to_string()))?,
             None => Vec::new(),
         };
 
@@ -147,7 +166,7 @@ impl TryFrom<TestSignedSSVMessage> for SignedSSVMessage {
             ssv_message,
             full_data_bytes,
         )
-        .map_err(|e| format!("Failed to create SignedSSVMessage: {:?}", e))
+        .map_err(TestMessageConversionError::SignedSSVMessage)
     }
 }
 

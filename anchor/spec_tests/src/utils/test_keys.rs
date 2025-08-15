@@ -43,7 +43,9 @@ pub struct TestKeySet {
 
 impl TestKeySet {
     /// Create TestKeySet from committee information in spec tests
-    pub fn from_committee(committee: &[crate::qbft::adapters::spec_types::SpecTestOperator]) -> Self {
+    pub fn from_committee(
+        committee: &[crate::qbft::adapters::spec_types::SpecTestOperator],
+    ) -> Self {
         // For now, just return the four_share_set which matches the test committee
         // In the future, we could parse the actual keys from the committee
         Self::four_share_set()

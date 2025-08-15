@@ -1,5 +1,6 @@
 use super::spec_types::{AcceptedProposal, TestSignedSSVMessage};
 use crate::qbft::message_processing::MessageProcessingState;
+use crate::qbft::timeout::TimeoutTestPre;
 use crate::utils::misc::{calculate_quorum, create_beacon_vote_from_bytes, hash_data};
 use crate::utils::rsa_signing::sign_ssz_message_with_rsa;
 use crate::utils::rsa_validation::validate_rsa_signatures;
@@ -345,22 +346,17 @@ impl QbftAdapter {
         accepted: &AcceptedProposal,
         current_round: u64,
         set_prepared: bool, // Whether to also set last_prepared
-    ) -> Result<(), String> {
+    ) {
         // Parse the QBFT message from the accepted proposal
-        let ssv_msg = accepted
-            .signed_message
-            .ssv_message
-            .as_ref()
-            .ok_or_else(|| "ProposalAcceptedForCurrentRound has null SSVMessage".to_string())?;
-        let qbft_msg = QbftMessage::from_ssz_bytes(ssv_msg.data())
-            .map_err(|e| format!("Failed to decode accepted proposal: {:?}", e))?;
+        let ssv_msg = accepted.signed_message.ssv_message.as_ref().unwrap();
+        let qbft_msg = QbftMessage::from_ssz_bytes(ssv_msg.data()).unwrap();
 
         // Store the full data if present for the accepted proposal
         if let Some(ref full_data_str) = accepted.signed_message.full_data {
             use base64::Engine;
             let full_data = base64::engine::general_purpose::STANDARD
                 .decode(full_data_str)
-                .map_err(|e| format!("Failed to decode full_data: {:?}", e))?;
+                .unwrap();
             if !full_data.is_empty() {
                 // Store the data for the proposal
                 let bytes: &[u8] = qbft_msg.root.as_ref();
@@ -393,23 +389,15 @@ impl QbftAdapter {
         self.instance.set_state_spec(InstanceState::Prepare {
             proposal_root: qbft_msg.root,
         });
-
-        Ok(())
     }
 
     /// Create adapter from timeout test Pre state
-    pub fn from_timeout_pre(
-        pre: &crate::qbft::timeout::TimeoutTestPre,
-        test_keys: &crate::utils::test_keys::TestKeySet,
-    ) -> Result<Self, String> {
+    pub fn from_timeout_pre(pre: &TimeoutTestPre, test_keys: &TestKeySet) -> Self {
         // Extract basic config from pre state
         let operator_id = OperatorId::from(pre.state.committee_member.operator_id);
         let height = InstanceHeight::from(pre.state.height as usize);
         let round = Round::from(pre.state.round);
-        let identifier = MessageId::from(
-            <[u8; 56]>::try_from(pre.state.id.as_slice())
-                .map_err(|_| "Invalid identifier length")?,
-        );
+        let identifier = MessageId::from(<[u8; 56]>::try_from(pre.state.id.as_slice()).unwrap());
 
         // Create adapter with state
         let mut adapter = Self::new_with_state(QbftStartingState {
@@ -430,10 +418,10 @@ impl QbftAdapter {
         if let Some(ref accepted) = pre.state.proposal_accepted_for_current_round {
             // For timeout tests, only set prepared if LastPreparedRound > 0
             let set_prepared = pre.state.last_prepared_round > 0;
-            adapter.setup_proposal_accepted(accepted, pre.state.round, set_prepared)?;
+            adapter.setup_proposal_accepted(accepted, pre.state.round, set_prepared);
         }
 
-        Ok(adapter)
+        adapter
     }
 
     /// Process a message through the QBFT instance for spec tests
@@ -541,7 +529,7 @@ impl QbftAdapter {
         // Set ProposalAcceptedForCurrentRound if present
         if let Some(ref accepted) = pre.state.proposal_accepted_for_current_round {
             // For message processing tests, ProposalAccepted implies prepared
-            adapter.setup_proposal_accepted(accepted, pre.state.round, true)?;
+            adapter.setup_proposal_accepted(accepted, pre.state.round, true);
         }
 
         // Set Decided state if present

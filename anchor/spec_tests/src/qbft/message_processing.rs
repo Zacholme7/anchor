@@ -110,22 +110,13 @@ impl SpecTest for MessageProcessingTest {
                     // Expected error matched
                 }
                 Some(e) => {
-                    eprintln!(
-                        "FAILED {}: Expected error '{}', got '{}'",
-                        self.name, self.expected_error, e
-                    );
                     return false;
                 }
                 None => {
-                    eprintln!(
-                        "FAILED {}: Expected error '{}', got none",
-                        self.name, self.expected_error
-                    );
                     return false;
                 }
             }
         } else if let Some(e) = last_error {
-            eprintln!("FAILED {}: Unexpected error: {}", self.name, e);
             return false;
         }
 
