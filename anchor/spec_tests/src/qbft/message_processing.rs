@@ -81,42 +81,30 @@ pub struct MessageProcessingTest {
 
 impl SpecTest for MessageProcessingTest {
     fn run(&self) -> bool {
-        // Get test keys
-        let test_keys = TestKeySet::four_share_set();
-
         // Create adapter from Pre state
-        let mut adapter = match QbftAdapter::from_message_processing_pre(&self.pre, &test_keys) {
-            Ok(a) => a,
-            Err(e) => {
-                eprintln!("FAILED {}: Failed to create adapter: {}", self.name, e);
-                return false;
-            }
-        };
+        let mut adapter = QbftAdapter::for_message_processing(&self.pre);
 
         // Process each input message
         let mut last_error = None;
-        for (_i, msg) in self.input_messages.iter().enumerate() {
+        for msg in self.input_messages.iter() {
             if let Err(e) = adapter.process_message(msg) {
                 last_error = Some(e);
-                // Don't break - continue processing all messages
-                // Go tests continue processing even after errors
             }
         }
 
         // Check error expectations
         if !self.expected_error.is_empty() {
             match last_error {
-                Some(e) if e == self.expected_error => {
-                    // Expected error matched
-                }
                 Some(e) => {
-                    return false;
+                    // make sure the errors match
+                    if e != self.expected_error {
+                        return false;
+                    }
                 }
-                None => {
-                    return false;
-                }
+                None => return false,
             }
-        } else if let Some(e) = last_error {
+        } else if let Some(_) = last_error {
+            // Got an error when one was not expected
             return false;
         }
 
@@ -124,37 +112,8 @@ impl SpecTest for MessageProcessingTest {
         if let Some(expected_msgs) = &self.output_messages {
             let captured = adapter.get_captured_messages();
             if captured.len() != expected_msgs.len() {
-                eprintln!("DEBUG: Captured messages for '{}':", self.name);
-                for (i, msg) in captured.iter().enumerate() {
-                    if let Ok(qbft_msg) = QbftMessage::from_ssz_bytes(msg.ssv_message().data()) {
-                        eprintln!(
-                            "  {}: {:?} round {}",
-                            i, qbft_msg.qbft_message_type, qbft_msg.round
-                        );
-                    }
-                }
-                eprintln!("Expected messages:");
-                for (i, msg) in expected_msgs.iter().enumerate() {
-                    if let Some(ssv_msg) = &msg.ssv_message {
-                        if let Ok(qbft_msg) = QbftMessage::from_ssz_bytes(ssv_msg.data()) {
-                            eprintln!(
-                                "  {}: {:?} round {}",
-                                i, qbft_msg.qbft_message_type, qbft_msg.round
-                            );
-                        }
-                    }
-                }
-                eprintln!(
-                    "FAILED {}: Expected {} output messages, got {}",
-                    self.name,
-                    expected_msgs.len(),
-                    captured.len()
-                );
                 return false;
             }
-
-            // For now, just check counts - full message validation can be added later
-            // (similar to timeout tests)
         }
 
         // TODO: Check timer state if provided

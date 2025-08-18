@@ -1,6 +1,6 @@
+use super::spec_test_data::SpecTestData;
 use crate::utils::deserializers::{deserialize_base64, deserialize_hex};
 use crate::utils::error_mapping::map_signed_message_error;
-use crate::utils::misc::create_beacon_vote_from_bytes;
 use base64::prelude::*;
 use qbft::WrappedQbftMessage;
 use serde::Deserialize;
@@ -220,10 +220,10 @@ impl TestSignedSSVMessage {
             } else if !raw_data.is_empty()
                 && qbft_message.qbft_message_type == QbftMessageType::RoundChange
             {
-                // For RoundChange with prepared value, encode as BeaconVote
+                // For RoundChange with prepared value, encode as SpecTestData
                 if qbft_message.data_round > 0 {
-                    let beacon_vote = create_beacon_vote_from_bytes(&raw_data);
-                    beacon_vote.as_ssz_bytes()
+                    let test_data = SpecTestData::new(raw_data.clone());
+                    test_data.as_ssz_bytes()
                 } else {
                     raw_data
                 }

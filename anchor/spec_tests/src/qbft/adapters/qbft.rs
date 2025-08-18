@@ -1,7 +1,9 @@
+use super::spec_test_data::SpecTestData;
 use super::spec_types::{AcceptedProposal, TestSignedSSVMessage};
+use crate::qbft::message_processing::MessageProcessingPre;
 use crate::qbft::message_processing::MessageProcessingState;
 use crate::qbft::timeout::TimeoutTestPre;
-use crate::utils::misc::{calculate_quorum, create_beacon_vote_from_bytes, hash_data};
+use crate::utils::misc::{calculate_quorum, hash_data};
 use crate::utils::rsa_signing::sign_ssz_message_with_rsa;
 use crate::utils::rsa_validation::validate_rsa_signatures;
 use crate::utils::test_keys::TestKeySet;
@@ -9,7 +11,6 @@ use openssl::pkey::Private;
 use openssl::rsa::Rsa;
 use qbft::{ConfigBuilder, InstanceHeight, InstanceState, LeaderFunction};
 use qbft::{Qbft, UnsignedWrappedQbftMessage, WrappedQbftMessage};
-use ssv_types::consensus::BeaconVote;
 use ssv_types::consensus::{QbftMessage, QbftMessageType, UnsignedSSVMessage};
 use ssv_types::message::SignedSSVMessage;
 use ssv_types::msgid::MessageId;
@@ -67,7 +68,7 @@ type MockHandler = Box<dyn FnMut(UnsignedWrappedQbftMessage)>;
 
 // Adapter over our core qbft instance
 pub struct QbftAdapter {
-    instance: Qbft<TestLeaderFunction, BeaconVote, MockHandler>,
+    instance: Qbft<TestLeaderFunction, SpecTestData, MockHandler>,
     operator_rsa_key: Option<Rsa<Private>>,
     operator_id: OperatorId,
     // Store original state value bytes for fulldata
@@ -142,12 +143,7 @@ impl QbftAdapter {
             captured_clone.borrow_mut().push(signed);
         });
 
-        let mut instance = Qbft::new(
-            config,
-            create_beacon_vote_from_bytes(&[]),
-            identifier,
-            mock_handler,
-        );
+        let mut instance = Qbft::new(config, SpecTestData::default(), identifier, mock_handler);
 
         // Set the current round if provided (for spec tests)
         if let Some(round) = state.round {
@@ -215,7 +211,7 @@ impl QbftAdapter {
 
                 // Create test data to store as the full data
                 let bytes: &[u8] = prepared_value.as_ref();
-                let dummy_vote = create_beacon_vote_from_bytes(bytes);
+                let dummy_vote = SpecTestData::new(bytes.to_vec());
 
                 // Set last prepared round and value with full data
                 self.instance.set_last_prepared_spec(
@@ -245,7 +241,7 @@ impl QbftAdapter {
 
             // Store dummy data for the proposal
             let bytes: &[u8] = hash.as_ref();
-            let dummy_vote = create_beacon_vote_from_bytes(bytes);
+            let dummy_vote = SpecTestData::new(bytes.to_vec());
             self.instance.store_data_spec(hash, dummy_vote);
 
             // For proposals, full_data is the original data
@@ -360,7 +356,7 @@ impl QbftAdapter {
             if !full_data.is_empty() {
                 // Store the data for the proposal
                 let bytes: &[u8] = qbft_msg.root.as_ref();
-                let dummy_vote = create_beacon_vote_from_bytes(bytes);
+                let dummy_vote = SpecTestData::new(bytes.to_vec());
                 self.instance.store_data_spec(qbft_msg.root, dummy_vote);
 
                 // Store the full data bytes for later use
@@ -377,7 +373,7 @@ impl QbftAdapter {
         // For timeout tests: ProposalAccepted doesn't imply prepared unless LastPreparedRound > 0
         if set_prepared {
             let bytes: &[u8] = qbft_msg.root.as_ref();
-            let dummy_vote = create_beacon_vote_from_bytes(bytes);
+            let dummy_vote = SpecTestData::new(bytes.to_vec());
             self.instance.set_last_prepared_spec(
                 Round::from(current_round),
                 qbft_msg.root,
@@ -465,18 +461,12 @@ impl QbftAdapter {
     }
 
     /// Create adapter from message processing test Pre state
-    pub fn from_message_processing_pre(
-        pre: &crate::qbft::message_processing::MessageProcessingPre,
-        test_keys: &crate::utils::test_keys::TestKeySet,
-    ) -> Result<Self, String> {
+    pub fn for_message_processing(pre: &MessageProcessingPre) -> Self {
         // Extract basic config from pre state
         let operator_id = OperatorId::from(pre.state.committee_member.operator_id);
         let height = InstanceHeight::from(pre.state.height as usize);
         let round = Round::from(pre.state.round);
-        let identifier = MessageId::from(
-            <[u8; 56]>::try_from(pre.state.id.as_slice())
-                .map_err(|_| "Invalid identifier length")?,
-        );
+        let identifier = MessageId::from(<[u8; 56]>::try_from(pre.state.id.as_slice()).unwrap());
 
         // Build committee from state
         let committee: Option<Vec<OperatorId>> =
@@ -486,6 +476,7 @@ impl QbftAdapter {
                     .collect()
             });
 
+        let test_keys = TestKeySet::four_share_set();
         // Create adapter with state
         let mut adapter = Self::new_with_state(QbftStartingState {
             height: Some(height),
@@ -503,7 +494,7 @@ impl QbftAdapter {
 
         // Populate containers from pre.state FIRST (before setting other state)
         // This ensures messages are in containers for state validation
-        adapter.populate_containers(&pre.state)?;
+        adapter.populate_containers(&pre.state);
 
         // Set LastPrepared if present
         if pre.state.last_prepared_round > 0 {
@@ -516,7 +507,7 @@ impl QbftAdapter {
 
                 // Create dummy vote for storage
                 let bytes: &[u8] = prepared_value.as_ref();
-                let dummy_vote = create_beacon_vote_from_bytes(bytes);
+                let dummy_vote = SpecTestData::new(bytes.to_vec());
 
                 adapter.instance.set_last_prepared_spec(
                     Round::from(pre.state.last_prepared_round),
@@ -543,7 +534,7 @@ impl QbftAdapter {
 
                 // Store the decided value
                 let bytes: &[u8] = decided_value.as_ref();
-                let dummy_vote = create_beacon_vote_from_bytes(bytes);
+                let dummy_vote = SpecTestData::new(bytes.to_vec());
                 adapter.instance.store_data_spec(decided_value, dummy_vote);
 
                 // Store the decided hash for creating commit messages later
@@ -556,36 +547,34 @@ impl QbftAdapter {
             adapter.instance.force_stop_spec();
         }
 
-        Ok(adapter)
+        adapter
     }
 
     /// Populate containers with messages from pre-state
-    fn populate_containers(&mut self, state: &MessageProcessingState) -> Result<(), String> {
+    fn populate_containers(&mut self, state: &MessageProcessingState) {
         // Process each container type
-        for (_, test_msg) in &state.propose_container.msgs {
+        for test_msg in state.propose_container.msgs.values() {
             if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
                 self.instance.add_message_to_container_spec(&wrapped);
             }
         }
 
-        for (_, test_msg) in &state.prepare_container.msgs {
+        for test_msg in state.prepare_container.msgs.values() {
             if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
                 self.instance.add_message_to_container_spec(&wrapped);
             }
         }
 
-        for (_, test_msg) in &state.commit_container.msgs {
+        for test_msg in state.commit_container.msgs.values() {
             if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
                 self.instance.add_message_to_container_spec(&wrapped);
             }
         }
 
-        for (_, test_msg) in &state.round_change_container.msgs {
+        for test_msg in state.round_change_container.msgs.values() {
             if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
                 self.instance.add_message_to_container_spec(&wrapped);
             }
         }
-
-        Ok(())
     }
 }

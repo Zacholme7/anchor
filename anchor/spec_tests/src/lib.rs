@@ -153,14 +153,6 @@ fn run_tests(test_type: SpecTestType) -> bool {
                     .unwrap_or(false);
 
                 if matches {
-                    // Check if we should filter to a specific test
-                    if let Ok(filter) = std::env::var("TEST_FILTER") {
-                        if !path.to_string_lossy().contains(&filter) {
-                            return None;
-                        }
-                    }
-
-                    println!("Loading {path:?}");
                     let loader = TEST_LOADERS
                         .get(&test_type)
                         .unwrap_or_else(|| panic!("No loader registered for: {test_type}"));
@@ -171,43 +163,15 @@ fn run_tests(test_type: SpecTestType) -> bool {
         })
         .collect();
 
-    if tests.is_empty() {
-        println!("No tests matched the filter");
-        return true; // Return true so test doesn't fail
-    }
     println!("Loaded {} tests", tests.len());
 
     let mut result = true;
-    let mut passed = 0;
-    let mut failed = 0;
     for mut test in tests {
         test.setup();
         let test_result = test.run();
-        if test_result {
-            passed += 1;
-        } else {
-            failed += 1;
-        }
         result &= test_result;
     }
-    let total = passed + failed;
-    let pass_rate = (passed as f64 / total as f64) * 100.0;
 
-    // The test suite passes if we achieve at least 94% pass rate (50/53 tests).
-    // The 3 failing tests require complex QBFT protocol validation that is
-    // beyond the current implementation scope (proposal/round change justification).
-    if pass_rate >= 94.0 {
-        println!(
-            "✅ Controller tests: {}/{} passed ({:.1}%)",
-            passed, total, pass_rate
-        );
-        return true;
-    }
-
-    println!(
-        "❌ Controller tests: {}/{} passed ({:.1}%)",
-        passed, total, pass_rate
-    );
     result
 }
 

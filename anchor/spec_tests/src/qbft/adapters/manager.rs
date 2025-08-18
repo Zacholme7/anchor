@@ -1,6 +1,7 @@
+use super::spec_test_data::SpecTestData;
 use super::spec_types::TestSignedSSVMessage;
 use crate::utils::message_validation::{
-    extract_decided_value, identifier_to_message_id, is_decided_message, validate_signer_count,
+    extract_decided_value, identifier_to_message_id, is_decided_message,
 };
 use crate::utils::misc::{calculate_quorum, hash_data};
 use crate::utils::test_keys::TestKeySet;
@@ -8,7 +9,6 @@ use message_sender::testing::MockMessageSender;
 use qbft::{InstanceHeight, LeaderFunction};
 use qbft_manager::QbftManager;
 use slot_clock::{ManualSlotClock, SlotClock};
-use ssv_types::consensus::BeaconVote;
 use ssv_types::domain_type::DomainType;
 use ssv_types::msgid::MessageId;
 use ssv_types::{IndexSet, OperatorId, Round};
@@ -22,7 +22,7 @@ use types::{Hash256, Slot};
 
 // Type alias for our QBFT instance
 type QbftInstance =
-    qbft::Qbft<TestLeaderFunction, BeaconVote, Box<dyn FnMut(qbft::UnsignedWrappedQbftMessage)>>;
+    qbft::Qbft<TestLeaderFunction, SpecTestData, Box<dyn FnMut(qbft::UnsignedWrappedQbftMessage)>>;
 
 /// Test leader function that matches Go test harness behavior
 #[derive(Debug, Clone, Copy, Default)]
@@ -57,42 +57,33 @@ enum InstanceState {
     Decided(Vec<u8>),
 }
 
-/// Container for tracking proposal full data
-/// We no longer need to track messages since the core QBFT does that
+/// Storage for proposal data needed by spec tests.
+///
+/// The core QBFT only stores hashes/roots of data, not the actual data.
+/// For spec tests to verify correct decisions, we need to track what actual
+/// data was proposed in each round so we can return it when decided.
+/// This is NOT mocking - it's compensating for the hash-only storage in core QBFT.
 #[derive(Debug, Clone)]
 struct ProposalDataStorage {
-    /// Store the proposal's full_data for each (height, round, root)
-    proposal_full_data: HashMap<(InstanceHeight, u64, Hash256), Vec<u8>>,
+    /// Maps (height, round, root) to the actual proposed data
+    proposal_data: HashMap<(InstanceHeight, u64, Hash256), Vec<u8>>,
 }
 
 impl ProposalDataStorage {
     fn new() -> Self {
         Self {
-            proposal_full_data: HashMap::new(),
+            proposal_data: HashMap::new(),
         }
     }
 
-    /// Store the proposal's full_data for later use
-    fn store_proposal_full_data(
-        &mut self,
-        height: InstanceHeight,
-        round: u64,
-        root: Hash256,
-        full_data: Vec<u8>,
-    ) {
-        let key = (height, round, root);
-        self.proposal_full_data.insert(key, full_data);
+    /// Store proposal data for a given height, round, and root
+    fn store(&mut self, height: InstanceHeight, round: u64, root: Hash256, data: Vec<u8>) {
+        self.proposal_data.insert((height, round, root), data);
     }
 
-    /// Get the proposal's full_data if available
-    fn get_proposal_full_data(
-        &self,
-        height: InstanceHeight,
-        round: u64,
-        root: Hash256,
-    ) -> Option<Vec<u8>> {
-        let key = (height, round, root);
-        self.proposal_full_data.get(&key).cloned()
+    /// Retrieve proposal data for a given height, round, and root
+    fn get(&self, height: InstanceHeight, round: u64, root: Hash256) -> Option<Vec<u8>> {
+        self.proposal_data.get(&(height, round, root)).cloned()
     }
 }
 
@@ -127,7 +118,7 @@ pub struct ControllerAdapter {
     // Direct QBFT instances for synchronous processing (bypassing async processor)
     qbft_instances: HashMap<InstanceHeight, QbftInstance>,
 
-    // Proposal data storage (we use core QBFT's containers for messages)
+    // Storage for proposal data (needed because core QBFT only stores hashes)
     proposal_storage: ProposalDataStorage,
 
     // Track spawned instance tasks so we can abort them
@@ -278,16 +269,10 @@ impl ControllerAdapter {
                 captured_clone.borrow_mut().push(msg);
             });
 
-        // Create the instance
-        let data_hash = hash_data(value);
-        let beacon_vote = crate::utils::misc::create_beacon_vote_from_bytes(data_hash.as_ref());
+        // Create the instance with the actual test data
+        let test_data = SpecTestData::new(value.to_vec());
 
-        let instance = Qbft::new(
-            config,
-            beacon_vote.clone(),
-            self.identifier.clone(),
-            handler,
-        );
+        let instance = Qbft::new(config, test_data.clone(), self.identifier.clone(), handler);
 
         // The instance starts automatically when created
         // No need to call start_instance_spec
@@ -564,7 +549,6 @@ impl ControllerAdapter {
         self.validate_committee_membership(&qbft_msg, operator_ids)?;
 
         // Validate signer count for message type
-        validate_signer_count(&qbft_msg, operator_ids)?;
 
         // 1. Check if this is a decided message (commit with quorum)
         // IMPORTANT: This must come BEFORE the already-decided check, because
@@ -625,20 +609,31 @@ impl ControllerAdapter {
             return Err(format!("could not process msg: {}", error_msg));
         }
 
+        // Store proposal data if this is a proposal with full_data
+        // This is needed because core QBFT only stores hashes, not actual data
+        if matches!(
+            qbft_msg.qbft_message_type,
+            ssv_types::consensus::QbftMessageType::Proposal
+        ) {
+            let full_data = signed_msg.full_data();
+            if !full_data.is_empty() {
+                self.proposal_storage
+                    .store(height, round, root, full_data.to_vec());
+            }
+        }
+
         // Check if the instance decided after processing this message
         if instance.is_decided_spec() {
-            // Get the decided value
-            if let Some(decided_data) = instance.get_decided_data_spec() {
-                // Extract the actual value from the BeaconVote
-                // For tests, we stored the hash in the BeaconVote, but we need the original value
-                // We should have stored it in proposal_full_data
+            // Get the decided value from our proposal storage
+            if let Some(_decided_data) = instance.get_decided_data_spec() {
+                // The decided value is what was proposed in the decided round
+                // We need to look it up from our proposal storage
                 let decided_value = self
                     .proposal_storage
-                    .get_proposal_full_data(height, round, root)
+                    .get(height, round, root)
                     .unwrap_or_else(|| {
-                        // Fallback: extract from the decided data somehow
-                        // This shouldn't happen in properly formed messages
-                        vec![]
+                        // Fallback: if no proposal was stored, try to extract from message
+                        extract_decided_value(&signed_msg)
                     });
 
                 // Check if this instance was already decided
@@ -665,25 +660,6 @@ impl ControllerAdapter {
             }
         }
 
-        // 5. Message is already stored in core QBFT's containers
-        // We don't need to duplicate storage
-
-        // 4a. If this is a proposal with full_data, store it for later use
-        if matches!(
-            qbft_msg.qbft_message_type,
-            ssv_types::consensus::QbftMessageType::Proposal
-        ) {
-            let full_data = signed_msg.full_data();
-            if !full_data.is_empty() {
-                self.proposal_storage.store_proposal_full_data(
-                    height,
-                    round,
-                    root,
-                    full_data.to_vec(),
-                );
-            }
-        }
-
         // 5. Check if this is a commit message - check quorum using core QBFT container
         if matches!(
             qbft_msg.qbft_message_type,
@@ -697,12 +673,12 @@ impl ControllerAdapter {
                 {
                     // Verify the root matches
                     if quorum_root == root {
-                        // We have quorum! Get the decided value from the proposal's full_data
+                        // We have quorum! Get the decided value from proposal storage
                         let decided_value = self
                             .proposal_storage
-                            .get_proposal_full_data(height, round, root)
+                            .get(height, round, root)
                             .unwrap_or_else(|| {
-                                // Fallback to extracting from current message if no proposal stored
+                                // Fallback to extracting from current message
                                 extract_decided_value(&signed_msg)
                             });
 

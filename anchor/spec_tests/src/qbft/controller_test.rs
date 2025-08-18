@@ -4,6 +4,7 @@ use super::adapters::spec_types::{
 use crate::utils::deserializers::{
     deserialize_base64, deserialize_base64_option, deserialize_hex_hash256_option,
 };
+use crate::utils::test_keys::TestKeySet;
 use crate::{QbftSpecTestType, SpecTest, SpecTestType};
 use serde::Deserialize;
 use types::Hash256;
@@ -68,11 +69,6 @@ pub struct ExpectedDecidedState {
 
 impl SpecTest for ControllerTest {
     fn run(&self) -> bool {
-        // Initialize tracing for debug output
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter("debug")
-            .try_init();
-
         // Create runtime for async operations
         let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
 
@@ -92,15 +88,9 @@ impl SpecTest for ControllerTest {
                 ssv_types::OperatorId(1),
                 committee.clone(),
             );
-            
-            // For "decide wrong sig" test, we need to enable RSA signature verification
-            // Create a mock TestKeySet that will properly verify signatures
-            if self.name == "decide wrong sig" {
-                use crate::utils::test_keys::TestKeySet;
-                // Create test keys from the committee operators
-                let test_keys = TestKeySet::from_committee(&committee);
-                adapter.set_test_keys(test_keys);
-            }
+
+
+                adapter.set_test_keys(TestKeySet::four_share_set());
 
             // Process each run instance data
             for (i, run_data) in self.run_instance_data.iter().enumerate() {
@@ -154,7 +144,7 @@ impl SpecTest for ControllerTest {
                                 // For "sorted decided" test, errors about already decided instances are expected
                                 // and should not fail the test
                                 let is_expected_rejection = e.contains("not processing consensus message since instance is already decided");
-                                
+
                                 // Only store the error if it's not an expected rejection for sorted decided
                                 if test_error.is_none() && !(self.name == "sorted decided" && is_expected_rejection) {
                                     test_error = Some(format!("Error processing message: {}", e));

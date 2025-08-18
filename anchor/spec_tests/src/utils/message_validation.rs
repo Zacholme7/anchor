@@ -3,20 +3,6 @@ use ssv_types::consensus::{QbftMessage, QbftMessageType};
 use ssv_types::message::SignedSSVMessage;
 use ssv_types::msgid::MessageId;
 
-/// Validate that non-commit messages have exactly 1 signer
-pub fn validate_signer_count(
-    qbft_msg: &QbftMessage,
-    operator_ids: &[OperatorId],
-) -> Result<(), String> {
-    // Non-commit messages must have exactly 1 signer
-    if !matches!(qbft_msg.qbft_message_type, QbftMessageType::Commit) && operator_ids.len() != 1 {
-        return Err(
-            "could not process msg: invalid signed message: msg allows 1 signer".to_string(),
-        );
-    }
-    Ok(())
-}
-
 /// Extract the decided value from a SignedSSVMessage.
 /// The decided value is in the full_data field.
 pub fn extract_decided_value(signed_msg: &SignedSSVMessage) -> Vec<u8> {

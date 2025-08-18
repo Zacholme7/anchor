@@ -89,15 +89,19 @@ impl SpecTest for QbftMessageTest {
             // Test expects an error
             let actual_error = test_error.or_else(|| {
                 // Handle special cases based on test name
-                if self.name.contains("identifier") && self.expected_error == "message identifier is invalid" {
+                if self.name.contains("identifier")
+                    && self.expected_error == "message identifier is invalid"
+                {
                     Some(QbftMessageError::IdentifierInvalid)
-                } else if self.name.contains("incorrect size") || self.name.contains("unmarshalling") {
+                } else if self.name.contains("incorrect size")
+                    || self.name.contains("unmarshalling")
+                {
                     Some(QbftMessageError::IncorrectSize)
                 } else {
                     None
                 }
             });
-            
+
             match actual_error {
                 Some(ref error) => map_qbft_message_error(error, &self.name) == self.expected_error,
                 None => false,

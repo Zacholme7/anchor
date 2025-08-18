@@ -82,6 +82,7 @@ pub fn map_qbft_error(error: &QbftError) -> String {
         QbftError::ForceStopped => "instance stopped processing messages".to_string(),
         QbftError::RoundCutoff => "instance stopped processing messages".to_string(),
         QbftError::Unknown(msg) => msg.clone(),
+        _ => "todo".to_string()
     }
 }
 
@@ -165,7 +166,7 @@ pub enum QbftMessageError {
 /// Map QbftMessageError to the expected error string for test comparison
 pub fn map_qbft_message_error(error: &QbftMessageError, test_name: &str) -> String {
     use crate::qbft::adapters::spec_types::TestMessageConversionError;
-    
+
     match error {
         QbftMessageError::SignedMessageError(e) => {
             // Map actual SignedSSVMessageError variants to expected strings
@@ -175,11 +176,19 @@ pub fn map_qbft_message_error(error: &QbftMessageError, test_name: &str) -> Stri
                 SignedSSVMessageError::ZeroSigner => "signer ID 0 not allowed".to_string(),
                 SignedSSVMessageError::SignersNotSorted => "signers not sorted".to_string(),
                 SignedSSVMessageError::NoSignatures => "no signatures".to_string(),
-                SignedSSVMessageError::TooManySignatures { .. } => "too many signatures".to_string(),
-                SignedSSVMessageError::WrongRSASignatureSize { .. } => "wrong signature size".to_string(),
-                SignedSSVMessageError::TooManyOperatorIDs { .. } => "too many operators".to_string(),
+                SignedSSVMessageError::TooManySignatures { .. } => {
+                    "too many signatures".to_string()
+                }
+                SignedSSVMessageError::WrongRSASignatureSize { .. } => {
+                    "wrong signature size".to_string()
+                }
+                SignedSSVMessageError::TooManyOperatorIDs { .. } => {
+                    "too many operators".to_string()
+                }
                 SignedSSVMessageError::FullDataTooLong { .. } => "full data too long".to_string(),
-                SignedSSVMessageError::SignersAndSignaturesWithDifferentLength => "signers signatures length mismatch".to_string(),
+                SignedSSVMessageError::SignersAndSignaturesWithDifferentLength => {
+                    "signers signatures length mismatch".to_string()
+                }
                 SignedSSVMessageError::SSVMessageError(_) => "ssv message error".to_string(),
             }
         }
@@ -194,20 +203,36 @@ pub fn map_qbft_message_error(error: &QbftMessageError, test_name: &str) -> Stri
                         SignedSSVMessageError::ZeroSigner => "signer ID 0 not allowed".to_string(),
                         SignedSSVMessageError::SignersNotSorted => "signers not sorted".to_string(),
                         SignedSSVMessageError::NoSignatures => "no signatures".to_string(),
-                        SignedSSVMessageError::TooManySignatures { .. } => "too many signatures".to_string(),
-                        SignedSSVMessageError::WrongRSASignatureSize { .. } => "wrong signature size".to_string(),
-                        SignedSSVMessageError::TooManyOperatorIDs { .. } => "too many operators".to_string(),
-                        SignedSSVMessageError::FullDataTooLong { .. } => "full data too long".to_string(),
-                        SignedSSVMessageError::SignersAndSignaturesWithDifferentLength => "signers signatures length mismatch".to_string(),
-                        SignedSSVMessageError::SSVMessageError(_) => "ssv message error".to_string(),
+                        SignedSSVMessageError::TooManySignatures { .. } => {
+                            "too many signatures".to_string()
+                        }
+                        SignedSSVMessageError::WrongRSASignatureSize { .. } => {
+                            "wrong signature size".to_string()
+                        }
+                        SignedSSVMessageError::TooManyOperatorIDs { .. } => {
+                            "too many operators".to_string()
+                        }
+                        SignedSSVMessageError::FullDataTooLong { .. } => {
+                            "full data too long".to_string()
+                        }
+                        SignedSSVMessageError::SignersAndSignaturesWithDifferentLength => {
+                            "signers signatures length mismatch".to_string()
+                        }
+                        SignedSSVMessageError::SSVMessageError(_) => {
+                            "ssv message error".to_string()
+                        }
                     }
                 }
                 TestMessageConversionError::Base64Decode(_) => "invalid base64".to_string(),
-                TestMessageConversionError::InvalidSignatureLength { .. } => "incorrect size".to_string(),
+                TestMessageConversionError::InvalidSignatureLength { .. } => {
+                    "incorrect size".to_string()
+                }
                 TestMessageConversionError::SSZDecode(_) => "message data is invalid".to_string(),
                 TestMessageConversionError::MissingSSVMessage => "missing ssv message".to_string(),
                 TestMessageConversionError::InvalidFullData(_) => "invalid full data".to_string(),
-                TestMessageConversionError::MultiSignerNotAllowed => "msg allows 1 signer".to_string(),
+                TestMessageConversionError::MultiSignerNotAllowed => {
+                    "msg allows 1 signer".to_string()
+                }
             }
         }
         QbftMessageError::SSZDecodeError(e) => {
