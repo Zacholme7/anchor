@@ -69,133 +69,119 @@ pub struct ExpectedDecidedState {
 
 impl SpecTest for ControllerTest {
     fn run(&self) -> bool {
-        // Create runtime for async operations
-        let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
+        // Track if we encountered an error
+        let mut test_error: Option<String> = None;
 
-        rt.block_on(async {
-            // Track if we encountered an error
-            let mut test_error: Option<String> = None;
+        // Create a single adapter that persists across all runs
+        // This matches Go's behavior where the controller persists
+        // Pass committee information if available for signature verification
+        let committee = self
+            .controller
+            .as_ref()
+            .and_then(|c| c.committee_member.committee.clone())
+            .unwrap_or_default();
+        let mut adapter = super::adapters::manager::ControllerAdapter::new(
+            ssv_types::OperatorId(1),
+            committee.clone(),
+        );
 
-            // Create a single adapter that persists across all runs
-            // This matches Go's behavior where the controller persists
-            // Pass committee information if available for signature verification
-            let committee = self
-                .controller
-                .as_ref()
-                .and_then(|c| c.committee_member.committee.clone())
-                .unwrap_or_default();
-            let mut adapter = super::adapters::manager::ControllerAdapter::new(
-                ssv_types::OperatorId(1),
-                committee.clone(),
-            );
+        adapter.set_test_keys(TestKeySet::four_share_set());
 
+        // Process each run instance data
+        for (i, run_data) in self.run_instance_data.iter().enumerate() {
+            // Get the height for this run
+            // If height is not specified, use the loop index (matching Go's behavior)
+            let height = run_data
+                .height
+                .map(|h| qbft::InstanceHeight::from(h as usize))
+                .unwrap_or_else(|| qbft::InstanceHeight::from(i));
 
-                adapter.set_test_keys(TestKeySet::four_share_set());
+            // Start new instance - handle both Some(value) and None cases
+            if let Some(value) = &run_data.input_value {
+                if let Err(e) = adapter.start_new_instance(height, value.clone()) {
+                    test_error = Some(format!("Error starting instance: {}", e));
+                    // Continue to see if this was expected
+                }
+            } else {
+                // Nil value case - Go's test still calls StartNewInstance with nil
+                // which should fail validation
+                if let Err(e) = adapter.start_new_instance(height, Vec::new()) {
+                    test_error = Some(format!("Error starting instance: {}", e));
+                    // Continue to see if this was expected
+                }
+            }
 
-            // Process each run instance data
-            for (i, run_data) in self.run_instance_data.iter().enumerate() {
-                // Get the height for this run
-                // If height is not specified, use the loop index (matching Go's behavior)
-                let height = run_data
-                    .height
-                    .map(|h| qbft::InstanceHeight::from(h as usize))
-                    .unwrap_or_else(|| qbft::InstanceHeight::from(i));
+            // Process input messages
+            if let Some(messages) = &run_data.input_messages {
+                let mut decided_count = 0;
+                let mut decided_value: Option<Vec<u8>> = None;
 
-                // Start new instance - handle both Some(value) and None cases
-                if let Some(value) = &run_data.input_value {
-                    if let Err(e) = adapter.start_new_instance(height, value.clone()).await {
-                        test_error = Some(format!("Error starting instance: {}", e));
-                        // Continue to see if this was expected
-                    }
-                } else {
-                    // Nil value case - Go's test still calls StartNewInstance with nil
-                    // which should fail validation
-                    if let Err(e) = adapter.start_new_instance(height, Vec::new()).await {
-                        test_error = Some(format!("Error starting instance: {}", e));
-                        // Continue to see if this was expected
+                for (msg_idx, msg) in messages.iter().enumerate() {
+                    match adapter.process_msg(msg) {
+                        Ok(Some(decided)) => {
+                            decided_count += 1;
+                            decided_value = Some(decided);
+                        }
+                        Ok(None) => {
+                            // Message processed but not decided yet
+                        }
+                        Err(e) => {
+                            // For "sorted decided" test, errors about already decided instances are expected
+                            // and should not fail the test
+                            let is_expected_rejection = e.contains("not processing consensus message since instance is already decided");
+
+                            // Only store the error if it's not an expected rejection for sorted decided
+                            if test_error.is_none()
+                                && !(self.name == "sorted decided" && is_expected_rejection)
+                            {
+                                test_error = Some(format!("Error processing message: {}", e));
+                            }
+                            // Continue processing other messages
+                        }
                     }
                 }
 
-                // Process input messages
-                if let Some(messages) = &run_data.input_messages {
-                    let mut decided_count = 0;
-                    let mut decided_value: Option<Vec<u8>> = None;
-
-                    for (msg_idx, msg) in messages.iter().enumerate() {
-                        if self.name == "sorted decided" {
-                            // Debug the sorted decided test
-                            println!("Processing message {} for sorted decided test", msg_idx);
-                        }
-                        match adapter.process_msg(msg).await {
-                            Ok(Some(decided)) => {
-                                if self.name == "sorted decided" {
-                                    println!("Message {} decided!", msg_idx);
-                                }
-                                decided_count += 1;
-                                decided_value = Some(decided);
-                            }
-                            Ok(None) => {
-                                // Message processed but not decided yet
-                            }
-                            Err(e) => {
-                                if self.name == "sorted decided" {
-                                    println!("Message {} error: {}", msg_idx, e);
-                                }
-                                // For "sorted decided" test, errors about already decided instances are expected
-                                // and should not fail the test
-                                let is_expected_rejection = e.contains("not processing consensus message since instance is already decided");
-
-                                // Only store the error if it's not an expected rejection for sorted decided
-                                if test_error.is_none() && !(self.name == "sorted decided" && is_expected_rejection) {
-                                    test_error = Some(format!("Error processing message: {}", e));
-                                }
-                                // Continue processing other messages
-                            }
-                        }
+                // Verify decided state if expected
+                if let Some(expected_decided) = &run_data.expected_decided_state {
+                    if expected_decided.decided_count != decided_count as u64 {
+                        println!(
+                            "FAILED {}: Expected {} decides, got {}",
+                            self.name, expected_decided.decided_count, decided_count
+                        );
+                        return false;
                     }
 
-                    // Verify decided state if expected
-                    if let Some(expected_decided) = &run_data.expected_decided_state {
-                        if expected_decided.decided_count != decided_count as u64 {
-                            println!(
-                                "FAILED {}: Expected {} decides, got {}",
-                                self.name, expected_decided.decided_count, decided_count
-                            );
+                    if let (Some(expected_val), Some(actual_val)) =
+                        (&expected_decided.decided_value, &decided_value)
+                    {
+                        if expected_val != actual_val {
+                            println!("FAILED {}: Decided value mismatch", self.name);
                             return false;
                         }
-
-                        if let (Some(expected_val), Some(actual_val)) =
-                            (&expected_decided.decided_value, &decided_value)
-                        {
-                            if expected_val != actual_val {
-                                println!("FAILED {}: Decided value mismatch", self.name);
-                                return false;
-                            }
-                        }
                     }
                 }
-
-                // TODO: Verify controller post root
             }
 
-            // Check if we got an expected error or unexpected error
-            if !self.expected_error.is_empty() {
-                // We expect an error
-                if test_error.is_none() {
-                    println!(
-                        "FAILED {}: Expected error '{}' but got none",
-                        self.name, self.expected_error
-                    );
-                    return false;
-                }
-            } else if let Some(err) = test_error {
-                // We don't expect an error but got one
-                println!("FAILED {}: Unexpected error: {}", self.name, err);
+            // TODO: Verify controller post root
+        }
+
+        // Check if we got an expected error or unexpected error
+        if !self.expected_error.is_empty() {
+            // We expect an error
+            if test_error.is_none() {
+                println!(
+                    "FAILED {}: Expected error '{}' but got none",
+                    self.name, self.expected_error
+                );
                 return false;
             }
+        } else if let Some(err) = test_error {
+            // We don't expect an error but got one
+            println!("FAILED {}: Unexpected error: {}", self.name, err);
+            return false;
+        }
 
-            true
-        })
+        true
     }
 
     fn test_type() -> SpecTestType {

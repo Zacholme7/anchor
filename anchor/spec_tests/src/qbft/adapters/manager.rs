@@ -6,6 +6,7 @@ use crate::utils::message_validation::{
 use crate::utils::misc::{calculate_quorum, hash_data};
 use crate::utils::test_keys::TestKeySet;
 use message_sender::testing::MockMessageSender;
+use qbft::{ConfigBuilder, Qbft};
 use qbft::{InstanceHeight, LeaderFunction};
 use qbft_manager::QbftManager;
 use slot_clock::{ManualSlotClock, SlotClock};
@@ -13,7 +14,9 @@ use ssv_types::domain_type::DomainType;
 use ssv_types::msgid::MessageId;
 use ssv_types::{IndexSet, OperatorId, Round};
 use ssz::Encode;
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Handle;
@@ -92,21 +95,6 @@ impl ProposalDataStorage {
 /// This adapter runs a QBFT controller with actual QBFT instances.
 /// It tracks instances, forwards messages to them, and handles decisions.
 pub struct ControllerAdapter {
-    // Core components
-    manager: Arc<QbftManager>,
-    processor: processor::Senders,
-    slot_clock: ManualSlotClock,
-
-    // Runtime handle for blocking operations
-    runtime_handle: Handle,
-
-    // Keep these alive to prevent processor shutdown
-    _exit_signal: async_channel::Sender<()>,
-    _shutdown_tx: futures::channel::mpsc::Sender<task_executor::ShutdownReason>,
-
-    // Network simulation
-    network_rx: mpsc::UnboundedReceiver<ssv_types::message::SignedSSVMessage>,
-
     // Instance tracking (mirrors Go's StoredInstances)
     current_height: InstanceHeight,
     stored_instances: HashMap<InstanceHeight, InstanceState>, // All instances (active & decided)
@@ -138,80 +126,10 @@ impl ControllerAdapter {
         operator_id: OperatorId,
         committee: Vec<super::spec_types::SpecTestOperator>,
     ) -> Self {
-        // Step 1: Try to get current runtime handle, or create a new one if needed
-        let handle = match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle,
-            Err(_) => {
-                // We're not in a runtime, this shouldn't happen in tests but handle gracefully
-                panic!("ControllerAdapter must be created within a tokio runtime context");
-            }
-        };
-
-        // Store the handle for later use with block_on
-        let runtime_handle = handle.clone();
-
-        // Create channels for executor - KEEP THE SENDERS ALIVE
-        let (exit_signal, exit_receiver) = async_channel::bounded(1);
-        let (shutdown_tx, _shutdown_rx) = futures::channel::mpsc::channel(1);
-        let executor = task_executor::TaskExecutor::new(
-            handle,
-            exit_receiver,
-            shutdown_tx.clone(),
-            "spec_test".into(),
-        );
-
-        // Step 2: Set up the processor
-        let config = processor::Config {
-            max_workers: 15,
-            queue_size: Default::default(),
-        };
-        let processor = processor::spawn(config, executor);
-
-        // Step 3: Set up the network channel
-        let (network_tx, network_rx) = mpsc::unbounded_channel();
-
-        // Step 4: Create the message sender
-        let message_sender = Arc::new(MockMessageSender::new(network_tx, operator_id));
-
-        // Step 5: Set up the slot clock
-        let genesis_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-
-        let slot_clock = ManualSlotClock::new(
-            Slot::new(0),
-            Duration::from_secs(genesis_time),
-            Duration::from_secs(12), // 12-second slots
-        );
-
-        // Step 6: Create the QbftManager (returns Arc<QbftManager>)
-        let manager = QbftManager::new(
-            processor.clone(),
-            operator_id.into(), // Convert OperatorId to OwnOperatorId
-            slot_clock.clone(),
-            message_sender,
-            DomainType([0; 4]), // Test domain
-        )
-        .expect("Failed to create QbftManager");
-
         // Default test identifier (matches Go's TestingIdentifier)
-        // Go uses [1,2,3,4,0,0,...] for 56 bytes total
-        let mut id_bytes = [0u8; 56];
-        id_bytes[0] = 1;
-        id_bytes[1] = 2;
-        id_bytes[2] = 3;
-        id_bytes[3] = 4;
-        let identifier = MessageId::from(id_bytes);
+        let identifier = MessageId::for_spectest();
 
         Self {
-            manager,
-            processor,
-            slot_clock,
-            runtime_handle,
-            _exit_signal: exit_signal,
-            _shutdown_tx: shutdown_tx,
-            network_rx,
             current_height: InstanceHeight::from(0),
             stored_instances: HashMap::new(),
             current_committee_size: 4, // Default to 4 operators (matching Go tests)
@@ -236,10 +154,6 @@ impl ControllerAdapter {
         height: InstanceHeight,
         value: &[u8],
     ) -> Result<QbftInstance, String> {
-        use qbft::{ConfigBuilder, Qbft};
-        use std::cell::RefCell;
-        use std::rc::Rc;
-
         // Build committee from stored committee info
         let committee: IndexSet<OperatorId> = self
             .committee
@@ -286,7 +200,7 @@ impl ControllerAdapter {
     /// - Value is not empty or invalid ([1,1,1,1])
     /// - Height is not in the past
     /// - No instance already exists at this height
-    pub async fn start_new_instance(
+    pub fn start_new_instance(
         &mut self,
         height: InstanceHeight,
         value: Vec<u8>,
@@ -479,10 +393,7 @@ impl ControllerAdapter {
     ///
     /// Returns the decided value only if this is the first time
     /// the instance is being decided.
-    async fn upon_decided(
-        &mut self,
-        test_msg: &TestSignedSSVMessage,
-    ) -> Result<Option<Vec<u8>>, String> {
+    fn upon_decided(&mut self, test_msg: &TestSignedSSVMessage) -> Result<Option<Vec<u8>>, String> {
         // Decode the message
         let (signed_msg, qbft_msg) = Self::decode_qbft_message(test_msg)?;
         let height = InstanceHeight::from(qbft_msg.height as usize);
@@ -528,7 +439,7 @@ impl ControllerAdapter {
     /// 3. Messages for non-existent instances → error
     /// 4. Messages for decided instances → error (except for aggregation)
     /// 5. Normal messages → aggregation and quorum checking
-    pub async fn process_msg(
+    pub fn process_msg(
         &mut self,
         test_msg: &TestSignedSSVMessage,
     ) -> Result<Option<Vec<u8>>, String> {
@@ -560,7 +471,7 @@ impl ControllerAdapter {
             calculate_quorum(self.current_committee_size),
         ) {
             // Route to upon_decided handler
-            return self.upon_decided(test_msg).await;
+            return self.upon_decided(test_msg);
         }
 
         // 2. Check if this is a future message
@@ -710,14 +621,5 @@ impl ControllerAdapter {
 
         // No decision yet
         Ok(None)
-    }
-}
-
-impl Drop for ControllerAdapter {
-    fn drop(&mut self) {
-        // Abort all running instance tasks to ensure clean shutdown
-        for handle in self.instance_handles.drain(..) {
-            handle.abort();
-        }
     }
 }
