@@ -40,3 +40,7 @@ tree_hash_derive = { workspace = true }
 types = { workspace = true }
 walkdir = "2.5.0"
 
+[[bin]]
+name = "generate_test_data"
+path = "src/bin/generate_test_data.rs"
+

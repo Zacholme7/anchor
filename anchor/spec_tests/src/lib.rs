@@ -156,6 +156,7 @@ fn run_tests(test_type: SpecTestType) -> bool {
                     let loader = TEST_LOADERS
                         .get(&test_type)
                         .unwrap_or_else(|| panic!("No loader registered for: {test_type}"));
+                    println!("Loading test file: {}", path.to_string_lossy());
                     return Some(loader(&path.to_string_lossy()));
                 }
             }
@@ -166,9 +167,15 @@ fn run_tests(test_type: SpecTestType) -> bool {
     println!("Loaded {} tests", tests.len());
 
     let mut result = true;
-    for mut test in tests {
+    for (i, mut test) in tests.into_iter().enumerate() {
+        println!("Running test {}", i + 1);
         test.setup();
         let test_result = test.run();
+        if !test_result {
+            println!("❌ Test {} FAILED", i + 1);
+        } else {
+            println!("✅ Test {} PASSED", i + 1);
+        }
         result &= test_result;
     }
 

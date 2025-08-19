@@ -1,3 +1,4 @@
+use super::adapters::manager::ControllerAdapter;
 use super::adapters::spec_types::{
     ExpectedTimerState, SpecTestCommitteeMember, TestSignedSSVMessage,
 };
@@ -6,6 +7,7 @@ use crate::utils::deserializers::{
 };
 use crate::utils::test_keys::TestKeySet;
 use crate::{QbftSpecTestType, SpecTest, SpecTestType};
+use qbft::InstanceHeight;
 use serde::Deserialize;
 use types::Hash256;
 
@@ -72,92 +74,76 @@ impl SpecTest for ControllerTest {
         // Track if we encountered an error
         let mut test_error: Option<String> = None;
 
-        // Create a single adapter that persists across all runs
-        // This matches Go's behavior where the controller persists
-        // Pass committee information if available for signature verification
         let committee = self
             .controller
             .as_ref()
             .and_then(|c| c.committee_member.committee.clone())
             .unwrap_or_default();
-        let mut adapter = super::adapters::manager::ControllerAdapter::new(
-            ssv_types::OperatorId(1),
-            committee.clone(),
-        );
-
-        adapter.set_test_keys(TestKeySet::four_share_set());
+        let mut adapter = ControllerAdapter::new(committee.clone());
 
         // Process each run instance data
         for (i, run_data) in self.run_instance_data.iter().enumerate() {
             // Get the height for this run
-            // If height is not specified, use the loop index (matching Go's behavior)
+            // If height is not specified, use the loop index
             let height = run_data
                 .height
-                .map(|h| qbft::InstanceHeight::from(h as usize))
-                .unwrap_or_else(|| qbft::InstanceHeight::from(i));
+                .map(|h| InstanceHeight::from(h as usize))
+                .unwrap_or_else(|| InstanceHeight::from(i));
 
             // Start new instance - handle both Some(value) and None cases
-            if let Some(value) = &run_data.input_value {
-                if let Err(e) = adapter.start_new_instance(height, value.clone()) {
-                    test_error = Some(format!("Error starting instance: {}", e));
-                    // Continue to see if this was expected
-                }
-            } else {
-                // Nil value case - Go's test still calls StartNewInstance with nil
-                // which should fail validation
-                if let Err(e) = adapter.start_new_instance(height, Vec::new()) {
-                    test_error = Some(format!("Error starting instance: {}", e));
-                    // Continue to see if this was expected
+            let value = run_data.input_value.clone().unwrap_or_default();
+            if let Err(e) = adapter.start_new_instance(height, value) {
+                test_error = Some(format!("Error starting instance: {}", e));
+            }
+
+            // Track decided state
+            let mut decided_count = 0;
+            let mut decided_value: Option<Vec<u8>> = None;
+
+            // Now, process all of the input messages
+            let messages = &run_data.input_messages.clone().unwrap_or_default();
+            for msg in messages {
+                match adapter.process_msg(msg) {
+                    Ok(Some(decided)) => {
+                        // Decided successfully
+                        decided_count += 1;
+                        decided_value = Some(decided);
+                    }
+                    Ok(None) => {
+                        // Message processed but not decided yet
+                    }
+                    Err(e) => {
+                        println!("running here {:?}", e);
+                        // For "sorted decided" test, errors about already decided instances are expected
+                        // and should not fail the test
+                        let is_expected_rejection = e.contains(
+                            "not processing consensus message since instance is already decided",
+                        );
+
+                        // Only store the error if it's not an expected rejection for sorted decided
+                        if test_error.is_none()
+                            && !(self.name == "sorted decided" && is_expected_rejection)
+                        {
+                            test_error = Some(format!("Error processing message: {}", e));
+                        }
+                        // Continue processing other messages
+                    }
                 }
             }
 
-            // Process input messages
-            if let Some(messages) = &run_data.input_messages {
-                let mut decided_count = 0;
-                let mut decided_value: Option<Vec<u8>> = None;
-
-                for (msg_idx, msg) in messages.iter().enumerate() {
-                    match adapter.process_msg(msg) {
-                        Ok(Some(decided)) => {
-                            decided_count += 1;
-                            decided_value = Some(decided);
-                        }
-                        Ok(None) => {
-                            // Message processed but not decided yet
-                        }
-                        Err(e) => {
-                            // For "sorted decided" test, errors about already decided instances are expected
-                            // and should not fail the test
-                            let is_expected_rejection = e.contains("not processing consensus message since instance is already decided");
-
-                            // Only store the error if it's not an expected rejection for sorted decided
-                            if test_error.is_none()
-                                && !(self.name == "sorted decided" && is_expected_rejection)
-                            {
-                                test_error = Some(format!("Error processing message: {}", e));
-                            }
-                            // Continue processing other messages
-                        }
-                    }
+            // Verify decided state if expected
+            if let Some(expected_decided) = &run_data.expected_decided_state {
+                // Make sure same decided count
+                if expected_decided.decided_count != decided_count as u64 {
+                    return false;
                 }
 
-                // Verify decided state if expected
-                if let Some(expected_decided) = &run_data.expected_decided_state {
-                    if expected_decided.decided_count != decided_count as u64 {
-                        println!(
-                            "FAILED {}: Expected {} decides, got {}",
-                            self.name, expected_decided.decided_count, decided_count
-                        );
+                // Make sure decided value is expected
+                if let (Some(expected_val), Some(actual_val)) =
+                    (&expected_decided.decided_value, &decided_value)
+                {
+                    if expected_val != actual_val {
                         return false;
-                    }
-
-                    if let (Some(expected_val), Some(actual_val)) =
-                        (&expected_decided.decided_value, &decided_value)
-                    {
-                        if expected_val != actual_val {
-                            println!("FAILED {}: Decided value mismatch", self.name);
-                            return false;
-                        }
                     }
                 }
             }
@@ -169,15 +155,9 @@ impl SpecTest for ControllerTest {
         if !self.expected_error.is_empty() {
             // We expect an error
             if test_error.is_none() {
-                println!(
-                    "FAILED {}: Expected error '{}' but got none",
-                    self.name, self.expected_error
-                );
                 return false;
             }
-        } else if let Some(err) = test_error {
-            // We don't expect an error but got one
-            println!("FAILED {}: Unexpected error: {}", self.name, err);
+        } else if let Some(_) = test_error {
             return false;
         }
 

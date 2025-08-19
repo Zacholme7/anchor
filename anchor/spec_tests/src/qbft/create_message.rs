@@ -1,4 +1,12 @@
 use super::adapters::qbft::*;
+
+// Hardcoded SSZ-encoded BeaconVote for create message tests (matches Go's TestingQBFTFullData)
+const TESTING_BEACON_VOTE_SSZ: &[u8] = &[
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3,
+];
 use super::adapters::spec_types::{SpecTestCommitteeMember, TestSignedSSVMessage};
 use crate::utils::deserializers::{
     deserialize_base64_option, deserialize_create_type, deserialize_hex, deserialize_hex_hash256,
@@ -113,6 +121,7 @@ impl SpecTest for CreateMessageTest {
             operator_id: Some(operator_id),
             operator_rsa_key,
             round: self.round.map(|r| ssv_types::Round::from(r)),
+            start_value: Some(TESTING_BEACON_VOTE_SSZ.to_vec()), // Use hardcoded SSZ-encoded BeaconVote
         };
         let mut adapter = QbftAdapter::new_with_state(starting_state);
 
@@ -141,6 +150,7 @@ impl SpecTest for CreateMessageTest {
     }
 
     fn run(&self) -> bool {
+        println!("Running create message test: {}", self.name);
         if let Some(mut adapter) = self.qbft_adapter.borrow_mut().take() {
             // Convert TestSignedSSVMessage to SignedSSVMessage
             let rc_justifications = self.round_change_justifications.as_ref().map(|msgs| {
@@ -208,6 +218,9 @@ impl SpecTest for CreateMessageTest {
             // compare the roots
             let root = signed_ssv_message.tree_hash_root();
             if root != self.expected_root {
+                println!("❌ Root mismatch!");
+                println!("  Expected: {:?}", self.expected_root);
+                println!("  Actual:   {:?}", root);
                 return false;
             }
 

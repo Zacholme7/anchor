@@ -2,6 +2,8 @@ use ssv_types::OperatorId;
 use ssv_types::consensus::{QbftMessage, QbftMessageType};
 use ssv_types::message::SignedSSVMessage;
 use ssv_types::msgid::MessageId;
+use types::VariableList;
+use types::typenum::U56;
 
 /// Extract the decided value from a SignedSSVMessage.
 /// The decided value is in the full_data field.
@@ -10,9 +12,7 @@ pub fn extract_decided_value(signed_msg: &SignedSSVMessage) -> Vec<u8> {
 }
 
 /// Convert a VariableList identifier to MessageId
-pub fn identifier_to_message_id(
-    identifier: &types::VariableList<u8, types::typenum::U56>,
-) -> Result<MessageId, String> {
+pub fn identifier_to_message_id(identifier: &VariableList<u8, U56>) -> Result<MessageId, String> {
     let msg_id_bytes: Vec<u8> = identifier.iter().cloned().collect();
     if msg_id_bytes.len() != 56 {
         return Err("invalid msg: identifier has wrong length".to_string());

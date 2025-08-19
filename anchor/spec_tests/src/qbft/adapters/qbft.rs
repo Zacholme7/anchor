@@ -11,14 +11,15 @@ use openssl::pkey::Private;
 use openssl::rsa::Rsa;
 use qbft::{ConfigBuilder, InstanceHeight, InstanceState, LeaderFunction};
 use qbft::{Qbft, UnsignedWrappedQbftMessage, WrappedQbftMessage};
-use ssv_types::consensus::{QbftMessage, QbftMessageType, UnsignedSSVMessage};
+use ssv_types::consensus::{BeaconVote, QbftMessage, QbftMessageType, UnsignedSSVMessage};
 use ssv_types::message::SignedSSVMessage;
 use ssv_types::msgid::MessageId;
 use ssv_types::{IndexSet, OperatorId, Round};
-use ssz::Decode;
+use ssz::{Decode, Encode};
 use std::cell::RefCell;
 use std::rc::Rc;
-use types::Hash256;
+use tree_hash::TreeHash;
+use types::{Checkpoint, Epoch, FixedBytesExtended, Hash256};
 
 /// Test leader function that matches Go test harness behavior
 #[derive(Debug, Clone, Copy)]
@@ -61,6 +62,7 @@ pub struct QbftStartingState {
     pub operator_id: Option<OperatorId>,
     pub operator_rsa_key: Option<Rsa<Private>>,
     pub round: Option<Round>,
+    pub start_value: Option<Vec<u8>>, // Raw SSZ bytes to decode into BeaconVote
 }
 
 // Simple mock handler type
@@ -68,7 +70,7 @@ type MockHandler = Box<dyn FnMut(UnsignedWrappedQbftMessage)>;
 
 // Adapter over our core qbft instance
 pub struct QbftAdapter {
-    instance: Qbft<TestLeaderFunction, SpecTestData, MockHandler>,
+    instance: Qbft<TestLeaderFunction, BeaconVote, MockHandler>,
     operator_rsa_key: Option<Rsa<Private>>,
     operator_id: OperatorId,
     // Store original state value bytes for fulldata
@@ -143,7 +145,22 @@ impl QbftAdapter {
             captured_clone.borrow_mut().push(signed);
         });
 
-        let mut instance = Qbft::new(config, SpecTestData::default(), identifier, mock_handler);
+        // Decode the start_value to BeaconVote - use default if not provided
+        let start_data = if let Some(start_bytes) = state.start_value {
+            BeaconVote::from_ssz_bytes(&start_bytes)
+                .expect("Failed to decode BeaconVote from start_value")
+        } else {
+            // Temporary default - TODO: should get from JSON input
+            BeaconVote::from_ssz_bytes(&[
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3,
+            ])
+            .expect("Failed to decode default BeaconVote")
+        };
+
+        let mut instance = Qbft::new(config, start_data, identifier, mock_handler);
 
         // Set the current round if provided (for spec tests)
         if let Some(round) = state.round {
@@ -209,9 +226,9 @@ impl QbftAdapter {
                 // Hash the StateValue using SHA256 (matches Go's HashDataRoot)
                 let prepared_value = hash_data(state_value);
 
-                // Create test data to store as the full data
-                let bytes: &[u8] = prepared_value.as_ref();
-                let dummy_vote = SpecTestData::new(bytes.to_vec());
+                // Create BeaconVote from the original SSZ bytes
+                let dummy_vote = BeaconVote::from_ssz_bytes(state_value)
+                    .expect("StateValue should be valid SSZ BeaconVote");
 
                 // Set last prepared round and value with full data
                 self.instance.set_last_prepared_spec(
@@ -236,16 +253,28 @@ impl QbftAdapter {
     ) -> Result<SignedSSVMessage, bool> {
         // Determine data_hash and full_data based on message type
         let (data_hash, mut full_data) = if msg_type == QbftMessageType::Proposal {
-            // For proposals: data is raw bytes to hash (matches Go's behavior)
-            let hash = hash_data(data);
+            // For proposals: data is already the hash (TestingQBFTRootData), don't hash it again
+            let hash = Hash256::from_slice(data);
 
-            // Store dummy data for the proposal
-            let bytes: &[u8] = hash.as_ref();
-            let dummy_vote = SpecTestData::new(bytes.to_vec());
+            // Store BeaconVote using the same SSZ bytes that Go uses (TestingQBFTFullData)
+            // This ensures internal QBFT state matches exactly what Go has
+            let dummy_vote = BeaconVote::from_ssz_bytes(&[
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3,
+            ])
+            .expect("Hardcoded SSZ bytes should be valid BeaconVote");
             self.instance.store_data_spec(hash, dummy_vote);
 
-            // For proposals, full_data is the original data
-            (hash, data.to_vec())
+            // For proposals, full_data is the SSZ-encoded BeaconVote (TestingQBFTFullData), not the hash
+            let ssz_bytes = [
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3,
+            ];
+            (hash, ssz_bytes.to_vec())
         } else {
             // For other message types, data is already a 32-byte hash
             (Hash256::from_slice(data), vec![])
@@ -276,7 +305,9 @@ impl QbftAdapter {
         }
 
         // Extract and sign the unsigned message with full_data
-        Ok(self.sign_message_with_full_data(wrapped.unsigned_message, full_data))
+        let signed_msg = self.sign_message_with_full_data(wrapped.unsigned_message, full_data);
+
+        Ok(signed_msg)
     }
 
     fn sign_message_with_full_data(
@@ -354,9 +385,9 @@ impl QbftAdapter {
                 .decode(full_data_str)
                 .unwrap();
             if !full_data.is_empty() {
-                // Store the data for the proposal
-                let bytes: &[u8] = qbft_msg.root.as_ref();
-                let dummy_vote = SpecTestData::new(bytes.to_vec());
+                // Store BeaconVote data from full_data
+                let dummy_vote = BeaconVote::from_ssz_bytes(&full_data)
+                    .expect("FullData should be valid SSZ BeaconVote");
                 self.instance.store_data_spec(qbft_msg.root, dummy_vote);
 
                 // Store the full data bytes for later use
@@ -372,8 +403,21 @@ impl QbftAdapter {
         // For message processing tests: ProposalAccepted implies prepared
         // For timeout tests: ProposalAccepted doesn't imply prepared unless LastPreparedRound > 0
         if set_prepared {
-            let bytes: &[u8] = qbft_msg.root.as_ref();
-            let dummy_vote = SpecTestData::new(bytes.to_vec());
+            // Use the stored full_data bytes to create BeaconVote
+            let dummy_vote = if let Some(ref full_data_bytes) = self.last_prepared_value_bytes {
+                BeaconVote::from_ssz_bytes(full_data_bytes)
+                    .expect("Stored full_data should be valid SSZ BeaconVote")
+            } else {
+                // Fallback to hardcoded SSZ bytes
+                BeaconVote::from_ssz_bytes(&[
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0, 0, 3,
+                ])
+                .expect("Hardcoded SSZ bytes should be valid BeaconVote")
+            };
             self.instance.set_last_prepared_spec(
                 Round::from(current_round),
                 qbft_msg.root,
@@ -403,6 +447,7 @@ impl QbftAdapter {
             operator_id: Some(operator_id),
             operator_rsa_key: test_keys.operator_keys.get(&operator_id).cloned(),
             round: Some(round),
+            start_value: None, // TODO: Should get this from JSON input for timeout tests
         });
 
         // Clear any messages sent during creation
@@ -485,6 +530,7 @@ impl QbftAdapter {
             operator_id: Some(operator_id),
             operator_rsa_key: test_keys.operator_keys.get(&operator_id).cloned(),
             round: Some(round),
+            start_value: None, // TODO: Should get this from JSON input for message processing tests
         });
 
         // Clear any messages sent during creation
@@ -505,9 +551,9 @@ impl QbftAdapter {
                 // Hash the value
                 let prepared_value = hash_data(value_bytes);
 
-                // Create dummy vote for storage
-                let bytes: &[u8] = prepared_value.as_ref();
-                let dummy_vote = SpecTestData::new(bytes.to_vec());
+                // Create BeaconVote from the original SSZ bytes
+                let dummy_vote = BeaconVote::from_ssz_bytes(value_bytes)
+                    .expect("LastPreparedValue should be valid SSZ BeaconVote");
 
                 adapter.instance.set_last_prepared_spec(
                     Round::from(pre.state.last_prepared_round),
@@ -532,9 +578,9 @@ impl QbftAdapter {
                 // Set instance state to Complete
                 adapter.instance.set_state_spec(InstanceState::Complete);
 
-                // Store the decided value
-                let bytes: &[u8] = decided_value.as_ref();
-                let dummy_vote = SpecTestData::new(bytes.to_vec());
+                // Store the decided value as BeaconVote from original SSZ bytes
+                let dummy_vote = BeaconVote::from_ssz_bytes(decided_bytes)
+                    .expect("DecidedValue should be valid SSZ BeaconVote");
                 adapter.instance.store_data_spec(decided_value, dummy_vote);
 
                 // Store the decided hash for creating commit messages later
