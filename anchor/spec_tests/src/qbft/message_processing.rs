@@ -1,15 +1,14 @@
-use super::adapters::qbft::QbftAdapter;
+use super::adapters::qbft::{QbftAdapter, QbftStartingState};
 use super::adapters::spec_types::{
     AcceptedProposal, ExpectedTimerState, MessageContainer, SpecTestCommitteeMember,
     TestSignedSSVMessage,
 };
 use crate::utils::deserializers::{deserialize_base64, deserialize_base64_option};
-use crate::utils::test_keys::TestKeySet;
 use crate::{QbftSpecTestType, SpecTest, SpecTestType};
-
+use qbft::InstanceHeight;
 use serde::Deserialize;
-use ssv_types::consensus::QbftMessage;
-use ssz::Decode;
+use ssv_types::msgid::MessageId;
+use ssv_types::{IndexSet, OperatorId, Round};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MessageProcessingTest {
@@ -32,6 +31,8 @@ pub struct MessageProcessingTest {
     pub expected_error: String,
     #[serde(rename = "ExpectedTimerState")]
     pub expected_timer_state: Option<ExpectedTimerState>,
+    #[serde(skip)]
+    qbft_state: Option<QbftStartingState>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -77,9 +78,46 @@ pub struct MessageProcessingState {
 }
 
 impl SpecTest for MessageProcessingTest {
+    fn setup(&mut self) {
+        // Build the starting state
+        let committee: IndexSet<OperatorId> = self
+            .pre
+            .state
+            .committee_member
+            .committee
+            .iter()
+            .map(|op| OperatorId::from(op.operator_id))
+            .collect();
+
+        let state = QbftStartingState {
+            height: InstanceHeight::from(self.pre.state.height as usize),
+            identifier: MessageId::from(
+                <[u8; 56]>::try_from(self.pre.state.id.as_slice()).unwrap(),
+            ),
+            committee: Some(committee),
+            operator_id: OperatorId::from(self.pre.state.committee_member.operator_id),
+            round: Round::from(self.pre.state.round),
+            start_value: self.pre.start_value.clone(),
+            proposal_accepted: self.pre.state.proposal_accepted_for_current_round.clone(),
+            propose_container: self.pre.state.propose_container.clone(),
+            prepare_container: self.pre.state.prepare_container.clone(),
+            commit_container: self.pre.state.commit_container.clone(),
+            round_change_container: self.pre.state.round_change_container.clone(),
+            round_change_justifications: None,
+            prepare_justifications: None,
+        };
+
+        self.qbft_state = Some(state);
+    }
+
     fn run(&self) -> bool {
-        // Create adapter from Pre state
-        let mut adapter = QbftAdapter::for_message_processing(&self.pre);
+        // Use the state constructed in setup()
+        let state = self
+            .qbft_state
+            .as_ref()
+            .expect("QbftStartingState should be initialized in setup()");
+
+        let mut adapter = QbftAdapter::new_with_state(state.clone());
 
         // Process each input message
         let mut last_error = None;

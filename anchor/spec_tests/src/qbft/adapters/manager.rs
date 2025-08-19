@@ -1,4 +1,3 @@
-use super::spec_test_data::SpecTestData;
 use super::spec_types::SpecTestOperator;
 use super::spec_types::TestSignedSSVMessage;
 use crate::utils::message_validation::{
@@ -7,16 +6,12 @@ use crate::utils::message_validation::{
 use crate::utils::misc::{calculate_quorum, hash_data};
 use crate::utils::rsa_validation::verify_rsa_signature;
 use crate::utils::test_keys::TestKeySet;
-use message_sender::testing::MockMessageSender;
 use qbft::InstanceHeight;
 use qbft::LeaderFunction;
 use qbft::UnsignedWrappedQbftMessage;
 use qbft::{ConfigBuilder, Qbft};
-use qbft_manager::QbftManager;
-use slot_clock::{ManualSlotClock, SlotClock};
 use ssv_types::consensus::QbftMessageType;
 use ssv_types::consensus::{BeaconVote, QbftMessage};
-use ssv_types::domain_type::DomainType;
 use ssv_types::message::SignedSSVMessage;
 use ssv_types::msgid::MessageId;
 use ssv_types::{IndexSet, OperatorId, Round};
@@ -24,12 +19,8 @@ use ssz::{Decode, Encode};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::runtime::Handle;
-use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use types::{Hash256, Slot};
+use types::Hash256;
 
 // Type alias for our QBFT instance
 type QbftInstance =

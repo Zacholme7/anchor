@@ -76,6 +76,14 @@ pub struct MessageContainer {
     pub msgs: HashMap<String, TestSignedSSVMessage>,
 }
 
+impl Default for MessageContainer {
+    fn default() -> Self {
+        Self {
+            msgs: HashMap::new(),
+        }
+    }
+}
+
 /// Accepted proposal for the current round
 #[derive(Debug, Clone, Deserialize)]
 pub struct AcceptedProposal {

@@ -1,9 +1,6 @@
-use super::spec_types::{AcceptedProposal, TestSignedSSVMessage};
-use crate::qbft::message_processing::MessageProcessingPre;
-use crate::qbft::message_processing::MessageProcessingState;
-use crate::qbft::timeout::TimeoutTestPre;
-use crate::utils::misc::{calculate_quorum, hash_data};
-use crate::utils::rsa_signing::{sign_message_with_full_data, sign_ssz_message_with_rsa};
+use super::spec_types::{AcceptedProposal, MessageContainer, TestSignedSSVMessage};
+use crate::utils::misc::calculate_quorum;
+use crate::utils::rsa_signing::sign_message_with_full_data;
 use crate::utils::rsa_validation::validate_rsa_signatures;
 use crate::utils::test_keys::TestKeySet;
 use base64::Engine;
@@ -11,8 +8,8 @@ use base64::engine::general_purpose::STANDARD;
 use openssl::pkey::Private;
 use openssl::rsa::Rsa;
 use qbft::{ConfigBuilder, InstanceHeight, InstanceState, LeaderFunction};
-use qbft::{Qbft, UnsignedWrappedQbftMessage, WrappedQbftMessage};
-use ssv_types::consensus::{BeaconVote, QbftMessage, QbftMessageType, UnsignedSSVMessage};
+use qbft::{Qbft, UnsignedWrappedQbftMessage};
+use ssv_types::consensus::{BeaconVote, QbftMessage, QbftMessageType};
 use ssv_types::message::SignedSSVMessage;
 use ssv_types::msgid::MessageId;
 use ssv_types::{IndexSet, OperatorId, Round};
@@ -47,14 +44,21 @@ impl LeaderFunction for TestLeaderFunction {
 }
 
 /// State that we want to initialize the qbft instance with
+#[derive(Debug, Clone)]
 pub struct QbftStartingState {
     pub height: InstanceHeight,
     pub identifier: MessageId,
-    pub committee: Option<Vec<OperatorId>>, // Only committee is optional
+    pub committee: Option<IndexSet<OperatorId>>, // Only committee is optional
     pub operator_id: OperatorId,
     pub round: Round,
     pub start_value: Vec<u8>, // Raw SSZ bytes to decode into BeaconVote
     pub proposal_accepted: Option<AcceptedProposal>,
+    pub propose_container: MessageContainer,
+    pub prepare_container: MessageContainer,
+    pub commit_container: MessageContainer,
+    pub round_change_container: MessageContainer,
+    pub round_change_justifications: Option<Vec<TestSignedSSVMessage>>,
+    pub prepare_justifications: Option<Vec<TestSignedSSVMessage>>,
 }
 
 // Simple mock handler type
@@ -81,7 +85,7 @@ impl QbftAdapter {
         // Use committee from state or default 4-node committee
         let committee: IndexSet<OperatorId> = state
             .committee
-            .map(|c| c.into_iter().collect())
+            .clone()
             .unwrap_or_else(|| vec![1, 2, 3, 4].into_iter().map(OperatorId::from).collect());
 
         // Calculate quorum size based on committee size
@@ -125,12 +129,10 @@ impl QbftAdapter {
         let start_data = BeaconVote::from_ssz_bytes(&state.start_value)
             .expect("Failed to decode BeaconVote from start_value");
 
-        let mut instance = Qbft::new(config, start_data, state.identifier, mock_handler);
+        let mut instance = Qbft::new(config, start_data, state.identifier.clone(), mock_handler);
 
-        // Now, set all of the data
         // Set the round
         instance.set_current_round_spec(state.round);
-        // Set the last prepared round & last prepared value (Always 0 and null)
 
         let mut adapter = Self {
             instance,
@@ -142,82 +144,28 @@ impl QbftAdapter {
             test_keys: Some(test_keys),
         };
 
+        // Clear any messages sent during creation
+        adapter.captured_messages.borrow_mut().clear();
+        adapter.timeout_count = 0;
+
         // Set the proposal accepted for current round
-        if let Some(proposal_accepted) = state.proposal_accepted {
-            adapter.setup_proposal_accepted(&proposal_accepted);
+        if let Some(ref proposal_accepted) = state.proposal_accepted {
+            adapter.setup_proposal_accepted(proposal_accepted);
         }
 
-        // Set all of the containers
+        // Set the justifications
+        if let Some(ref rc_jus) = state.round_change_justifications {
+            adapter.setup_round_change_justifications(rc_jus);
+        }
 
-        // Set the decided
-        // Set the decided value
-        // Set all of the containers
+        if let Some(ref pre_jus) = state.prepare_justifications {
+            adapter.setup_prepare_justifications(pre_jus);
+        }
+
+        // Populate all containers
+        adapter.populate_containers(&state);
 
         adapter
-    }
-
-    /// Setup prepare justifications for spec tests (used before creating RoundChange)
-    /// Matches Go's createRoundChange logic exactly
-    pub fn setup_prepare_justifications(
-        &mut self,
-        prepare_msgs: &[SignedSSVMessage],
-        state_value: Option<&[u8]>,
-    ) -> Result<(), String> {
-        if prepare_msgs.is_empty() {
-            return Ok(());
-        }
-
-        // Add prepare messages to container first (always done in Go)
-        for msg in prepare_msgs {
-            let qbft_msg = QbftMessage::from_ssz_bytes(msg.ssv_message().data())
-                .map_err(|e| format!("Failed to decode prepare message: {:?}", e))?;
-
-            // Create wrapped message for the container
-            let wrapped = WrappedQbftMessage {
-                signed_message: msg.clone(),
-                qbft_message: qbft_msg.clone(),
-            };
-
-            // Add to prepare container
-            for operator_id in msg.operator_ids() {
-                self.instance.add_prepare_justification_spec(
-                    Round::from(qbft_msg.round),
-                    *operator_id,
-                    wrapped.clone(),
-                );
-            }
-        }
-
-        // Set last prepared value if we have StateValue and ANY prepare messages
-        // This matches Go test behavior: state.LastPreparedValue = test.StateValue
-        // The quorum check happens later in getRoundChangeJustification
-        if let Some(state_value) = state_value {
-            if !state_value.is_empty() {
-                // Store the original bytes for FullData field
-                self.last_prepared_value_bytes = Some(state_value.to_vec());
-
-                // Decode first prepare message to get the round
-                let first_msg = &prepare_msgs[0];
-                let qbft_msg = QbftMessage::from_ssz_bytes(first_msg.ssv_message().data())
-                    .map_err(|e| format!("Failed to decode prepare message: {:?}", e))?;
-
-                // Hash the StateValue using SHA256 (matches Go's HashDataRoot)
-                let prepared_value = hash_data(state_value);
-
-                // Create BeaconVote from the original SSZ bytes
-                let dummy_vote = BeaconVote::from_ssz_bytes(state_value)
-                    .expect("StateValue should be valid SSZ BeaconVote");
-
-                // Set last prepared round and value with full data
-                self.instance.set_last_prepared_spec(
-                    Round::from(qbft_msg.round),
-                    prepared_value,
-                    dummy_vote,
-                );
-            }
-        }
-
-        Ok(())
     }
 
     /// Create a new SignedSSVMessage using the instance
@@ -229,72 +177,26 @@ impl QbftAdapter {
         pre_justifications: &Option<Vec<SignedSSVMessage>>,
         round: Option<u64>,
     ) -> Result<SignedSSVMessage, bool> {
-        // Determine data_hash and full_data based on message type
-        let (data_hash, mut full_data) = if msg_type == QbftMessageType::Proposal {
-            // For proposals: data is already the hash (TestingQBFTRootData), don't hash it again
-            let hash = Hash256::from_slice(data);
+        // have to store the data
+        //self.instance.store_data_spec(hash, dummy_vote);
 
-            // Store BeaconVote using the same SSZ bytes that Go uses (TestingQBFTFullData)
-            // This ensures internal QBFT state matches exactly what Go has
-            let dummy_vote = BeaconVote::from_ssz_bytes(&[
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3,
-            ])
-            .expect("Hardcoded SSZ bytes should be valid BeaconVote");
-            self.instance.store_data_spec(hash, dummy_vote);
+        /*
+                match msg_type {
+                    QbftMessageType::Proposal => self.instance.send_proposal(),
+                    QbftMessageType::Prepare => self.instance.send_prepare(),
+                    QbftMessageType::Commit => self.instance.send_commit()
+                    QbftMessageType::RoundChange => self.instance.send_round_change(),
+                }
+        */
 
-            // For proposals, full_data is the SSZ-encoded BeaconVote (TestingQBFTFullData), not the hash
-            let ssz_bytes = [
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3,
-            ];
-            (hash, ssz_bytes.to_vec())
-        } else {
-            // For other message types, data is already a 32-byte hash
-            (Hash256::from_slice(data), vec![])
-        };
+        // Receive the message here
+        let unsigned_msg = self.get_captured_messages();
+        let unsigned_message = unsigned_msg.first().unwrap();
+        // Sign it, could even put this in the receive
+        // let signed = sign(unsigned_msg);
 
-        // Call the instance's spec method directly - this handles all QBFT logic
-        let wrapped = self.instance.new_unsigned_message_spec(
-            msg_type,
-            data_hash,
-            rc_justifications.clone().unwrap_or_default(),
-            pre_justifications.clone().unwrap_or_default(),
-            round.map(Round::from),
-        );
-
-        // For RoundChange messages, check if we have a prepared value
-        // If so, we need to include it as full_data (matches Go behavior)
-        if msg_type == QbftMessageType::RoundChange {
-            // Check the message data to see if it has a prepared value
-            let qbft_msg = QbftMessage::from_ssz_bytes(wrapped.unsigned_message.ssv_message.data())
-                .expect("Should be able to decode our own message");
-
-            // If DataRound != 0 (NoRound), we have a prepared value
-            // In Go: signedMsg.FullData = state.LastPreparedValue
-            if qbft_msg.data_round != 0 {
-                // Use the stored prepared value bytes
-                full_data = self.last_prepared_value_bytes.clone().unwrap_or_default();
-            }
-        }
-
-        // Extract and sign the unsigned message with full_data
-        let signed_msg = sign_message_with_full_data(
-            wrapped.unsigned_message,
-            full_data,
-            &self.operator_rsa_key,
-            &self.operator_id,
-        );
-
-        Ok(signed_msg)
-    }
-
-    pub fn get_captured_messages(&self) -> Vec<SignedSSVMessage> {
-        self.captured_messages.borrow().clone()
+        //Ok(signed_msg)
+        todo!()
     }
 
     pub fn trigger_timeout(&mut self) -> Result<(), String> {
@@ -312,73 +214,6 @@ impl QbftAdapter {
 
         self.instance.end_round();
         Ok(())
-    }
-
-    /// Get the current round
-    pub fn get_round(&self) -> u64 {
-        self.instance.get_round().into()
-    }
-
-    /// Get the timeout count
-    pub fn get_timeout_count(&self) -> u64 {
-        self.timeout_count
-    }
-
-    /// Setup proposal accepted state
-    fn setup_proposal_accepted(&mut self, accepted: &AcceptedProposal) {
-        // Parse the QBFT message from the accepted proposal
-        let ssv_msg = accepted.signed_message.ssv_message.as_ref().unwrap();
-        let qbft_msg = QbftMessage::from_ssz_bytes(ssv_msg.data()).unwrap();
-
-        // Rebuild the BeaconVote
-        let full_data_str = accepted.signed_message.full_data.clone().unwrap();
-        let full_data = STANDARD.decode(full_data_str).unwrap();
-        let vote = BeaconVote::from_ssz_bytes(&full_data).unwrap();
-
-        // Modify the state for a proposal accepted
-        self.instance.store_data_spec(qbft_msg.root, vote);
-
-        // Set proposal accepted state
-        self.instance
-            .set_proposal_accepted_spec(true, Some(qbft_msg.root));
-
-        // Set instance state to Prepare (we accepted a proposal and are waiting for prepares)
-        self.instance.set_state_spec(InstanceState::Prepare {
-            proposal_root: qbft_msg.root,
-        });
-    }
-
-    /// Create adapter from timeout test Pre state
-    pub fn from_timeout_pre(pre: &TimeoutTestPre, test_keys: &TestKeySet) -> Self {
-        // Extract basic config from pre state
-        let operator_id = OperatorId::from(pre.state.committee_member.operator_id);
-        let height = InstanceHeight::from(pre.state.height as usize);
-        let round = Round::from(pre.state.round);
-        let identifier = MessageId::from(<[u8; 56]>::try_from(pre.state.id.as_slice()).unwrap());
-
-        // Create adapter with state
-        let mut adapter = Self::new_with_state(QbftStartingState {
-            height,
-            identifier,
-            committee: None, // Use default committee
-            operator_id,
-            round,
-            start_value: vec![0; 112], // Default BeaconVote SSZ bytes
-            proposal_accepted: None,
-        });
-
-        // Clear any messages sent during creation
-        adapter.captured_messages.borrow_mut().clear();
-        adapter.timeout_count = 0;
-
-        // Set ProposalAcceptedForCurrentRound if present
-        if let Some(ref accepted) = pre.state.proposal_accepted_for_current_round {
-            // For timeout tests, only set prepared if LastPreparedRound > 0
-            let set_prepared = pre.state.last_prepared_round > 0;
-            adapter.setup_proposal_accepted(accepted);
-        }
-
-        adapter
     }
 
     /// Process a message through the QBFT instance for spec tests
@@ -421,75 +256,11 @@ impl QbftAdapter {
         }
     }
 
-    /// Create adapter from message processing test Pre state
-    pub fn for_message_processing(pre: &MessageProcessingPre) -> Self {
-        // Extract basic config from pre state
-        let operator_id = OperatorId::from(pre.state.committee_member.operator_id);
-        let height = InstanceHeight::from(pre.state.height as usize);
-        let round = Round::from(pre.state.round);
-        let identifier = MessageId::from(<[u8; 56]>::try_from(pre.state.id.as_slice()).unwrap());
+    // Helpers to setup the state of the QBFT Instances after constrution and get state data
+    // ----------------------------------------------
 
-        // Build committee from state
-        let committee: Vec<OperatorId> = pre
-            .state
-            .committee_member
-            .committee
-            .iter()
-            .map(|op| OperatorId::from(op.operator_id))
-            .collect();
-
-        // Create adapter with state
-        let mut adapter = Self::new_with_state(QbftStartingState {
-            height,
-            identifier,
-            committee: Some(committee),
-            operator_id,
-            round,
-            start_value: vec![0; 112], // Default BeaconVote SSZ bytes
-            proposal_accepted: None,
-        });
-
-        // Clear any messages sent during creation
-        adapter.captured_messages.borrow_mut().clear();
-        adapter.timeout_count = 0;
-
-        // Populate containers from pre.state FIRST (before setting other state)
-        // This ensures messages are in containers for state validation
-        adapter.populate_containers(&pre.state);
-
-        // Set ProposalAcceptedForCurrentRound if present
-        if let Some(ref accepted) = pre.state.proposal_accepted_for_current_round {
-            // For message processing tests, ProposalAccepted implies prepared
-            adapter.setup_proposal_accepted(accepted);
-        }
-
-        // Set Decided state if present
-        if pre.state.decided {
-            if let Some(ref decided_bytes) = pre.state.decided_value {
-                // Hash the decided value
-                let decided_value = hash_data(decided_bytes);
-
-                // Set instance state to Complete
-                adapter.instance.set_state_spec(InstanceState::Complete);
-
-                // Store the decided value as BeaconVote from original SSZ bytes
-                let dummy_vote = BeaconVote::from_ssz_bytes(decided_bytes)
-                    .expect("DecidedValue should be valid SSZ BeaconVote");
-                adapter.instance.store_data_spec(decided_value, dummy_vote);
-
-                // Store the decided hash for creating commit messages later
-                adapter.last_prepared_value_bytes = Some(decided_bytes.clone());
-            }
-        }
-
-        // Set forceStop if needed
-        // this is the forcestop issues this is why not passing rn
-
-        adapter
-    }
-
-    /// Populate containers with messages from pre-state
-    fn populate_containers(&mut self, state: &MessageProcessingState) {
+    /// Populate containers with messages from QbftStartingState
+    fn populate_containers(&mut self, state: &QbftStartingState) {
         // Process each container type
         for test_msg in state.propose_container.msgs.values() {
             if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
@@ -514,5 +285,67 @@ impl QbftAdapter {
                 self.instance.add_message_to_container_spec(&wrapped);
             }
         }
+    }
+
+    /// Setup prepare justifications from spec test data
+    /// These are stored in the PrepareContainer and used for validating prepare messages
+    fn setup_prepare_justifications(&mut self, pre_jus: &Vec<TestSignedSSVMessage>) {
+        for test_msg in pre_jus {
+            if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
+                // Add prepare justification messages to the container
+                // This matches Go's behavior where justifications are stored in message containers
+                self.instance.add_message_to_container_spec(&wrapped);
+            }
+        }
+    }
+
+    /// Setup round change justifications from spec test data
+    fn setup_round_change_justifications(&mut self, rc_jus: &Vec<TestSignedSSVMessage>) {
+        for test_msg in rc_jus {
+            if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
+                // Add round change justification messages to the container
+                // This matches Go's behavior where justifications are stored in message containers
+                self.instance.add_message_to_container_spec(&wrapped);
+            }
+        }
+    }
+
+    /// Setup proposal accepted state
+    fn setup_proposal_accepted(&mut self, accepted: &AcceptedProposal) {
+        // Parse the QBFT message from the accepted proposal
+        let ssv_msg = accepted.signed_message.ssv_message.as_ref().unwrap();
+        let qbft_msg = QbftMessage::from_ssz_bytes(ssv_msg.data()).unwrap();
+
+        // Rebuild the BeaconVote
+        let full_data_str = accepted.signed_message.full_data.clone().unwrap();
+        let full_data = STANDARD.decode(full_data_str).unwrap();
+        let vote = BeaconVote::from_ssz_bytes(&full_data).unwrap();
+
+        // Modify the state for a proposal accepted
+        self.instance.store_data_spec(qbft_msg.root, vote);
+
+        // Set proposal accepted state
+        self.instance
+            .set_proposal_accepted_spec(Some(qbft_msg.root));
+
+        // Set instance state to Prepare (we accepted a proposal and are waiting for prepares)
+        self.instance.set_state_spec(InstanceState::Prepare {
+            proposal_root: qbft_msg.root,
+        });
+    }
+
+    /// Get the current round
+    pub fn get_round(&self) -> u64 {
+        self.instance.get_round().into()
+    }
+
+    /// Get the timeout count
+    pub fn get_timeout_count(&self) -> u64 {
+        self.timeout_count
+    }
+
+    // Get all of the outgoing messages
+    pub fn get_captured_messages(&self) -> Vec<SignedSSVMessage> {
+        self.captured_messages.borrow().clone()
     }
 }

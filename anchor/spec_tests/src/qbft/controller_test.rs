@@ -5,7 +5,6 @@ use super::adapters::spec_types::{
 use crate::utils::deserializers::{
     deserialize_base64, deserialize_base64_option, deserialize_hex_hash256_option,
 };
-use crate::utils::test_keys::TestKeySet;
 use crate::{QbftSpecTestType, SpecTest, SpecTestType};
 use qbft::InstanceHeight;
 use serde::Deserialize;

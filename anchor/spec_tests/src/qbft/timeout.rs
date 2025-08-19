@@ -1,4 +1,4 @@
-use super::adapters::qbft::QbftAdapter;
+use super::adapters::qbft::{QbftAdapter, QbftStartingState};
 use super::adapters::spec_types::{
     AcceptedProposal, ExpectedTimerState, MessageContainer, SpecTestCommitteeMember,
     TestSignedSSVMessage,
@@ -8,8 +8,11 @@ use crate::utils::deserializers::{
 };
 use crate::utils::test_keys::TestKeySet;
 use crate::{QbftSpecTestType, SpecTest, SpecTestType};
+use qbft::InstanceHeight;
 use serde::Deserialize;
 use ssv_types::message::SignedSSVMessage;
+use ssv_types::msgid::MessageId;
+use ssv_types::{IndexSet, OperatorId, Round};
 use tree_hash::TreeHash;
 use types::Hash256;
 
@@ -32,6 +35,8 @@ pub struct TimeoutTest {
     pub expected_timer_state: Option<ExpectedTimerState>,
     #[serde(rename = "ExpectedError")]
     pub expected_error: String,
+    #[serde(skip)]
+    qbft_state: Option<QbftStartingState>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -49,7 +54,6 @@ pub struct QbftInstanceState {
     pub committee_member: SpecTestCommitteeMember,
     #[serde(rename = "ID")]
     #[serde(deserialize_with = "deserialize_base64")]
-    #[serde(serialize_with = "serialize_base64")]
     pub id: Vec<u8>,
     #[serde(rename = "Round")]
     pub round: u64,
@@ -59,7 +63,6 @@ pub struct QbftInstanceState {
     pub last_prepared_round: u64,
     #[serde(rename = "LastPreparedValue")]
     #[serde(deserialize_with = "deserialize_base64_option")]
-    #[serde(serialize_with = "serialize_base64_option")]
     pub last_prepared_value: Option<Vec<u8>>,
     #[serde(rename = "ProposalAcceptedForCurrentRound")]
     pub proposal_accepted_for_current_round: Option<AcceptedProposal>,
@@ -67,7 +70,6 @@ pub struct QbftInstanceState {
     pub decided: bool,
     #[serde(rename = "DecidedValue")]
     #[serde(deserialize_with = "deserialize_base64_option")]
-    #[serde(serialize_with = "serialize_base64_option")]
     pub decided_value: Option<Vec<u8>>,
     #[serde(rename = "ProposeContainer")]
     pub propose_container: MessageContainer,
@@ -80,12 +82,47 @@ pub struct QbftInstanceState {
 }
 
 impl SpecTest for TimeoutTest {
-    fn run(&self) -> bool {
-        // Get test keys
-        let test_keys = TestKeySet::four_share_set();
+    fn setup(&mut self) {
+        // Build the starting state from timeout test pre
+        let committee: IndexSet<OperatorId> = self
+            .pre
+            .state
+            .committee_member
+            .committee
+            .iter()
+            .map(|op| OperatorId::from(op.operator_id))
+            .collect();
 
-        // Create adapter from Pre state
-        let mut adapter = QbftAdapter::from_timeout_pre(&self.pre, &test_keys);
+        let state = QbftStartingState {
+            height: InstanceHeight::from(self.pre.state.height as usize),
+            identifier: MessageId::from(
+                <[u8; 56]>::try_from(self.pre.state.id.as_slice()).unwrap(),
+            ),
+            committee: Some(committee),
+            operator_id: OperatorId::from(self.pre.state.committee_member.operator_id),
+            round: Round::from(self.pre.state.round),
+            start_value: self.pre.start_value.clone().unwrap(),
+            proposal_accepted: self.pre.state.proposal_accepted_for_current_round.clone(),
+            propose_container: self.pre.state.propose_container.clone(),
+            prepare_container: self.pre.state.prepare_container.clone(),
+            commit_container: self.pre.state.commit_container.clone(),
+            round_change_container: self.pre.state.round_change_container.clone(),
+            round_change_justifications: None,
+            prepare_justifications: None,
+        };
+
+        self.qbft_state = Some(state);
+    }
+
+    fn run(&self) -> bool {
+        // Use the state constructed in setup()
+        let state = self
+            .qbft_state
+            .as_ref()
+            .expect("QbftStartingState should be initialized in setup()");
+
+        // Create adapter with state
+        let mut adapter = QbftAdapter::new_with_state(state.clone());
 
         // Record initial round
         let initial_round = adapter.get_round();
@@ -143,8 +180,7 @@ impl SpecTest for TimeoutTest {
 
         // Check output messages
         let captured = adapter.get_captured_messages();
-
-        // Verify signatures on all captured messages
+        let test_keys = TestKeySet::four_share_set();
         if test_keys.verify_signed_messages(&captured).is_err() {
             return false;
         }
