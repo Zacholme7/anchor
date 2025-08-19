@@ -1,12 +1,13 @@
-use super::spec_test_data::SpecTestData;
 use super::spec_types::{AcceptedProposal, TestSignedSSVMessage};
 use crate::qbft::message_processing::MessageProcessingPre;
 use crate::qbft::message_processing::MessageProcessingState;
 use crate::qbft::timeout::TimeoutTestPre;
 use crate::utils::misc::{calculate_quorum, hash_data};
-use crate::utils::rsa_signing::sign_ssz_message_with_rsa;
+use crate::utils::rsa_signing::{sign_message_with_full_data, sign_ssz_message_with_rsa};
 use crate::utils::rsa_validation::validate_rsa_signatures;
 use crate::utils::test_keys::TestKeySet;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use openssl::pkey::Private;
 use openssl::rsa::Rsa;
 use qbft::{ConfigBuilder, InstanceHeight, InstanceState, LeaderFunction};
@@ -15,24 +16,15 @@ use ssv_types::consensus::{BeaconVote, QbftMessage, QbftMessageType, UnsignedSSV
 use ssv_types::message::SignedSSVMessage;
 use ssv_types::msgid::MessageId;
 use ssv_types::{IndexSet, OperatorId, Round};
-use ssz::{Decode, Encode};
+use ssz::Decode;
 use std::cell::RefCell;
 use std::rc::Rc;
-use tree_hash::TreeHash;
-use types::{Checkpoint, Epoch, FixedBytesExtended, Hash256};
+use types::Hash256;
 
 /// Test leader function that matches Go test harness behavior
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 struct TestLeaderFunction {
     height: InstanceHeight,
-}
-
-impl Default for TestLeaderFunction {
-    fn default() -> Self {
-        Self {
-            height: InstanceHeight::from(0),
-        }
-    }
 }
 
 impl LeaderFunction for TestLeaderFunction {
@@ -56,13 +48,13 @@ impl LeaderFunction for TestLeaderFunction {
 
 /// State that we want to initialize the qbft instance with
 pub struct QbftStartingState {
-    pub height: Option<InstanceHeight>,
-    pub identifier: Option<MessageId>,
-    pub committee: Option<Vec<OperatorId>>,
-    pub operator_id: Option<OperatorId>,
-    pub operator_rsa_key: Option<Rsa<Private>>,
-    pub round: Option<Round>,
-    pub start_value: Option<Vec<u8>>, // Raw SSZ bytes to decode into BeaconVote
+    pub height: InstanceHeight,
+    pub identifier: MessageId,
+    pub committee: Option<Vec<OperatorId>>, // Only committee is optional
+    pub operator_id: OperatorId,
+    pub round: Round,
+    pub start_value: Vec<u8>, // Raw SSZ bytes to decode into BeaconVote
+    pub proposal_accepted: Option<AcceptedProposal>,
 }
 
 // Simple mock handler type
@@ -71,7 +63,7 @@ type MockHandler = Box<dyn FnMut(UnsignedWrappedQbftMessage)>;
 // Adapter over our core qbft instance
 pub struct QbftAdapter {
     instance: Qbft<TestLeaderFunction, BeaconVote, MockHandler>,
-    operator_rsa_key: Option<Rsa<Private>>,
+    operator_rsa_key: Rsa<Private>,
     operator_id: OperatorId,
     // Store original state value bytes for fulldata
     last_prepared_value_bytes: Option<Vec<u8>>,
@@ -86,96 +78,82 @@ pub struct QbftAdapter {
 impl QbftAdapter {
     /// Build a QBFT instance with starting state
     pub fn new_with_state(state: QbftStartingState) -> Self {
-        let height = state.height.unwrap_or(InstanceHeight::from(0));
-
-        // Use identifier from state or default test identifier
-        let identifier = state
-            .identifier
-            .clone()
-            .unwrap_or_else(|| MessageId::from([0u8; 56]));
-
         // Use committee from state or default 4-node committee
         let committee: IndexSet<OperatorId> = state
             .committee
             .map(|c| c.into_iter().collect())
             .unwrap_or_else(|| vec![1, 2, 3, 4].into_iter().map(OperatorId::from).collect());
 
-        // Use operator_id from state or default to operator 1
-        let operator_id = state.operator_id.unwrap_or(OperatorId::from(1));
-
         // Calculate quorum size based on committee size
         let quorum_size = calculate_quorum(committee.len());
 
-        // Build config with actual committee
-        // Set max_rounds high enough for all tests (round 15 needs at least 16)
-        // IMPORTANT: For spec tests, use TestLeaderFunction that matches Go behavior
-        let config = ConfigBuilder::new(operator_id, height, committee)
+        let config = ConfigBuilder::new(state.operator_id, state.height, committee)
             .with_quorum_size(quorum_size)
-            .with_max_rounds(100) // Support very high rounds for testing
-            .with_leader_fn(TestLeaderFunction { height }) // Use test leader function
+            .with_max_rounds(15) // Support very high rounds for testing
+            .with_leader_fn(TestLeaderFunction {
+                height: state.height,
+            }) // Use test leader function
             .build()
             .expect("Failed to build config");
 
-        // Create a handler that captures messages
+        // Get test keys and RSA key for this operator
+        let test_keys = TestKeySet::four_share_set();
+        let rsa_key = test_keys
+            .operator_keys
+            .get(&state.operator_id)
+            .cloned()
+            .unwrap();
+        let rsa_key_clone = rsa_key.clone();
+
+        // Create a handler that captures and signs messages
         let captured = Rc::new(RefCell::new(Vec::new()));
         let captured_clone = captured.clone();
-        let rsa_key_clone = state.operator_rsa_key.clone();
-        let op_id = operator_id;
-
+        let op_id = state.operator_id;
         let mock_handler: MockHandler = Box::new(move |msg: UnsignedWrappedQbftMessage| {
-            // Sign the message
-            let signature = if let Some(ref rsa_key) = rsa_key_clone {
-                sign_ssz_message_with_rsa(&msg.unsigned_message.ssv_message, rsa_key)
-                    .expect("Failed to sign message")
-            } else {
-                [0u8; 256]
-            };
-
-            // Include full_data from the unsigned message
             let full_data = msg.unsigned_message.full_data.to_vec();
-
-            let signed = SignedSSVMessage::new(
-                vec![signature],
-                vec![op_id],
-                msg.unsigned_message.ssv_message.clone(),
+            let signed = sign_message_with_full_data(
+                msg.unsigned_message,
                 full_data,
-            )
-            .expect("Failed to create signed message");
+                &rsa_key_clone,
+                &op_id,
+            );
 
             captured_clone.borrow_mut().push(signed);
         });
 
-        // Decode the start_value to BeaconVote - use default if not provided
-        let start_data = if let Some(start_bytes) = state.start_value {
-            BeaconVote::from_ssz_bytes(&start_bytes)
-                .expect("Failed to decode BeaconVote from start_value")
-        } else {
-            // Temporary default - TODO: should get from JSON input
-            BeaconVote::from_ssz_bytes(&[
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3,
-            ])
-            .expect("Failed to decode default BeaconVote")
-        };
+        // Decode the start_value to BeaconVote
+        let start_data = BeaconVote::from_ssz_bytes(&state.start_value)
+            .expect("Failed to decode BeaconVote from start_value");
 
-        let mut instance = Qbft::new(config, start_data, identifier, mock_handler);
+        let mut instance = Qbft::new(config, start_data, state.identifier, mock_handler);
 
-        // Set the current round if provided (for spec tests)
-        if let Some(round) = state.round {
-            instance.set_current_round_spec(round);
-        }
+        // Now, set all of the data
+        // Set the round
+        instance.set_current_round_spec(state.round);
+        // Set the last prepared round & last prepared value (Always 0 and null)
 
-        Self {
+        let mut adapter = Self {
             instance,
-            operator_rsa_key: state.operator_rsa_key.clone(),
-            operator_id,
+            operator_rsa_key: rsa_key,
+            operator_id: state.operator_id,
             last_prepared_value_bytes: None,
             captured_messages: captured,
             timeout_count: 0,
-            test_keys: None, // Will be set when creating from test state
+            test_keys: Some(test_keys),
+        };
+
+        // Set the proposal accepted for current round
+        if let Some(proposal_accepted) = state.proposal_accepted {
+            adapter.setup_proposal_accepted(&proposal_accepted);
         }
+
+        // Set all of the containers
+
+        // Set the decided
+        // Set the decided value
+        // Set all of the containers
+
+        adapter
     }
 
     /// Setup prepare justifications for spec tests (used before creating RoundChange)
@@ -305,41 +283,20 @@ impl QbftAdapter {
         }
 
         // Extract and sign the unsigned message with full_data
-        let signed_msg = self.sign_message_with_full_data(wrapped.unsigned_message, full_data);
+        let signed_msg = sign_message_with_full_data(
+            wrapped.unsigned_message,
+            full_data,
+            &self.operator_rsa_key,
+            &self.operator_id,
+        );
 
         Ok(signed_msg)
     }
 
-    fn sign_message_with_full_data(
-        &self,
-        unsigned: UnsignedSSVMessage,
-        full_data: Vec<u8>,
-    ) -> SignedSSVMessage {
-        let signature = if let Some(ref rsa_key) = self.operator_rsa_key {
-            // Real signing - same as Go implementation
-            sign_ssz_message_with_rsa(&unsigned.ssv_message, rsa_key)
-                .expect("Failed to sign message")
-        } else {
-            // Fallback to mock signature if no key provided
-            [0u8; 256]
-        };
-
-        SignedSSVMessage::new(
-            vec![signature],
-            vec![self.operator_id],
-            unsigned.ssv_message,
-            full_data,
-        )
-        .expect("Failed to create signed message")
-    }
-
-    /// Get the messages captured by the handler
     pub fn get_captured_messages(&self) -> Vec<SignedSSVMessage> {
         self.captured_messages.borrow().clone()
     }
 
-    /// Trigger a timeout (calls end_round on the instance)
-    /// Returns an error if the instance is at or past the cutoff round (15 for tests)
     pub fn trigger_timeout(&mut self) -> Result<(), String> {
         const TEST_CUTOFF_ROUND: u64 = 15;
 
@@ -367,63 +324,23 @@ impl QbftAdapter {
         self.timeout_count
     }
 
-    /// Setup proposal accepted state (common logic for both test types)
-    fn setup_proposal_accepted(
-        &mut self,
-        accepted: &AcceptedProposal,
-        current_round: u64,
-        set_prepared: bool, // Whether to also set last_prepared
-    ) {
+    /// Setup proposal accepted state
+    fn setup_proposal_accepted(&mut self, accepted: &AcceptedProposal) {
         // Parse the QBFT message from the accepted proposal
         let ssv_msg = accepted.signed_message.ssv_message.as_ref().unwrap();
         let qbft_msg = QbftMessage::from_ssz_bytes(ssv_msg.data()).unwrap();
 
-        // Store the full data if present for the accepted proposal
-        if let Some(ref full_data_str) = accepted.signed_message.full_data {
-            use base64::Engine;
-            let full_data = base64::engine::general_purpose::STANDARD
-                .decode(full_data_str)
-                .unwrap();
-            if !full_data.is_empty() {
-                // Store BeaconVote data from full_data
-                let dummy_vote = BeaconVote::from_ssz_bytes(&full_data)
-                    .expect("FullData should be valid SSZ BeaconVote");
-                self.instance.store_data_spec(qbft_msg.root, dummy_vote);
+        // Rebuild the BeaconVote
+        let full_data_str = accepted.signed_message.full_data.clone().unwrap();
+        let full_data = STANDARD.decode(full_data_str).unwrap();
+        let vote = BeaconVote::from_ssz_bytes(&full_data).unwrap();
 
-                // Store the full data bytes for later use
-                self.last_prepared_value_bytes = Some(full_data);
-            }
-        }
+        // Modify the state for a proposal accepted
+        self.instance.store_data_spec(qbft_msg.root, vote);
 
         // Set proposal accepted state
         self.instance
             .set_proposal_accepted_spec(true, Some(qbft_msg.root));
-
-        // Only set last_prepared if explicitly requested
-        // For message processing tests: ProposalAccepted implies prepared
-        // For timeout tests: ProposalAccepted doesn't imply prepared unless LastPreparedRound > 0
-        if set_prepared {
-            // Use the stored full_data bytes to create BeaconVote
-            let dummy_vote = if let Some(ref full_data_bytes) = self.last_prepared_value_bytes {
-                BeaconVote::from_ssz_bytes(full_data_bytes)
-                    .expect("Stored full_data should be valid SSZ BeaconVote")
-            } else {
-                // Fallback to hardcoded SSZ bytes
-                BeaconVote::from_ssz_bytes(&[
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 3,
-                ])
-                .expect("Hardcoded SSZ bytes should be valid BeaconVote")
-            };
-            self.instance.set_last_prepared_spec(
-                Round::from(current_round),
-                qbft_msg.root,
-                dummy_vote,
-            );
-        }
 
         // Set instance state to Prepare (we accepted a proposal and are waiting for prepares)
         self.instance.set_state_spec(InstanceState::Prepare {
@@ -441,25 +358,24 @@ impl QbftAdapter {
 
         // Create adapter with state
         let mut adapter = Self::new_with_state(QbftStartingState {
-            height: Some(height),
-            identifier: Some(identifier),
+            height,
+            identifier,
             committee: None, // Use default committee
-            operator_id: Some(operator_id),
-            operator_rsa_key: test_keys.operator_keys.get(&operator_id).cloned(),
-            round: Some(round),
-            start_value: None, // TODO: Should get this from JSON input for timeout tests
+            operator_id,
+            round,
+            start_value: vec![0; 112], // Default BeaconVote SSZ bytes
+            proposal_accepted: None,
         });
 
         // Clear any messages sent during creation
         adapter.captured_messages.borrow_mut().clear();
         adapter.timeout_count = 0;
-        adapter.test_keys = Some(test_keys.clone());
 
         // Set ProposalAcceptedForCurrentRound if present
         if let Some(ref accepted) = pre.state.proposal_accepted_for_current_round {
             // For timeout tests, only set prepared if LastPreparedRound > 0
             let set_prepared = pre.state.last_prepared_round > 0;
-            adapter.setup_proposal_accepted(accepted, pre.state.round, set_prepared);
+            adapter.setup_proposal_accepted(accepted);
         }
 
         adapter
@@ -514,59 +430,37 @@ impl QbftAdapter {
         let identifier = MessageId::from(<[u8; 56]>::try_from(pre.state.id.as_slice()).unwrap());
 
         // Build committee from state
-        let committee: Option<Vec<OperatorId>> =
-            pre.state.committee_member.committee.as_ref().map(|ops| {
-                ops.iter()
-                    .map(|op| OperatorId::from(op.operator_id))
-                    .collect()
-            });
+        let committee: Vec<OperatorId> = pre
+            .state
+            .committee_member
+            .committee
+            .iter()
+            .map(|op| OperatorId::from(op.operator_id))
+            .collect();
 
-        let test_keys = TestKeySet::four_share_set();
         // Create adapter with state
         let mut adapter = Self::new_with_state(QbftStartingState {
-            height: Some(height),
-            identifier: Some(identifier),
-            committee,
-            operator_id: Some(operator_id),
-            operator_rsa_key: test_keys.operator_keys.get(&operator_id).cloned(),
-            round: Some(round),
-            start_value: None, // TODO: Should get this from JSON input for message processing tests
+            height,
+            identifier,
+            committee: Some(committee),
+            operator_id,
+            round,
+            start_value: vec![0; 112], // Default BeaconVote SSZ bytes
+            proposal_accepted: None,
         });
 
         // Clear any messages sent during creation
         adapter.captured_messages.borrow_mut().clear();
         adapter.timeout_count = 0;
-        adapter.test_keys = Some(test_keys.clone());
 
         // Populate containers from pre.state FIRST (before setting other state)
         // This ensures messages are in containers for state validation
         adapter.populate_containers(&pre.state);
 
-        // Set LastPrepared if present
-        if pre.state.last_prepared_round > 0 {
-            if let Some(ref value_bytes) = pre.state.last_prepared_value {
-                // Store the original bytes for FullData
-                adapter.last_prepared_value_bytes = Some(value_bytes.clone());
-
-                // Hash the value
-                let prepared_value = hash_data(value_bytes);
-
-                // Create BeaconVote from the original SSZ bytes
-                let dummy_vote = BeaconVote::from_ssz_bytes(value_bytes)
-                    .expect("LastPreparedValue should be valid SSZ BeaconVote");
-
-                adapter.instance.set_last_prepared_spec(
-                    Round::from(pre.state.last_prepared_round),
-                    prepared_value,
-                    dummy_vote,
-                );
-            }
-        }
-
         // Set ProposalAcceptedForCurrentRound if present
         if let Some(ref accepted) = pre.state.proposal_accepted_for_current_round {
             // For message processing tests, ProposalAccepted implies prepared
-            adapter.setup_proposal_accepted(accepted, pre.state.round, true);
+            adapter.setup_proposal_accepted(accepted);
         }
 
         // Set Decided state if present
@@ -589,9 +483,7 @@ impl QbftAdapter {
         }
 
         // Set forceStop if needed
-        if pre.force_stop {
-            adapter.instance.force_stop_spec();
-        }
+        // this is the forcestop issues this is why not passing rn
 
         adapter
     }

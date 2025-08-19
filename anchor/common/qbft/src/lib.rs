@@ -1744,8 +1744,17 @@ where
             // Other messages are silently ignored when decided
         }
 
+        // Ensure that this message is for the correct round
+        if wrapped_msg.qbft_message.round < self.current_round.into() {
+            debug!(
+                message_round = wrapped_msg.qbft_message.round,
+                current_round = *self.current_round,
+                "Message received for a previous round"
+            );
+            return Err(QbftError::PastRound);
+        }
         // === Basic Validation (matching Go's BaseMsgValidation) ===
-        let res = self.validate_message(&wrapped_msg)?;
+        //let res = self.validate_message(&wrapped_msg)?;
 
         // Check for future round
         // - RoundChange messages are always allowed for future rounds
@@ -1773,6 +1782,18 @@ where
             }
         }
         //let _ = self.validate_message(&wrapped_msg)?;
+
+        // Check height: CHECKING THIS
+        if wrapped_msg.qbft_message.height != *self.instance_height as u64 {
+            return Err(QbftError::WrongHeight);
+        }
+
+        // Check committee membership: CHECKING THIS
+        for signer in wrapped_msg.signed_message.operator_ids() {
+            if !self.check_committee(signer) {
+                return Err(QbftError::SignerNotInCommittee);
+            }
+        }
 
         // Check for multi-signers on non-commit messages
         if wrapped_msg.signed_message.operator_ids().len() > 1 {

@@ -80,23 +80,14 @@ impl SpecTest for CreateMessageTest {
         // Go always uses FirstHeight (0) for the instance, not the round
         let height = Some(qbft::InstanceHeight::from(0));
 
-        // Use committee from JSON if present, otherwise use hardcoded [1,2,3,4]
-        let committee = if let Some(ops) = &self.committee_member.committee {
-            // Committee is provided in JSON
-            Some(
-                ops.iter()
-                    .map(|op| ssv_types::OperatorId::from(op.operator_id))
-                    .collect(),
-            )
-        } else {
-            // Committee is null in JSON, use hardcoded test committee
-            Some(
-                vec![1, 2, 3, 4]
-                    .into_iter()
-                    .map(ssv_types::OperatorId::from)
-                    .collect(),
-            )
-        };
+        // Committee is always provided in JSON now
+        let committee = Some(
+            self.committee_member
+                .committee
+                .iter()
+                .map(|op| ssv_types::OperatorId::from(op.operator_id))
+                .collect(),
+        );
 
         // Handle operator ID:
         // - If OperatorID field is set at root level, use it
@@ -115,13 +106,15 @@ impl SpecTest for CreateMessageTest {
         let operator_rsa_key = test_keys.operator_keys.get(&operator_id).cloned();
 
         let starting_state = QbftStartingState {
-            height,
-            identifier,
+            height: height.unwrap_or(qbft::InstanceHeight::from(0)),
+            identifier: identifier.unwrap_or_else(|| MessageId::from([0u8; 56])),
             committee,
-            operator_id: Some(operator_id),
-            operator_rsa_key,
-            round: self.round.map(|r| ssv_types::Round::from(r)),
-            start_value: Some(TESTING_BEACON_VOTE_SSZ.to_vec()), // Use hardcoded SSZ-encoded BeaconVote
+            operator_id,
+            round: self
+                .round
+                .map(|r| ssv_types::Round::from(r))
+                .unwrap_or(ssv_types::Round::from(0)),
+            start_value: TESTING_BEACON_VOTE_SSZ.to_vec(),
         };
         let mut adapter = QbftAdapter::new_with_state(starting_state);
 

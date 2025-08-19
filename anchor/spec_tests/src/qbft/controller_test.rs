@@ -77,8 +77,10 @@ impl SpecTest for ControllerTest {
         let committee = self
             .controller
             .as_ref()
-            .and_then(|c| c.committee_member.committee.clone())
-            .unwrap_or_default();
+            .unwrap()
+            .committee_member
+            .committee
+            .clone();
         let mut adapter = ControllerAdapter::new(committee.clone());
 
         // Process each run instance data

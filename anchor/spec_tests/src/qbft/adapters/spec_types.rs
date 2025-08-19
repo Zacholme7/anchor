@@ -45,7 +45,7 @@ pub struct SpecTestCommitteeMember {
     #[serde(rename = "FaultyNodes")]
     pub faulty_nodes: u64,
     #[serde(rename = "Committee")]
-    pub committee: Option<Vec<SpecTestOperator>>,
+    pub committee: Vec<SpecTestOperator>,
     #[serde(rename = "DomainType")]
     #[serde(deserialize_with = "deserialize_hex")]
     pub domain_type: Vec<u8>,

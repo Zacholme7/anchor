@@ -12,6 +12,38 @@ use ssv_types::consensus::QbftMessage;
 use ssz::Decode;
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct MessageProcessingTest {
+    #[serde(rename = "Name")]
+    pub name: String,
+    #[serde(rename = "Type")]
+    pub test_type: String,
+    #[serde(rename = "Documentation")]
+    pub documentation: String,
+    #[serde(rename = "Pre")]
+    pub pre: MessageProcessingPre,
+    #[serde(rename = "PostRoot")]
+    #[serde(deserialize_with = "deserialize_base64_option")]
+    pub post_root: Option<Vec<u8>>,
+    #[serde(rename = "InputMessages")]
+    pub input_messages: Vec<TestSignedSSVMessage>,
+    #[serde(rename = "OutputMessages")]
+    pub output_messages: Option<Vec<TestSignedSSVMessage>>,
+    #[serde(rename = "ExpectedError")]
+    pub expected_error: String,
+    #[serde(rename = "ExpectedTimerState")]
+    pub expected_timer_state: Option<ExpectedTimerState>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MessageProcessingPre {
+    #[serde(rename = "State")]
+    pub state: MessageProcessingState,
+    #[serde(rename = "StartValue")]
+    #[serde(deserialize_with = "deserialize_base64")]
+    pub start_value: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct MessageProcessingState {
     #[serde(rename = "CommitteeMember")]
     pub committee_member: SpecTestCommitteeMember,
@@ -44,41 +76,6 @@ pub struct MessageProcessingState {
     pub round_change_container: MessageContainer,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct MessageProcessingPre {
-    #[serde(rename = "forceStop")]
-    #[serde(default)]
-    pub force_stop: bool,
-    #[serde(rename = "State")]
-    pub state: MessageProcessingState,
-    #[serde(rename = "StartValue")]
-    #[serde(deserialize_with = "deserialize_base64")]
-    pub start_value: Vec<u8>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct MessageProcessingTest {
-    #[serde(rename = "Name")]
-    pub name: String,
-    #[serde(rename = "Type")]
-    pub test_type: String,
-    #[serde(rename = "Documentation")]
-    pub documentation: String,
-    #[serde(rename = "Pre")]
-    pub pre: MessageProcessingPre,
-    #[serde(rename = "InputMessages")]
-    pub input_messages: Vec<TestSignedSSVMessage>,
-    #[serde(rename = "OutputMessages")]
-    pub output_messages: Option<Vec<TestSignedSSVMessage>>,
-    #[serde(rename = "PostRoot")]
-    #[serde(deserialize_with = "deserialize_base64_option")]
-    pub post_root: Option<Vec<u8>>,
-    #[serde(rename = "ExpectedError")]
-    pub expected_error: String,
-    #[serde(rename = "ExpectedTimerState")]
-    pub expected_timer_state: Option<ExpectedTimerState>,
-}
-
 impl SpecTest for MessageProcessingTest {
     fn run(&self) -> bool {
         // Create adapter from Pre state
@@ -98,20 +95,33 @@ impl SpecTest for MessageProcessingTest {
                 Some(e) => {
                     // make sure the errors match
                     if e != self.expected_error {
+                        println!("Got err {:?}, expected {:?}", e, self.expected_error);
                         return false;
                     }
                 }
-                None => return false,
+                None => {
+                    println!("Expected error {:?}", self.expected_error);
+                    return false;
+                }
             }
-        } else if let Some(_) = last_error {
+        } else if let Some(e) = last_error {
             // Got an error when one was not expected
+            println!("Did not expect the error {:?}", e);
             return false;
         }
+
+        // todo!() timer state
 
         // Check output messages
         if let Some(expected_msgs) = &self.output_messages {
             let captured = adapter.get_captured_messages();
+            // TODO!() compare more closely
             if captured.len() != expected_msgs.len() {
+                println!(
+                    "Captured {}, expected {}",
+                    captured.len(),
+                    expected_msgs.len()
+                );
                 return false;
             }
         }
