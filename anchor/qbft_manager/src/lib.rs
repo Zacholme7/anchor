@@ -209,10 +209,9 @@ impl QbftManager {
         qbft_message: ssv_types::consensus::QbftMessage,
     ) -> Result<(), QbftError> {
         let msg_id = full_message.ssv_message().msg_id();
-        let instance_height = (qbft_message.height as usize).into();
+        let instance_height: InstanceHeight = (qbft_message.height as usize).into();
 
         debug!(?msg_id, ?instance_height, "Received valid qbft message");
-
         match msg_id.duty_executor() {
             Some(DutyExecutor::Validator(validator)) => {
                 let duty = match msg_id.role() {

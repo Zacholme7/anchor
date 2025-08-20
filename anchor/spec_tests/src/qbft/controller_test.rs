@@ -84,62 +84,62 @@ pub struct ExpectedDecidedState {
 
 impl SpecTest for ControllerTest {
     fn run(&self) -> bool {
-        // Set up tokio runtime for QbftManager (needed for async operations)
         let rt = tokio::runtime::Runtime::new().unwrap();
 
         rt.block_on(async {
-            // Create a single stateful controller (matches Go's approach)
             let committee_member = self.controller.as_ref().unwrap().committee_member.clone();
             let mut controller = QbftManagerController::new(committee_member);
-
             let mut last_error: Option<String> = None;
 
-            // Process each run instance (matches Go's runInstanceWithData)
             for (i, run_data) in self.run_instance_data.iter().enumerate() {
                 let height = run_data
                     .height
                     .map(|h| InstanceHeight::from(h as usize))
                     .unwrap_or_else(|| InstanceHeight::from(i));
 
-                // StartNewInstance (matches Go's contr.StartNewInstance)
                 let value = run_data.input_value.clone().unwrap_or_default();
                 if let Err(e) = controller.start_new_instance(height, value) {
                     last_error = Some(e);
                 }
 
-                // ProcessMsg for each input message (matches Go's testProcessMsg)
                 let mut decided_count = 0;
                 let empty_messages = vec![];
                 let messages = run_data.input_messages.as_ref().unwrap_or(&empty_messages);
-                for msg in messages {
+
+                for msg in messages.iter() {
                     match controller.process_msg(msg) {
-                        Ok(Some(_decided)) => {
-                            // Message resulted in a decision
+                        Ok(Some(decided_data)) => {
                             decided_count += 1;
+
+                            if let Some(expected) = &run_data.expected_decided_state {
+                                if let Some(expected_bytes) = &expected.decided_value {
+                                    if decided_data != *expected_bytes {
+                                        last_error = Some(format!("Decided value mismatch: got {} bytes, expected {} bytes",
+                                                                decided_data.len(), expected_bytes.len()));
+                                    }
+                                }
+                            }
                         }
-                        Ok(None) => {
-                            // Message processed, no decision yet
-                        }
+                        Ok(None) => {}
                         Err(e) => {
                             last_error = Some(e);
                         }
                     }
                 }
 
-                // Basic validation (we'll improve this later)
+
                 if let Some(expected) = &run_data.expected_decided_state {
                     if expected.decided_count != decided_count as u64 {
                         last_error = Some("Decided count mismatch".to_string());
                     }
                 }
 
-                // Verify controller root (matches Go's controller.GetRoot)
                 if let Ok(_root) = controller.get_root() {
                     // TODO: Compare with run_data.controller_post_root
                 }
             }
 
-            // Check expected error (matches Go's error handling)
+
             if !self.expected_error.is_empty() {
                 last_error.is_some()
             } else {
