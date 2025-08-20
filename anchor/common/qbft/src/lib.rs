@@ -15,6 +15,7 @@ use ssv_types::{
     msgid::MessageId,
 };
 use ssz::{Decode, Encode};
+use std::collections::HashSet;
 use tracing::{debug, error, warn};
 use types::{FixedBytesExtended, Hash256};
 
@@ -669,26 +670,26 @@ where
 
         debug!(from = ?operator_id, state = ?self.state, "ROUNDCHANGE received");
 
-        // Check if we already have quorum BEFORE processing the message
-        // This matches Go's hasQuorumBefore check - if we already have quorum, ignore further messages
-        let had_quorum_before = self.round_change_container.has_quorum(round).is_some();
+        // Step 1: hasQuorumBefore check - exactly like Go's uponRoundChange
+        // Get messages for this specific round BEFORE adding the new message
+        let messages_for_round = self.round_change_container.get_messages_for_round(round);
+        let has_quorum_before = messages_for_round.len() >= self.config.quorum_size();
 
-        // Store the round changed message
-        if !self
+        // Step 2: AddFirstMsgForSignerAndRound - exactly like Go
+        let added_msg = self
             .round_change_container
-            .add_message(round, operator_id, &wrapped_msg)
-        {
-            warn!(from = ?operator_id, "ROUNDCHANGE message is a duplicate")
-        }
+            .add_message(round, operator_id, &wrapped_msg);
 
-        // If we already had quorum before adding this message, don't process again
-        // This prevents sending duplicate proposals
-        if had_quorum_before {
+        if !added_msg {
+            // Message was already added from signer - return like Go does
             return Ok(());
         }
 
-        // Only validate justifications if we don't already have a quorum
-        // This prevents unnecessary validation of messages that will be ignored anyway
+        // Step 3: Early exit if we already had quorum - exactly like Go
+        if has_quorum_before {
+            return Ok(()); // already changed round
+        }
+
         // Validate RoundChange justifications if present
         if !wrapped_msg
             .qbft_message
@@ -700,52 +701,11 @@ where
             self.validate_round_change_justifications_spec(&wrapped_msg)?;
         }
 
-        // For spec tests, check F+1 speedup for future rounds
-        // This matches Go's processMsgF1 logic
-        if round > self.current_round
-            && !matches!(self.state, InstanceState::SentRoundChange)
-            && !matches!(self.state, InstanceState::RoundChangeConsensus)
-        {
-            // Count unique operators who have sent round change for ANY future round
-            let mut unique_operators = std::collections::HashSet::new();
-            let mut min_round = None;
-
-            // Check all rounds from current+1 onwards that we have messages for
-            // We need to check beyond just the current message's round
-            // because F+1 speedup considers ALL future round messages
-            for round_offset in 1..=100 {
-                // Check up to round 100 (arbitrary high limit)
-                let check_round = Round::from(self.current_round.get() as u64 + round_offset);
-                let messages = self
-                    .round_change_container
-                    .get_messages_for_round(check_round);
-                if !messages.is_empty() {
-                    for msg in messages {
-                        // Get the operator ID from the message
-                        if let Some(op_id) = msg.signed_message.operator_ids().first() {
-                            unique_operators.insert(*op_id);
-                            // Track minimum round that has messages
-                            if min_round.is_none() || check_round < min_round.unwrap() {
-                                min_round = Some(check_round);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // If we have F+1 unique operators for future rounds
-            if unique_operators.len() > self.config.get_f() {
-                if let Some(target_round) = min_round {
-                    // Advance to the minimum future round
-                    // Don't use set_round() as it calls start_round() which may send a proposal
-                    self.current_round.set(target_round);
-                    // Set state to SentRoundChange
-                    self.state = InstanceState::SentRoundChange;
-                    // Send round change with our prepared value if we have one
-                    let data_hash = self.last_prepared_value.clone().unwrap_or_default();
-                    self.send_round_change(data_hash);
-                    return Ok(());
-                }
+        if let Some(new_round) = self.has_received_partial_quorum()? {
+            if new_round > self.current_round {
+                // Handle partial quorum (f+1 speedup) - exactly like Go
+                self.upon_change_round_partial_quorum(new_round);
+                return Ok(());
             }
         }
 
@@ -807,6 +767,67 @@ where
         }
 
         Ok(())
+    }
+
+    /// Step 4: hasReceivedPartialQuorum - exactly like Go
+    fn has_received_partial_quorum(&self) -> Result<Option<Round>, QbftError> {
+        // Get ALL round change messages from container
+        let all_messages = self.round_change_container.get_all_messages();
+
+        // Filter for future rounds only (> current_round)
+        let mut future_round_messages = Vec::new();
+        for (msg_round, messages) in all_messages {
+            if msg_round > self.current_round {
+                for msg in messages {
+                    future_round_messages.push((msg_round, msg));
+                }
+            }
+        }
+
+        if future_round_messages.is_empty() {
+            return Ok(None);
+        }
+
+        // Count unique signers across ALL future rounds - exactly like Go's HasPartialQuorum
+        let mut unique_signers = HashSet::new();
+        for (_, msg) in &future_round_messages {
+            for signer in msg.signed_message.operator_ids() {
+                unique_signers.insert(*signer);
+            }
+        }
+
+        // Check if we have partial quorum (F+1) - exactly like Go
+        if unique_signers.len() > self.config.get_f() {
+            // Find minimum round among future messages - exactly like Go's minRound
+            let min_round = future_round_messages
+                .iter()
+                .map(|(round, _)| *round)
+                .min()
+                .unwrap(); // Safe because we checked future_round_messages is not empty
+
+            Ok(Some(min_round))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Step 4: uponChangeRoundPartialQuorum - exactly like Go
+    fn upon_change_round_partial_quorum(&mut self, new_round: Round) {
+        // Update round - exactly like Go
+        self.current_round = new_round;
+
+        // Clear proposal accepted state - exactly like Go
+        self.proposal_accepted_for_current_round = false;
+
+        // Set state to SentRoundChange - exactly like Go
+        self.state = InstanceState::SentRoundChange;
+
+        // Send round change message - exactly like Go
+        let data_hash = self.last_prepared_value.unwrap_or_default();
+        self.send_round_change(data_hash);
+
+        // Note: We don't call start_round() here - this matches Go's behavior
+        // The round starts when we get full quorum, not partial quorum
     }
 
     // We have received a decided message
@@ -1652,134 +1673,3 @@ where
         &self.commit_container
     }
 }
-
-/*
-*     fn validate_justifications(&self, msg: &WrappedQbftMessage) -> bool {
-        // Record if any of the round change messages have a value that was prepared
-        let mut previously_prepared = false;
-        let mut max_prepared_round = 0;
-        let mut max_prepared_msg = None;
-
-        // Make sure we have a quorum of round change messages
-        if msg.qbft_message.round_change_justification.len() < self.config.quorum_size() {
-            warn!("Did not receive a quorum of round change messages");
-            return false;
-        }
-
-        // There was a quorum of round change justifications. We need to go though and verify each
-        // one. Each will be a SignedSSVMessage
-        for signed_round_change in &msg.qbft_message.round_change_justification {
-            // The justification message is represented as a VariableList<u8> in the signed message,
-            // deserialize this into a proper QbftMessage
-            let Ok(typed_signed_round_change) =
-                SignedSSVMessage::from_ssz_bytes(signed_round_change)
-            else {
-                warn!("Invalid Signed Round change encoded within a message");
-                return false;
-            };
-
-            // Check for multi-signers - round change messages should only have 1 signer
-            if typed_signed_round_change.operator_ids().len() > 1 {
-                warn!("Round change justification has multiple signers");
-                return false;
-            }
-            let round_change: QbftMessage = {
-                match QbftMessage::from_ssz_bytes(typed_signed_round_change.ssv_message().data()) {
-                    Ok(data) => data,
-                    Err(_) => return false,
-                }
-            };
-
-            // Make sure this is actually a round change message
-            if !matches!(round_change.qbft_message_type, QbftMessageType::RoundChange) {
-                warn!(message_type = ?round_change.qbft_message_type, "Message is not a ROUNDCHANGE message");
-                return false;
-            }
-
-            // Convert to a wrapped message and perform verification
-            let wrapped = WrappedQbftMessage {
-                signed_message: typed_signed_round_change.clone(),
-                qbft_message: round_change.clone(),
-            };
-
-            if self.validate_message(&wrapped).is_err() {
-                warn!("ROUNDCHANGE message validation failed");
-                return false;
-            }
-
-            // If the data_round > 0 (not 1), that means we have prepared a value in previous rounds
-            // Note: data_round of 0 means NoRound (not prepared), any value > 0 means prepared
-            if round_change.data_round > 0 {
-                previously_prepared = true;
-
-                // also track the max prepared value and round
-                if round_change.data_round > max_prepared_round {
-                    max_prepared_round = round_change.data_round;
-                    max_prepared_msg = Some(round_change);
-                }
-            }
-        }
-
-        // If there was a value that was also previously prepared, we must also verify all of the
-        // prepare justifications
-        if previously_prepared {
-            // Make sure we have a quorum of prepare messages
-            if msg.qbft_message.prepare_justification.len() < self.config.quorum_size() {
-                warn!(
-                    num_justifications = msg.qbft_message.prepare_justification.len(),
-                    "Not enough prepare messages for quorum"
-                );
-                return false;
-            }
-
-            // Make sure that the roots match
-            if msg.qbft_message.root
-                != max_prepared_msg
-                    .clone()
-                    .expect("Exists as we have a previously prepared value")
-                    .root
-            {
-                warn!("Highest prepared does not match proposed data");
-                return false;
-            }
-
-            // Validate each prepare message matches highest prepared round/value
-            for signed_prepare in &msg.qbft_message.prepare_justification {
-                // The qbft message is represented as VariableList<u8> in the signed message,
-                // deserialize this into a qbft message
-                let Ok(typed_signed_prepare) = SignedSSVMessage::from_ssz_bytes(signed_prepare)
-                else {
-                    warn!("Invalid Signed Prepare encoded within a message");
-                    return false;
-                };
-                let prepare =
-                    match QbftMessage::from_ssz_bytes(typed_signed_prepare.ssv_message().data()) {
-                        Ok(data) => data,
-                        Err(_) => return false,
-                    };
-
-                // Make sure this is a prepare message
-                if prepare.qbft_message_type != QbftMessageType::Prepare {
-                    warn!("Expected a prepare message");
-                    return false;
-                }
-
-                let wrapped = WrappedQbftMessage {
-                    signed_message: typed_signed_prepare.clone(),
-                    qbft_message: prepare.clone(),
-                };
-
-                if self.validate_message(&wrapped).is_err() {
-                    warn!("PREPARE message validation failed");
-                    return false;
-                }
-
-                if prepare.root != msg.qbft_message.root {
-                    warn!("Proposed data mismatch");
-                    return false;
-                }
-            }
-        }
-        true
-    }
-*/

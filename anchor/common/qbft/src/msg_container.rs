@@ -111,4 +111,12 @@ impl MessageContainer {
             })
             .unwrap_or_default()
     }
+
+    /// Gets all messages across all rounds - returns (round, messages) pairs
+    pub fn get_all_messages(&self) -> Vec<(Round, Vec<&WrappedQbftMessage>)> {
+        self.messages
+            .iter()
+            .map(|(round, round_messages)| (*round, round_messages.values().collect()))
+            .collect()
+    }
 }
