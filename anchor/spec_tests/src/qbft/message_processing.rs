@@ -160,18 +160,15 @@ impl SpecTest for MessageProcessingTest {
                 Some(e) => {
                     // make sure the errors match
                     if e != self.expected_error {
-                        println!("Got err {:?}, expected {:?}", e, self.expected_error);
                         return false;
                     }
                 }
                 None => {
-                    println!("Expected error {:?}", self.expected_error);
                     return false;
                 }
             }
-        } else if let Some(e) = last_error {
+        } else if let Some(_) = last_error {
             // Got an error when one was not expected
-            println!("Did not expect the error {:?}", e);
             return false;
         }
 
@@ -180,13 +177,8 @@ impl SpecTest for MessageProcessingTest {
         // Check output messages
         if let Some(expected_msgs) = &self.output_messages {
             let captured = adapter.get_captured_messages();
-            // TODO!() compare more closely
+            // todo!() signatures are different, compare more closely
             if captured.len() != expected_msgs.len() {
-                println!(
-                    "Captured {}, expected {}",
-                    captured.len(),
-                    expected_msgs.len()
-                );
                 return false;
             }
         }

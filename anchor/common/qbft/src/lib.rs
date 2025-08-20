@@ -190,22 +190,14 @@ where
         &self.start_data_hash
     }
 
-    /// Return a reference to the qbft configuration
+    // Return a reference to the qbft configuration
     pub fn config(&self) -> &Config<F> {
         &self.config
     }
 
-    /// Get the current round
+    // Get the current round
     pub fn get_round(&self) -> Round {
         self.current_round
-    }
-
-    pub fn get_height(&self) -> InstanceHeight {
-        self.instance_height
-    }
-
-    pub fn get_committee_spec(&self) -> Vec<OperatorId> {
-        self.config.committee_members().iter().cloned().collect()
     }
 
     // Shifts this instance into a new round>
@@ -229,17 +221,7 @@ where
         )
     }
 
-    /// Check if an operator is the leader for a specific round (used by spec tests)
-    fn check_leader_for_round(&self, operator_id: &OperatorId, round: Round) -> bool {
-        self.config.leader_fn().leader_function(
-            operator_id,
-            round,
-            self.instance_height,
-            self.config.committee_members(),
-        )
-    }
-
-    /// Checks to make sure any given operator is in this instance's comittee.
+    // Checks to make sure any given operator is in this instance's comittee.
     fn check_committee(&self, operator_id: &OperatorId) -> bool {
         self.config.committee_members().contains(operator_id)
     }
@@ -254,14 +236,8 @@ where
         &self,
         wrapped_msg: &WrappedQbftMessage,
     ) -> Result<(Option<ValidData<D>>, OperatorId), QbftError> {
-        println!("VALIDATE: msg_round={} current_round={} msg_type={:?} state={:?}", 
-                wrapped_msg.qbft_message.round, *self.current_round, 
-                wrapped_msg.qbft_message.qbft_message_type, self.state);
-        
         // Ensure that this message is for the correct round
         if wrapped_msg.qbft_message.round < self.current_round.into() {
-            println!("VALIDATE: REJECTING past round - msg_round={} < current_round={}", 
-                    wrapped_msg.qbft_message.round, *self.current_round);
             debug!(
                 message_round = wrapped_msg.qbft_message.round,
                 current_round = *self.current_round,
@@ -316,23 +292,19 @@ where
         // The rest of the verification only pertains to messages with one signature
         if wrapped_msg.signed_message.operator_ids().len() > 1 {
             // Just make sure the commit message aggregation includes us
-            match wrapped_msg.qbft_message.qbft_message_type {
-                QbftMessageType::Commit => {
-                    // Multi-signer commits (decide messages) are only valid if they include us
-                    if !wrapped_msg
-                        .signed_message
-                        .operator_ids()
-                        .contains(&self.config.operator_id())
-                    {
-                        // This is a multi-signer commit that doesn't include us - invalid
-                        return Err(QbftError::MultipleSignersNotAllowed);
-                    }
-                }
-                _ => {
-                    let valid_data = Some(ValidData::new(None, wrapped_msg.qbft_message.root));
-                    return Ok((valid_data, OperatorId::from(0)));
+            if let QbftMessageType::Commit = wrapped_msg.qbft_message.qbft_message_type {
+                // Multi-signer commits (decide messages) are only valid if they include us
+                if !wrapped_msg
+                    .signed_message
+                    .operator_ids()
+                    .contains(&self.config.operator_id())
+                {
+                    // This is a multi-signer commit that doesn't include us - invalid
+                    return Err(QbftError::MultipleSignersNotAllowed);
                 }
             }
+            let valid_data = Some(ValidData::new(None, wrapped_msg.qbft_message.root));
+            return Ok((valid_data, OperatorId::from(0)));
         }
 
         // Message is not a decide message, we know there is only one signer
@@ -365,7 +337,7 @@ where
         };
 
         if !data.validate() {
-            warn!("Data failed validation");
+            error!("Data failed validation");
             return Err(QbftError::DataValidationFailed);
         }
 
@@ -377,93 +349,11 @@ where
         Ok((valid_data, *signer))
     }
 
-    /// Justify the round change quorum
-    /// In order to justify a round change quorum, we find the maximum round of the quorum set that
-    /// had achieved a past consensus. If we have also seen consensus on this round for the
-    /// suggested data, then it is justified and this function returns that data.
-    /// If there is no past consensus data in the round change quorum or we disagree with quorum set
-    /// this function will return None, and we obtain the data as if we were beginning this
-    /// instance.
-    fn justify_round_change_quorum(&self) -> Option<ValidData<D>> {
-        // Get all round change messages for the current round
-        let round_changes = self
-            .round_change_container
-            .get_messages_for_round(self.current_round);
-
-        // Need quorum to proceed
-        if round_changes.len() < self.config.quorum_size() {
-            return None;
-        }
-
-        // Find the highest prepared round and value
-        let mut highest_prepared: Option<(Round, Hash256)> = None;
-
-        for rc_msg in &round_changes {
-            if rc_msg.qbft_message.data_round > 0 {
-                let prepared_round = Round::from(rc_msg.qbft_message.data_round);
-
-                if highest_prepared.is_none()
-                    || prepared_round > highest_prepared.as_ref().unwrap().0
-                {
-                    highest_prepared = Some((prepared_round, rc_msg.qbft_message.root));
-                }
-            }
-        }
-
-        // If there's a highest prepared value, use it
-        if let Some((prepared_round, prepared_hash)) = highest_prepared {
-            // Verify we also saw this consensus
-            if let Some(&consensus_hash) = self.past_consensus.get(&prepared_round) {
-                if consensus_hash == prepared_hash {
-                    // Get the data for this hash
-                    let data = self.data.get(&prepared_hash).cloned().unwrap_or_else(|| {
-                        warn!("Previous consensus data missing. Using start value");
-                        self.start_data.clone()
-                    });
-                    return Some(ValidData::new(Some(data), prepared_hash));
-                }
-            }
-        }
-
-        // No prepared value, use start data
-        None
-    }
-
-    // Handles the beginning of a round.
-    fn start_round(&mut self) {
-        // We are waiting for consensus on a round change, do not start the round yet
-        // Note: RoundChangeConsensus means we HAVE consensus and should proceed
-        if matches!(self.state, InstanceState::SentRoundChange) {
-            return;
-        }
-
-        debug!(round = *self.current_round, "Starting new round");
-
-        // Initialise the instance state for the round
-        self.state = InstanceState::AwaitingProposal;
-
-        // Check if we are the leader
-        if self.check_leader(&self.config.operator_id()) {
-            // We are the leader
-
-            // Check justification of round change quorum. If there is a justification, we will use
-            // that data. Otherwise, use the initial state data
-            let valid_data = self
-                .justify_round_change_quorum()
-                .unwrap_or_else(|| self.valid_start_data.clone());
-
-            debug!(hash = ?valid_data.hash, "Current leader proposing data");
-
-            // Send the initial proposal and then the following prepare
-            self.send_proposal(valid_data.hash, valid_data.data.expect("Start data exists"));
-        }
-    }
+    // Handle receiving a new message
+    // ------------------------------
 
     /// Receive a new message from the network
     pub fn receive(&mut self, wrapped_msg: WrappedQbftMessage) -> Result<(), QbftError> {
-        // Make sure we are not decided already
-        if self.completed.is_some() {}
-
         // Perform base qbft releveant verification on the message
         let (valid_data, signer) = match self.validate_message(&wrapped_msg) {
             Ok((Some(data), signer)) => (data, signer),
@@ -503,7 +393,7 @@ where
         wrapped_msg: WrappedQbftMessage,
     ) -> Result<(), QbftError> {
         // Make sure that we are actually waiting for a proposal (for current round)
-        // Allow future round proposals even in other states (matches Go behavior)
+        // Allow future round proposals even in other states
         if round == self.current_round && !matches!(self.state, InstanceState::AwaitingProposal) {
             debug!(from=?operator_id, ?self.state, "PROPOSE message for current round while in invalid state");
             return Err(QbftError::InvalidState);
@@ -521,18 +411,15 @@ where
 
         // If we are passed the first round, make sure that the justifications actually justify the
         // received proposal
-        // todo!() migrate over
         if round > Round::default() {
             // validate the justifications
             self.validate_justifications_spec(&wrapped_msg)?
         } else {
-            // Check the leader
-            if !self.check_leader_for_round(&operator_id, round) {
+            // Make sure this is from the leader
+            if !self.check_leader(&operator_id) {
                 return Err(QbftError::ProposalNotFromLeader);
             }
         };
-
-        // State validation was already done above for current round
 
         // Fulldata is included in propose messages
         let data = match valid_data.data {
@@ -562,7 +449,6 @@ where
         if self.proposal_accepted_for_current_round && round == self.current_round {
             warn!(from = ?operator_id, "Proposal has already been accepted for this round");
             return Err(QbftError::ProposalAlreadyReceived);
-            //return Err(QbftError::InvalidState);
         }
 
         // Accept this proposal
@@ -575,6 +461,367 @@ where
 
         // Create and send prepare message
         self.send_prepare(wrapped_msg.qbft_message.root);
+
+        Ok(())
+    }
+
+    /// We have received a prepare message
+    fn received_prepare(
+        &mut self,
+        operator_id: OperatorId,
+        round: Round,
+        wrapped_msg: WrappedQbftMessage,
+    ) -> Result<(), QbftError> {
+        // If we are already done, ignore (matches received_commit behavior)
+        if self.completed.is_some() {
+            return Ok(());
+        }
+
+        // Check that we are in the correct state. We do not have to be in the PREPARE state right
+        // now as this message may have been delayed
+        if u8::from(self.state) >= u8::from(InstanceState::SentRoundChange) {
+            debug!(from=?operator_id, ?self.state, "PREPARE message while in invalid state");
+            return Err(QbftError::InvalidState);
+        }
+
+        // Make sure this is actually a prepare message
+        if !(matches!(
+            wrapped_msg.qbft_message.qbft_message_type,
+            QbftMessageType::Prepare,
+        )) {
+            warn!(from=?operator_id, "Expected a PREPARE message");
+            return Err(QbftError::WrongMessageType);
+        }
+
+        debug!(from = ?operator_id, state = ?self.state, "PREPARE received");
+
+        // Make sure that we have accepted a proposal for this round
+        if !self.proposal_accepted_for_current_round {
+            debug!(from=?operator_id, ?self.state, "Have not accepted Proposal for current round yet");
+            return Err(QbftError::NoProposalAccepted);
+        }
+
+        // Check that the prepare message is for the accepted proposal
+        if let Some(accepted_root) = self.proposal_root {
+            if wrapped_msg.qbft_message.root != accepted_root {
+                return Err(QbftError::ProposedDataMismatch);
+            }
+        }
+
+        // Store the prepare message
+        if !self
+            .prepare_container
+            .add_message(round, operator_id, &wrapped_msg)
+        {
+            warn!(from = ?operator_id, "PREPARE message is a duplicate")
+        }
+
+        // Check if we have reached a prepare quorum for this round, if so send the commit message
+        if let Some(hash) = self.prepare_container.has_quorum(round) {
+            // Make sure we are in the correct state or have already moved past it
+            let proposal_root = match self.state {
+                InstanceState::Prepare { proposal_root } => proposal_root,
+                InstanceState::Commit { proposal_root } => proposal_root,
+                _ => {
+                    debug!(from=?operator_id, ?self.state, "Not in PREPARE state");
+                    return Err(QbftError::InvalidState);
+                }
+            };
+
+            // Make sure that the root of the data that we have come to a prepare consensus on
+            // matches the root of the proposal that we have accepted
+            if hash != proposal_root {
+                warn!("PREPARE quorum root does not match accepted PROPOSAL root");
+                return Err(QbftError::ProposedDataMismatch);
+            }
+
+            // Success! We have come to a prepare consensus on a value
+
+            // Move the state forward since we have a prepare quorum (only if not already in Commit state)
+            let should_send_commit = match self.state {
+                InstanceState::Prepare { .. } => {
+                    self.state = InstanceState::Commit { proposal_root };
+                    debug!(state = ?self.state, "Reached a PREPARE consensus. State updated to COMMIT");
+                    true // Send commit message when transitioning to Commit state
+                }
+                InstanceState::Commit { .. } => {
+                    // Already in Commit state, no need to transition or send another commit
+                    false
+                }
+                _ => {
+                    // This should not happen given our earlier check, but be defensive
+                    false
+                }
+            };
+
+            // Record that we have come to a consensus on this value
+            self.past_consensus.insert(round, hash);
+
+            // Record as last prepared value and round
+            self.last_prepared_value = Some(hash);
+            self.last_prepared_round = Some(self.current_round);
+
+            // Send a commit message for the prepare quorum data (only if we just transitioned)
+            if should_send_commit {
+                self.send_commit(hash);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// We have received a commit message
+    fn received_commit(
+        &mut self,
+        operator_id: OperatorId,
+        round: Round,
+        wrapped_msg: WrappedQbftMessage,
+    ) -> Result<(), QbftError> {
+        // If we are already done, ignore
+        if self.completed.is_some() {
+            return Ok(());
+        }
+
+        // Make sure that we are in the correct state
+        if u8::from(self.state) >= u8::from(InstanceState::SentRoundChange) {
+            return Err(QbftError::InvalidState);
+        }
+
+        // Make sure this is actually a commit message
+        if !(matches!(
+            wrapped_msg.qbft_message.qbft_message_type,
+            QbftMessageType::Commit,
+        )) {
+            warn!(from=?operator_id, "Expected a COMMIT message");
+            return Err(QbftError::WrongMessageType);
+        }
+
+        // Make sure that we have accepted a proposal for this round
+        if !self.proposal_accepted_for_current_round {
+            return Err(QbftError::NoProposalAccepted);
+        }
+
+        // Check that the commit message is for the accepted proposal
+        if let Some(accepted_root) = self.proposal_root {
+            if wrapped_msg.qbft_message.root != accepted_root {
+                return Err(QbftError::ProposedDataMismatch);
+            }
+        }
+
+        debug!(from = ?operator_id, state = ?self.state, "COMMIT received");
+
+        // Store the received commit message
+        if !self
+            .commit_container
+            .add_message(round, operator_id, &wrapped_msg)
+        {
+            warn!(from = ?operator_id, "COMMIT message is a duplicate")
+        }
+
+        // Check if we have a commit quorum
+        if let Some(hash) = self.commit_container.has_quorum(round) {
+            // Make sure that the root of the data that we have come to a commit consensus on
+            // matches the root of the proposal that we have accepted
+            let proposal_root = match self.state {
+                InstanceState::Commit { proposal_root } => proposal_root,
+                InstanceState::Prepare { proposal_root } => {
+                    // Transition to Commit state first (this is important for state machine correctness)
+                    self.state = InstanceState::Commit { proposal_root };
+                    proposal_root
+                }
+                _ => {
+                    return Err(QbftError::InvalidState);
+                }
+            };
+            if hash != proposal_root {
+                warn!("COMMIT quorum root does not match accepted PROPOSAL root");
+                return Err(QbftError::ProposedDataMismatch);
+            }
+
+            // Aggregate all of the commit messages
+            let commit_quorum = self.commit_container.get_quorum_of_messages(round);
+            let aggregated_commit = self.aggregate_commit_messages(commit_quorum);
+            if aggregated_commit.is_some() {
+                debug!(state = ?self.state, "Reached a COMMIT consensus. Success!");
+                self.aggregated_commit = aggregated_commit;
+                self.state = InstanceState::Complete;
+                self.completed = Some(Completed::Success(hash));
+            } else {
+                error!("Failed to aggregate commit quorum")
+            }
+        }
+
+        Ok(())
+    }
+
+    /// We have received a round change message.
+    fn received_round_change(
+        &mut self,
+        operator_id: OperatorId,
+        round: Round,
+        wrapped_msg: WrappedQbftMessage,
+    ) -> Result<(), QbftError> {
+        // Make sure we are in the correct state
+        if u8::from(self.state) >= u8::from(InstanceState::Complete) {
+            debug!(from=*operator_id, ?self.state, "ROUNDCHANGE message while in invalid state");
+            return Ok(());
+        }
+
+        debug!(from = ?operator_id, state = ?self.state, "ROUNDCHANGE received");
+
+        // Check if we already have quorum BEFORE processing the message
+        // This matches Go's hasQuorumBefore check - if we already have quorum, ignore further messages
+        let had_quorum_before = self.round_change_container.has_quorum(round).is_some();
+
+        // Store the round changed message
+        if !self
+            .round_change_container
+            .add_message(round, operator_id, &wrapped_msg)
+        {
+            warn!(from = ?operator_id, "ROUNDCHANGE message is a duplicate")
+        }
+
+        // If we already had quorum before adding this message, don't process again
+        // This prevents sending duplicate proposals
+        if had_quorum_before {
+            return Ok(());
+        }
+
+        // Only validate justifications if we don't already have a quorum
+        // This prevents unnecessary validation of messages that will be ignored anyway
+        // Validate RoundChange justifications if present
+        if !wrapped_msg
+            .qbft_message
+            .round_change_justification
+            .is_empty()
+        {
+            // RoundChange messages can include prepare justifications
+            // These prove what value was previously prepared
+            self.validate_round_change_justifications_spec(&wrapped_msg)?;
+        }
+
+        // For spec tests, check F+1 speedup for future rounds
+        // This matches Go's processMsgF1 logic
+        if round > self.current_round
+            && !matches!(self.state, InstanceState::SentRoundChange)
+            && !matches!(self.state, InstanceState::RoundChangeConsensus)
+        {
+            // Count unique operators who have sent round change for ANY future round
+            let mut unique_operators = std::collections::HashSet::new();
+            let mut min_round = None;
+
+            // Check all rounds from current+1 onwards that we have messages for
+            // We need to check beyond just the current message's round
+            // because F+1 speedup considers ALL future round messages
+            for round_offset in 1..=100 {
+                // Check up to round 100 (arbitrary high limit)
+                let check_round = Round::from(self.current_round.get() as u64 + round_offset);
+                let messages = self
+                    .round_change_container
+                    .get_messages_for_round(check_round);
+                if !messages.is_empty() {
+                    for msg in messages {
+                        // Get the operator ID from the message
+                        if let Some(op_id) = msg.signed_message.operator_ids().first() {
+                            unique_operators.insert(*op_id);
+                            // Track minimum round that has messages
+                            if min_round.is_none() || check_round < min_round.unwrap() {
+                                min_round = Some(check_round);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // If we have F+1 unique operators for future rounds
+            if unique_operators.len() > self.config.get_f() {
+                if let Some(target_round) = min_round {
+                    // Advance to the minimum future round
+                    // Don't use set_round() as it calls start_round() which may send a proposal
+                    self.current_round.set(target_round);
+                    // Set state to SentRoundChange
+                    self.state = InstanceState::SentRoundChange;
+                    // Send round change with our prepared value if we have one
+                    let data_hash = self.last_prepared_value.clone().unwrap_or_default();
+                    self.send_round_change(data_hash);
+                    return Ok(());
+                }
+            }
+        }
+
+        // There are two cases to check here
+
+        // 1. If we have received a quorum of round change messages, we need to start a new round
+        if self.round_change_container.has_quorum(round).is_some() {
+            // If we're the leader for the target round, we can proceed directly to the new round
+            // even if we haven't sent a round change ourselves
+            let is_leader = self.check_leader(&self.config.operator_id());
+
+            if matches!(self.state, InstanceState::SentRoundChange) || is_leader {
+                // Don't process if we're already at the target round and have moved past initial state
+                // This prevents duplicate proposals when RC quorum is reached multiple times
+                if self.current_round == round
+                    && !matches!(self.state, InstanceState::SentRoundChange)
+                {
+                    // We're at the target round. Only proceed if:
+                    // 1. We're in AwaitingProposal and haven't accepted a proposal yet (first time)
+                    // 2. We're in SentRoundChange (waiting for quorum)
+                    // Otherwise, we've already processed RC quorum for this round
+                    if !(matches!(self.state, InstanceState::AwaitingProposal)
+                        && !self.proposal_accepted_for_current_round)
+                    {
+                        return Ok(());
+                    }
+                }
+
+                // If we have reached a quorum for this round and have already sent a round change,
+                // OR if we're the leader, advance to that round.
+                debug!(round = *round, "Round change quorum reached");
+
+                // We have reached consensus on a round change, we can start a new round now
+                self.state = InstanceState::RoundChangeConsensus;
+
+                // The round change messages is round + 1, so this is the next round we want to use
+                self.set_round(round);
+            }
+        } else {
+            // 2. If we receive f+1 round change messages, we need to send our own round-change
+            //    message (unless we're the leader for the target round)
+            let num_messages_for_round = self.round_change_container.num_messages_for_round(round);
+            if num_messages_for_round > self.config.get_f()
+                && !(matches!(self.state, InstanceState::SentRoundChange))
+            {
+                // If we're the leader for the target round, don't send a round change
+                // We'll wait for quorum and send the proposal directly
+                if self.check_leader(&self.config.operator_id()) {
+                    // Mark state to show we're waiting for RC quorum
+                    // We don't change round yet - wait for quorum
+                    return Ok(());
+                }
+
+                // Set the state so SendRoundChange so we include Round + 1 in message
+                self.state = InstanceState::SentRoundChange;
+
+                self.send_round_change(Hash256::default());
+            }
+        }
+
+        Ok(())
+    }
+
+    // We have received a decided message
+    fn received_decided(&mut self, wrapped_msg: WrappedQbftMessage) -> Result<(), QbftError> {
+        // Make sure we have a quorum of signatures
+        if wrapped_msg.signed_message.operator_ids().len() < self.config().quorum_size() {
+            return Err(QbftError::NotEnoughSignatures);
+        }
+
+        // All message and signature verification has already succeeded. Regardless of what state
+        // this instance is at, we have all of the information necessary to mark it as
+        // complete
+        self.state = InstanceState::Complete;
+        self.completed = Some(Completed::Success(wrapped_msg.qbft_message.root));
+        self.aggregated_commit = Some(wrapped_msg.signed_message);
 
         Ok(())
     }
@@ -870,348 +1117,86 @@ where
         Ok(())
     }
 
-    fn validate_justifications(&self, msg: &WrappedQbftMessage) -> bool {
-        // Record if any of the round change messages have a value that was prepared
-        let mut previously_prepared = false;
-        let mut max_prepared_round = 0;
-        let mut max_prepared_msg = None;
+    /// Justify the round change quorum
+    /// In order to justify a round change quorum, we find the maximum round of the quorum set that
+    /// had achieved a past consensus. If we have also seen consensus on this round for the
+    /// suggested data, then it is justified and this function returns that data.
+    /// If there is no past consensus data in the round change quorum or we disagree with quorum set
+    /// this function will return None, and we obtain the data as if we were beginning this
+    /// instance.
+    fn justify_round_change_quorum(&self) -> Option<ValidData<D>> {
+        // Get all round change messages for the current round
+        let round_changes = self
+            .round_change_container
+            .get_messages_for_round(self.current_round);
 
-        // Make sure we have a quorum of round change messages
-        if msg.qbft_message.round_change_justification.len() < self.config.quorum_size() {
-            warn!("Did not receive a quorum of round change messages");
-            return false;
+        // Need quorum to proceed
+        if round_changes.len() < self.config.quorum_size() {
+            return None;
         }
 
-        // There was a quorum of round change justifications. We need to go though and verify each
-        // one. Each will be a SignedSSVMessage
-        for signed_round_change in &msg.qbft_message.round_change_justification {
-            // The justification message is represented as a VariableList<u8> in the signed message,
-            // deserialize this into a proper QbftMessage
-            let Ok(typed_signed_round_change) =
-                SignedSSVMessage::from_ssz_bytes(signed_round_change)
-            else {
-                warn!("Invalid Signed Round change encoded within a message");
-                return false;
-            };
+        // Find the highest prepared round and value
+        let mut highest_prepared: Option<(Round, Hash256)> = None;
 
-            // Check for multi-signers - round change messages should only have 1 signer
-            if typed_signed_round_change.operator_ids().len() > 1 {
-                warn!("Round change justification has multiple signers");
-                return false;
-            }
-            let round_change: QbftMessage = {
-                match QbftMessage::from_ssz_bytes(typed_signed_round_change.ssv_message().data()) {
-                    Ok(data) => data,
-                    Err(_) => return false,
-                }
-            };
+        for rc_msg in &round_changes {
+            if rc_msg.qbft_message.data_round > 0 {
+                let prepared_round = Round::from(rc_msg.qbft_message.data_round);
 
-            // Make sure this is actually a round change message
-            if !matches!(round_change.qbft_message_type, QbftMessageType::RoundChange) {
-                warn!(message_type = ?round_change.qbft_message_type, "Message is not a ROUNDCHANGE message");
-                return false;
-            }
-
-            // Convert to a wrapped message and perform verification
-            let wrapped = WrappedQbftMessage {
-                signed_message: typed_signed_round_change.clone(),
-                qbft_message: round_change.clone(),
-            };
-
-            if self.validate_message(&wrapped).is_err() {
-                warn!("ROUNDCHANGE message validation failed");
-                return false;
-            }
-
-            // If the data_round > 0 (not 1), that means we have prepared a value in previous rounds
-            // Note: data_round of 0 means NoRound (not prepared), any value > 0 means prepared
-            if round_change.data_round > 0 {
-                previously_prepared = true;
-
-                // also track the max prepared value and round
-                if round_change.data_round > max_prepared_round {
-                    max_prepared_round = round_change.data_round;
-                    max_prepared_msg = Some(round_change);
+                if highest_prepared.is_none()
+                    || prepared_round > highest_prepared.as_ref().unwrap().0
+                {
+                    highest_prepared = Some((prepared_round, rc_msg.qbft_message.root));
                 }
             }
         }
 
-        // If there was a value that was also previously prepared, we must also verify all of the
-        // prepare justifications
-        if previously_prepared {
-            // Make sure we have a quorum of prepare messages
-            if msg.qbft_message.prepare_justification.len() < self.config.quorum_size() {
-                warn!(
-                    num_justifications = msg.qbft_message.prepare_justification.len(),
-                    "Not enough prepare messages for quorum"
-                );
-                return false;
-            }
-
-            // Make sure that the roots match
-            if msg.qbft_message.root
-                != max_prepared_msg
-                    .clone()
-                    .expect("Exists as we have a previously prepared value")
-                    .root
-            {
-                warn!("Highest prepared does not match proposed data");
-                return false;
-            }
-
-            // Validate each prepare message matches highest prepared round/value
-            for signed_prepare in &msg.qbft_message.prepare_justification {
-                // The qbft message is represented as VariableList<u8> in the signed message,
-                // deserialize this into a qbft message
-                let Ok(typed_signed_prepare) = SignedSSVMessage::from_ssz_bytes(signed_prepare)
-                else {
-                    warn!("Invalid Signed Prepare encoded within a message");
-                    return false;
-                };
-                let prepare =
-                    match QbftMessage::from_ssz_bytes(typed_signed_prepare.ssv_message().data()) {
-                        Ok(data) => data,
-                        Err(_) => return false,
-                    };
-
-                // Make sure this is a prepare message
-                if prepare.qbft_message_type != QbftMessageType::Prepare {
-                    warn!("Expected a prepare message");
-                    return false;
-                }
-
-                let wrapped = WrappedQbftMessage {
-                    signed_message: typed_signed_prepare.clone(),
-                    qbft_message: prepare.clone(),
-                };
-
-                if self.validate_message(&wrapped).is_err() {
-                    warn!("PREPARE message validation failed");
-                    return false;
-                }
-
-                if prepare.root != msg.qbft_message.root {
-                    warn!("Proposed data mismatch");
-                    return false;
+        // If there's a highest prepared value, use it
+        if let Some((prepared_round, prepared_hash)) = highest_prepared {
+            // Verify we also saw this consensus
+            if let Some(&consensus_hash) = self.past_consensus.get(&prepared_round) {
+                if consensus_hash == prepared_hash {
+                    // Get the data for this hash
+                    let data = self.data.get(&prepared_hash).cloned().unwrap_or_else(|| {
+                        warn!("Previous consensus data missing. Using start value");
+                        self.start_data.clone()
+                    });
+                    return Some(ValidData::new(Some(data), prepared_hash));
                 }
             }
         }
-        true
+
+        // No prepared value, use start data
+        None
     }
 
-    /// We have received a prepare message
-    fn received_prepare(
-        &mut self,
-        operator_id: OperatorId,
-        round: Round,
-        wrapped_msg: WrappedQbftMessage,
-    ) -> Result<(), QbftError> {
-        // If we are already done, ignore (matches received_commit behavior)
-        if self.completed.is_some() {
-            return Ok(());
-        }
-        
-        // Check that we are in the correct state. We do not have to be in the PREPARE state right
-        // now as this message may have been delayed
-        println!("PREPARE: operator={:?} state={:?} state_value={} cutoff={}", operator_id, self.state, u8::from(self.state), u8::from(InstanceState::SentRoundChange));
-        if u8::from(self.state) >= u8::from(InstanceState::SentRoundChange) {
-            println!("PREPARE: REJECTING due to invalid state - operator={:?} state={:?}", operator_id, self.state);
-            debug!(from=?operator_id, ?self.state, "PREPARE message while in invalid state");
-            return Err(QbftError::InvalidState);
-        }
-        println!("PREPARE: State check PASSED - operator={:?}", operator_id);
-
-        // Make sure this is actually a prepare message
-        if !(matches!(
-            wrapped_msg.qbft_message.qbft_message_type,
-            QbftMessageType::Prepare,
-        )) {
-            warn!(from=?operator_id, "Expected a PREPARE message");
-            return Err(QbftError::WrongMessageType);
+    // Handles the beginning of a round.
+    fn start_round(&mut self) {
+        // We are waiting for consensus on a round change, do not start the round yet
+        // Note: RoundChangeConsensus means we HAVE consensus and should proceed
+        if matches!(self.state, InstanceState::SentRoundChange) {
+            return;
         }
 
-        debug!(from = ?operator_id, state = ?self.state, "PREPARE received");
+        debug!(round = *self.current_round, "Starting new round");
 
-        // Make sure that we have accepted a proposal for this round
-        if !self.proposal_accepted_for_current_round {
-            debug!(from=?operator_id, ?self.state, "Have not accepted Proposal for current round yet");
-            return Err(QbftError::NoProposalAccepted);
+        // Initialise the instance state for the round
+        self.state = InstanceState::AwaitingProposal;
+
+        // Check if we are the leader
+        if self.check_leader(&self.config.operator_id()) {
+            // We are the leader
+
+            // Check justification of round change quorum. If there is a justification, we will use
+            // that data. Otherwise, use the initial state data
+            let valid_data = self
+                .justify_round_change_quorum()
+                .unwrap_or_else(|| self.valid_start_data.clone());
+
+            debug!(hash = ?valid_data.hash, "Current leader proposing data");
+
+            // Send the initial proposal and then the following prepare
+            self.send_proposal(valid_data.hash, valid_data.data.expect("Start data exists"));
         }
-
-        // Check that the prepare message is for the accepted proposal
-        if let Some(accepted_root) = self.proposal_root {
-            if wrapped_msg.qbft_message.root != accepted_root {
-                return Err(QbftError::ProposedDataMismatch);
-            }
-        }
-
-        // Store the prepare message
-        if !self
-            .prepare_container
-            .add_message(round, operator_id, &wrapped_msg)
-        {
-            warn!(from = ?operator_id, "PREPARE message is a duplicate")
-        }
-
-        // Check if we have reached a prepare quorum for this round, if so send the commit message
-        if let Some(hash) = self.prepare_container.has_quorum(round) {
-            println!("PREPARE: Prepare quorum reached! hash={:?} state={:?}", hash, self.state);
-            // Make sure we are in the correct state or have already moved past it
-            let proposal_root = match self.state {
-                InstanceState::Prepare { proposal_root } => proposal_root,
-                InstanceState::Commit { proposal_root } => {
-                    println!("PREPARE: Already in Commit state, validating quorum consistency");
-                    proposal_root
-                },
-                _ => {
-                    println!("PREPARE: REJECTING - Not in PREPARE or COMMIT state - operator={:?} state={:?}", operator_id, self.state);
-                    debug!(from=?operator_id, ?self.state, "Not in PREPARE state");
-                    return Err(QbftError::InvalidState);
-                }
-            };
-
-            // Make sure that the root of the data that we have come to a prepare consensus on
-            // matches the root of the proposal that we have accepted
-            if hash != proposal_root {
-                warn!("PREPARE quorum root does not match accepted PROPOSAL root");
-                return Err(QbftError::ProposedDataMismatch);
-            }
-
-            // Success! We have come to a prepare consensus on a value
-
-            // Move the state forward since we have a prepare quorum (only if not already in Commit state)
-            let should_send_commit = match self.state {
-                InstanceState::Prepare { .. } => {
-                    self.state = InstanceState::Commit { proposal_root };
-                    println!("PREPARE: Transitioning Prepare -> Commit due to prepare quorum");
-                    debug!(state = ?self.state, "Reached a PREPARE consensus. State updated to COMMIT");
-                    true // Send commit message when transitioning to Commit state
-                },
-                InstanceState::Commit { .. } => {
-                    println!("PREPARE: Already in Commit state, no state transition needed");
-                    // Already in Commit state, no need to transition or send another commit
-                    false
-                },
-                _ => {
-                    // This should not happen given our earlier check, but be defensive
-                    println!("PREPARE: WARNING - Unexpected state during prepare quorum handling");
-                    false
-                }
-            };
-
-            // Record that we have come to a consensus on this value
-            self.past_consensus.insert(round, hash);
-
-            // Record as last prepared value and round
-            self.last_prepared_value = Some(hash);
-            self.last_prepared_round = Some(self.current_round);
-
-            // Send a commit message for the prepare quorum data (only if we just transitioned)
-            if should_send_commit {
-                println!("PREPARE: Sending commit message for prepare quorum");
-                self.send_commit(hash);
-            } else {
-                println!("PREPARE: Skipping commit message - already in Commit state");
-            }
-        }
-
-        Ok(())
-    }
-
-    /// We have received a commit message
-    fn received_commit(
-        &mut self,
-        operator_id: OperatorId,
-        round: Round,
-        wrapped_msg: WrappedQbftMessage,
-    ) -> Result<(), QbftError> {
-        // If we are already done, ignore
-        if self.completed.is_some() {
-            return Ok(());
-        }
-
-        // Make sure that we are in the correct state
-        println!("COMMIT: operator={:?} state={:?} state_value={} cutoff={}", operator_id, self.state, u8::from(self.state), u8::from(InstanceState::SentRoundChange));
-        if u8::from(self.state) >= u8::from(InstanceState::SentRoundChange) {
-            println!("COMMIT: REJECTING due to invalid state - operator={:?} state={:?}", operator_id, self.state);
-            return Err(QbftError::InvalidState);
-        }
-        println!("COMMIT: State check PASSED - operator={:?}", operator_id);
-
-        // Make sure this is actually a commit message
-        if !(matches!(
-            wrapped_msg.qbft_message.qbft_message_type,
-            QbftMessageType::Commit,
-        )) {
-            warn!(from=?operator_id, "Expected a COMMIT message");
-            return Err(QbftError::WrongMessageType);
-        }
-
-        // Make sure that we have accepted a proposal for this round
-        println!("COMMIT: operator={:?} proposal_accepted={} proposal_root={:?}", operator_id, self.proposal_accepted_for_current_round, self.proposal_root);
-        if !self.proposal_accepted_for_current_round {
-            println!("COMMIT: REJECTING - Have not accepted Proposal for current round yet - operator={:?} state={:?}", operator_id, self.state);
-            return Err(QbftError::NoProposalAccepted);
-        }
-        println!("COMMIT: Proposal acceptance check PASSED - operator={:?}", operator_id);
-
-        // Check that the commit message is for the accepted proposal
-        println!("COMMIT: operator={:?} proposal_root={:?} msg_root={:?}", operator_id, self.proposal_root, wrapped_msg.qbft_message.root);
-        if let Some(accepted_root) = self.proposal_root {
-            if wrapped_msg.qbft_message.root != accepted_root {
-                println!("COMMIT: REJECTING - Root mismatch - operator={:?} accepted_root={:?} msg_root={:?}", operator_id, accepted_root, wrapped_msg.qbft_message.root);
-                return Err(QbftError::ProposedDataMismatch);
-            }
-        }
-        println!("COMMIT: Root check PASSED - operator={:?}", operator_id);
-
-        debug!(from = ?operator_id, state = ?self.state, "COMMIT received");
-
-        // Store the received commit message
-        if !self
-            .commit_container
-            .add_message(round, operator_id, &wrapped_msg)
-        {
-            warn!(from = ?operator_id, "COMMIT message is a duplicate")
-        }
-
-        // Check if we have a commit quorum
-        if let Some(hash) = self.commit_container.has_quorum(round) {
-            println!("COMMIT: Commit quorum reached! hash={:?} state={:?}", hash, self.state);
-            // Make sure that the root of the data that we have come to a commit consensus on
-            // matches the root of the proposal that we have accepted
-            let proposal_root = match self.state {
-                InstanceState::Commit { proposal_root } => proposal_root,
-                InstanceState::Prepare { proposal_root } => {
-                    println!("COMMIT: Transitioning from Prepare to Commit state due to commit quorum");
-                    // Transition to Commit state first (this is important for state machine correctness)
-                    self.state = InstanceState::Commit { proposal_root };
-                    proposal_root
-                },
-                _ => {
-                    println!("COMMIT: REJECTING - Not in COMMIT or PREPARE state - operator={:?} state={:?}", operator_id, self.state);
-                    return Err(QbftError::InvalidState);
-                }
-            };
-            if hash != proposal_root {
-                warn!("COMMIT quorum root does not match accepted PROPOSAL root");
-                return Err(QbftError::ProposedDataMismatch);
-            }
-
-            // Aggregate all of the commit messages
-            let commit_quorum = self.commit_container.get_quorum_of_messages(round);
-            let aggregated_commit = self.aggregate_commit_messages(commit_quorum);
-            if aggregated_commit.is_some() {
-                debug!(state = ?self.state, "Reached a COMMIT consensus. Success!");
-                self.aggregated_commit = aggregated_commit;
-                self.state = InstanceState::Complete;
-                self.completed = Some(Completed::Success(hash));
-            } else {
-                error!("Failed to aggregate commit quorum")
-            }
-        }
-
-        Ok(())
     }
 
     // Aggregate a quorum of commit messages into one signed message
@@ -1247,180 +1232,6 @@ where
         }
 
         None
-    }
-
-    /// We have received a round change message.
-    fn received_round_change(
-        &mut self,
-        operator_id: OperatorId,
-        round: Round,
-        wrapped_msg: WrappedQbftMessage,
-    ) -> Result<(), QbftError> {
-        // Make sure we are in the correct state
-        if u8::from(self.state) >= u8::from(InstanceState::Complete) {
-            debug!(from=*operator_id, ?self.state, "ROUNDCHANGE message while in invalid state");
-            return Ok(());
-        }
-
-        debug!(from = ?operator_id, state = ?self.state, "ROUNDCHANGE received");
-
-        // Check if we already have quorum BEFORE processing the message
-        // This matches Go's hasQuorumBefore check - if we already have quorum, ignore further messages
-        let had_quorum_before = self.round_change_container.has_quorum(round).is_some();
-        
-        // Only validate justifications if we don't already have a quorum
-        // This prevents unnecessary validation of messages that will be ignored anyway
-        if !had_quorum_before {
-            // Validate RoundChange justifications if present
-            if !wrapped_msg
-                .qbft_message
-                .round_change_justification
-                .is_empty()
-            {
-                // RoundChange messages can include prepare justifications
-                // These prove what value was previously prepared
-                self.validate_round_change_justifications_spec(&wrapped_msg)?;
-            }
-        }
-
-        // Store the round changed message
-        if !self
-            .round_change_container
-            .add_message(round, operator_id, &wrapped_msg)
-        {
-            warn!(from = ?operator_id, "ROUNDCHANGE message is a duplicate")
-        }
-
-        // If we already had quorum before adding this message, don't process again
-        // This prevents sending duplicate proposals
-        if had_quorum_before {
-            return Ok(());
-        }
-
-        // For spec tests, check F+1 speedup for future rounds
-        // This matches Go's processMsgF1 logic
-        if round > self.current_round
-            && !matches!(self.state, InstanceState::SentRoundChange)
-            && !matches!(self.state, InstanceState::RoundChangeConsensus)
-        {
-            // Count unique operators who have sent round change for ANY future round
-            let mut unique_operators = std::collections::HashSet::new();
-            let mut min_round = None;
-
-            // Check all rounds from current+1 onwards that we have messages for
-            // We need to check beyond just the current message's round
-            // because F+1 speedup considers ALL future round messages
-            for round_offset in 1..=100 {
-                // Check up to round 100 (arbitrary high limit)
-                let check_round = Round::from(self.current_round.get() as u64 + round_offset);
-                let messages = self
-                    .round_change_container
-                    .get_messages_for_round(check_round);
-                if !messages.is_empty() {
-                    for msg in messages {
-                        // Get the operator ID from the message
-                        if let Some(op_id) = msg.signed_message.operator_ids().first() {
-                            unique_operators.insert(*op_id);
-                            // Track minimum round that has messages
-                            if min_round.is_none() || check_round < min_round.unwrap() {
-                                min_round = Some(check_round);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // If we have F+1 unique operators for future rounds
-            if unique_operators.len() > self.config.get_f() {
-                if let Some(target_round) = min_round {
-                    // Advance to the minimum future round
-                    // Don't use set_round() as it calls start_round() which may send a proposal
-                    self.current_round.set(target_round);
-                    // Set state to SentRoundChange
-                    self.state = InstanceState::SentRoundChange;
-                    // Send round change with our prepared value if we have one
-                    let data_hash = self.last_prepared_value.clone().unwrap_or_default();
-                    self.send_round_change(data_hash);
-                    return Ok(());
-                }
-            }
-        }
-
-        // There are two cases to check here
-
-        // 1. If we have received a quorum of round change messages, we need to start a new round
-        if self.round_change_container.has_quorum(round).is_some() {
-            // If we're the leader for the target round, we can proceed directly to the new round
-            // even if we haven't sent a round change ourselves
-            let is_leader = self.check_leader_for_round(&self.config.operator_id(), round);
-
-            if matches!(self.state, InstanceState::SentRoundChange) || is_leader {
-                // Don't process if we're already at the target round and have moved past initial state
-                // This prevents duplicate proposals when RC quorum is reached multiple times
-                if self.current_round == round
-                    && !matches!(self.state, InstanceState::SentRoundChange)
-                {
-                    // We're at the target round. Only proceed if:
-                    // 1. We're in AwaitingProposal and haven't accepted a proposal yet (first time)
-                    // 2. We're in SentRoundChange (waiting for quorum)
-                    // Otherwise, we've already processed RC quorum for this round
-                    if !(matches!(self.state, InstanceState::AwaitingProposal)
-                        && !self.proposal_accepted_for_current_round)
-                    {
-                        return Ok(());
-                    }
-                }
-
-                // If we have reached a quorum for this round and have already sent a round change,
-                // OR if we're the leader, advance to that round.
-                debug!(round = *round, "Round change quorum reached");
-
-                // We have reached consensus on a round change, we can start a new round now
-                self.state = InstanceState::RoundChangeConsensus;
-
-                // The round change messages is round + 1, so this is the next round we want to use
-                self.set_round(round);
-            }
-        } else {
-            // 2. If we receive f+1 round change messages, we need to send our own round-change
-            //    message (unless we're the leader for the target round)
-            let num_messages_for_round = self.round_change_container.num_messages_for_round(round);
-            if num_messages_for_round > self.config.get_f()
-                && !(matches!(self.state, InstanceState::SentRoundChange))
-            {
-                // If we're the leader for the target round, don't send a round change
-                // We'll wait for quorum and send the proposal directly
-                if self.check_leader_for_round(&self.config.operator_id(), round) {
-                    // Mark state to show we're waiting for RC quorum
-                    // We don't change round yet - wait for quorum
-                    return Ok(());
-                }
-
-                // Set the state so SendRoundChange so we include Round + 1 in message
-                self.state = InstanceState::SentRoundChange;
-
-                self.send_round_change(Hash256::default());
-            }
-        }
-
-        Ok(())
-    }
-
-    // We have received a decided message
-    fn received_decided(&mut self, wrapped_msg: WrappedQbftMessage) -> Result<(), QbftError> {
-        // Make sure we have a quorum of signatures
-        if wrapped_msg.signed_message.operator_ids().len() < self.config().quorum_size() {
-            return Err(QbftError::NotEnoughSignatures);
-        }
-
-        // All message and signature verification has already succeeded. Regardless of what state
-        // this instance is at, we have all of the information necessary to mark it as
-        // complete
-        self.state = InstanceState::Complete;
-        self.completed = Some(Completed::Success(wrapped_msg.qbft_message.root));
-        self.aggregated_commit = Some(wrapped_msg.signed_message);
-
-        Ok(())
     }
 
     // End the current round and move to the next one, if possible.
@@ -1841,3 +1652,134 @@ where
         &self.commit_container
     }
 }
+
+/*
+*     fn validate_justifications(&self, msg: &WrappedQbftMessage) -> bool {
+        // Record if any of the round change messages have a value that was prepared
+        let mut previously_prepared = false;
+        let mut max_prepared_round = 0;
+        let mut max_prepared_msg = None;
+
+        // Make sure we have a quorum of round change messages
+        if msg.qbft_message.round_change_justification.len() < self.config.quorum_size() {
+            warn!("Did not receive a quorum of round change messages");
+            return false;
+        }
+
+        // There was a quorum of round change justifications. We need to go though and verify each
+        // one. Each will be a SignedSSVMessage
+        for signed_round_change in &msg.qbft_message.round_change_justification {
+            // The justification message is represented as a VariableList<u8> in the signed message,
+            // deserialize this into a proper QbftMessage
+            let Ok(typed_signed_round_change) =
+                SignedSSVMessage::from_ssz_bytes(signed_round_change)
+            else {
+                warn!("Invalid Signed Round change encoded within a message");
+                return false;
+            };
+
+            // Check for multi-signers - round change messages should only have 1 signer
+            if typed_signed_round_change.operator_ids().len() > 1 {
+                warn!("Round change justification has multiple signers");
+                return false;
+            }
+            let round_change: QbftMessage = {
+                match QbftMessage::from_ssz_bytes(typed_signed_round_change.ssv_message().data()) {
+                    Ok(data) => data,
+                    Err(_) => return false,
+                }
+            };
+
+            // Make sure this is actually a round change message
+            if !matches!(round_change.qbft_message_type, QbftMessageType::RoundChange) {
+                warn!(message_type = ?round_change.qbft_message_type, "Message is not a ROUNDCHANGE message");
+                return false;
+            }
+
+            // Convert to a wrapped message and perform verification
+            let wrapped = WrappedQbftMessage {
+                signed_message: typed_signed_round_change.clone(),
+                qbft_message: round_change.clone(),
+            };
+
+            if self.validate_message(&wrapped).is_err() {
+                warn!("ROUNDCHANGE message validation failed");
+                return false;
+            }
+
+            // If the data_round > 0 (not 1), that means we have prepared a value in previous rounds
+            // Note: data_round of 0 means NoRound (not prepared), any value > 0 means prepared
+            if round_change.data_round > 0 {
+                previously_prepared = true;
+
+                // also track the max prepared value and round
+                if round_change.data_round > max_prepared_round {
+                    max_prepared_round = round_change.data_round;
+                    max_prepared_msg = Some(round_change);
+                }
+            }
+        }
+
+        // If there was a value that was also previously prepared, we must also verify all of the
+        // prepare justifications
+        if previously_prepared {
+            // Make sure we have a quorum of prepare messages
+            if msg.qbft_message.prepare_justification.len() < self.config.quorum_size() {
+                warn!(
+                    num_justifications = msg.qbft_message.prepare_justification.len(),
+                    "Not enough prepare messages for quorum"
+                );
+                return false;
+            }
+
+            // Make sure that the roots match
+            if msg.qbft_message.root
+                != max_prepared_msg
+                    .clone()
+                    .expect("Exists as we have a previously prepared value")
+                    .root
+            {
+                warn!("Highest prepared does not match proposed data");
+                return false;
+            }
+
+            // Validate each prepare message matches highest prepared round/value
+            for signed_prepare in &msg.qbft_message.prepare_justification {
+                // The qbft message is represented as VariableList<u8> in the signed message,
+                // deserialize this into a qbft message
+                let Ok(typed_signed_prepare) = SignedSSVMessage::from_ssz_bytes(signed_prepare)
+                else {
+                    warn!("Invalid Signed Prepare encoded within a message");
+                    return false;
+                };
+                let prepare =
+                    match QbftMessage::from_ssz_bytes(typed_signed_prepare.ssv_message().data()) {
+                        Ok(data) => data,
+                        Err(_) => return false,
+                    };
+
+                // Make sure this is a prepare message
+                if prepare.qbft_message_type != QbftMessageType::Prepare {
+                    warn!("Expected a prepare message");
+                    return false;
+                }
+
+                let wrapped = WrappedQbftMessage {
+                    signed_message: typed_signed_prepare.clone(),
+                    qbft_message: prepare.clone(),
+                };
+
+                if self.validate_message(&wrapped).is_err() {
+                    warn!("PREPARE message validation failed");
+                    return false;
+                }
+
+                if prepare.root != msg.qbft_message.root {
+                    warn!("Proposed data mismatch");
+                    return false;
+                }
+            }
+        }
+        true
+    }
+*/

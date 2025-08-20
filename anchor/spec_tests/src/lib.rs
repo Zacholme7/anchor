@@ -172,9 +172,9 @@ fn run_tests(test_type: SpecTestType) -> bool {
         test.setup();
         let test_result = test.run();
         if !test_result {
-            println!("❌ Test {} FAILED", i + 1);
+            println!("Test {} FAILED", i + 1);
         } else {
-            println!("✅ Test {} PASSED", i + 1);
+            println!("Test {} PASSED", i + 1);
         }
         result &= test_result;
     }

@@ -215,19 +215,16 @@ impl QbftAdapter {
 
     /// Process a message through the QBFT instance for spec tests
     pub fn process_message(&mut self, msg: &TestSignedSSVMessage) -> Result<(), String> {
-        println!("ADAPTER: Processing message from operator {:?}", msg.operator_ids);
-        
         // FORCE STOP CHECK - Absolute highest priority, before ANY processing
         // This is spec test only - we implement cleanup differently in production
         if self.force_stop {
-            println!("ADAPTER: REJECTING - Force stop is enabled");
             return Err("instance stopped processing messages".to_string());
         }
 
         // Convert TestSignedSSVMessage to WrappedQbftMessage using spec_types conversion
         let wrapped = msg.to_wrapped_qbft_message()?;
 
-        // ROUND CUTOFF CHECK - Spec test only, matches old process_message_spec behavior  
+        // ROUND CUTOFF CHECK - Spec test only, matches old process_message_spec behavior
         const TEST_CUTOFF_ROUND: u64 = 15;
         let current_round: u64 = self.instance.get_round().into();
         if current_round >= TEST_CUTOFF_ROUND {
@@ -235,7 +232,7 @@ impl QbftAdapter {
         }
 
         // === Spec Test Validations (duplicating message_validator checks) ===
-        
+
         // DUPLICATE: Multi-signer validation (already done in message_validator::consensus_message.rs:73-89)
         // We duplicate this here for spec tests since message_validator is bypassed
         let signers = wrapped.signed_message.operator_ids().len();
@@ -266,21 +263,19 @@ impl QbftAdapter {
 
         // Process message through core receive function
         // Let core QBFT handle most validation (including state validation)
-        println!("ADAPTER: Calling core receive() for operator {:?} msgtype {:?}", wrapped.signed_message.operator_ids(), wrapped.qbft_message.qbft_message_type);
         match self.instance.receive(wrapped.clone()) {
-            Ok(()) => {
-                println!("ADAPTER: Core receive() SUCCESS for operator {:?}", wrapped.signed_message.operator_ids());
-                Ok(())
-            },
+            Ok(()) => Ok(()),
             Err(qbft_error) => {
-                println!("ADAPTER: Core receive() ERROR for operator {:?}: {:?}", wrapped.signed_message.operator_ids(), qbft_error);
                 // For hash validation errors, check if we should do additional validation
                 if matches!(qbft_error, qbft::QbftError::InvalidFullData) {
                     // DUPLICATE: Full data hash validation (already done in message_validator::consensus_message.rs:99-103)
                     // We duplicate this here for spec tests since message_validator is bypassed
-                    // NOTE: Only validate hash for proposal messages with non-empty data  
-                    if matches!(wrapped.qbft_message.qbft_message_type, QbftMessageType::Proposal) 
-                       && !wrapped.signed_message.full_data().is_empty() {
+                    // NOTE: Only validate hash for proposal messages with non-empty data
+                    if matches!(
+                        wrapped.qbft_message.qbft_message_type,
+                        QbftMessageType::Proposal
+                    ) && !wrapped.signed_message.full_data().is_empty()
+                    {
                         use sha2::{Digest, Sha256};
                         let mut hasher = Sha256::new();
                         hasher.update(wrapped.signed_message.full_data());
@@ -292,7 +287,7 @@ impl QbftAdapter {
                         }
                     }
                 }
-                
+
                 // Map the QbftError to the expected spec test string
                 return Err(map_qbft_error(&qbft_error));
             }
