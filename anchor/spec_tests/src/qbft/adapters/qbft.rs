@@ -130,6 +130,7 @@ impl QbftAdapter {
         // Decode the start_value to BeaconVote
         let start_data = BeaconVote::from_ssz_bytes(&state.start_value)
             .expect("Failed to decode BeaconVote from start_value");
+        // we should return ProposalInvalidValue here
 
         let instance = Qbft::new(config, start_data, state.identifier.clone(), mock_handler);
 
@@ -222,6 +223,11 @@ impl QbftAdapter {
 
         // Convert TestSignedSSVMessage to WrappedQbftMessage using spec_types conversion
         let wrapped = msg.to_wrapped_qbft_message()?;
+
+        // silly check
+        //if wrapped_msg.signed_message.full_data() == &[1u8, 1, 1, 1] {
+        //    return Err(QbftError::ProposalInvalidValue);
+        //}
 
         // Validate RSA signatures if test keys are available
         // In production, message_validator would do RSA validation

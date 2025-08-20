@@ -194,7 +194,11 @@ impl TestSignedSSVMessage {
             Err(_) => return Err("Unknown error".to_string()),
         };
 
-        //signed_msg.validate();
+        // Valiate the signed message
+        if let Err(e) = signed_message.validate() {
+            let err_string = map_signed_message_error(&e);
+            return Err(err_string);
+        }
 
         // Get the qbft message
         let ssv_message = signed_message.ssv_message();

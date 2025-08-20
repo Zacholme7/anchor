@@ -439,7 +439,7 @@ impl ControllerAdapter {
 
         // Process the message through the instance
         // This will return an error if the message is invalid
-        if let Err(qbft_err) = instance.process_message_spec(wrapped) {
+        if let Err(qbft_err) = instance.receive(wrapped) {
             // Map the error to match Go's error wrapping
             use crate::utils::error_mapping::map_qbft_error;
             let error_msg = map_qbft_error(&qbft_err);

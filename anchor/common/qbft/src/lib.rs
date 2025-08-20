@@ -264,6 +264,32 @@ where
             return Err(QbftError::PastRound);
         }
 
+        // Check for future round
+        // - RoundChange messages are always allowed for future rounds
+        // - Proposals are allowed for future rounds if they have justifications
+        // - Other messages (Prepare, Commit) are not allowed for future rounds
+        if wrapped_msg.qbft_message.round > self.current_round.into() {
+            match wrapped_msg.qbft_message.qbft_message_type {
+                QbftMessageType::RoundChange => {
+                    // Round changes for future rounds are always allowed
+                }
+                QbftMessageType::Proposal => {
+                    // Proposals for future rounds are only allowed with justifications
+                    if wrapped_msg
+                        .qbft_message
+                        .round_change_justification
+                        .is_empty()
+                    {
+                        return Err(QbftError::WrongRound);
+                    }
+                }
+                _ => {
+                    // Prepare and Commit messages for future rounds are not allowed
+                    return Err(QbftError::WrongRound);
+                }
+            }
+        }
+
         // Make sure we are at the correct instance height
         if wrapped_msg.qbft_message.height != *self.instance_height as u64 {
             warn!(
@@ -283,11 +309,24 @@ where
 
         // The rest of the verification only pertains to messages with one signature
         if wrapped_msg.signed_message.operator_ids().len() > 1 {
-            // The message validator already checked this is a decided message (a commit message
-            // with > 1 signers). Do not care about data here, just that we had a
-            // success
-            let valid_data = Some(ValidData::new(None, wrapped_msg.qbft_message.root));
-            return Ok((valid_data, OperatorId::from(0)));
+            // Just make sure the commit message aggregation includes us
+            match wrapped_msg.qbft_message.qbft_message_type {
+                QbftMessageType::Commit => {
+                    // Multi-signer commits (decide messages) are only valid if they include us
+                    if !wrapped_msg
+                        .signed_message
+                        .operator_ids()
+                        .contains(&self.config.operator_id())
+                    {
+                        // This is a multi-signer commit that doesn't include us - invalid
+                        return Err(QbftError::MultipleSignersNotAllowed);
+                    }
+                }
+                _ => {
+                    let valid_data = Some(ValidData::new(None, wrapped_msg.qbft_message.root));
+                    return Ok((valid_data, OperatorId::from(0)));
+                }
+            }
         }
 
         // Message is not a decide message, we know there is only one signer
@@ -475,9 +514,20 @@ where
 
         // If we are passed the first round, make sure that the justifications actually justify the
         // received proposal
-        if round > Round::default() && !self.validate_justifications(&wrapped_msg) {
-            warn!(from = ?operator_id, "Justification verifiction failed");
-            return Err(QbftError::InvalidJustification);
+        // todo!() migrate over
+        if round > Round::default() {
+            // validate the justifications
+            self.validate_justifications_spec(&wrapped_msg)?
+        } else {
+            // Check the leader
+            if !self.check_leader_for_round(&operator_id, round) {
+                return Err(QbftError::ProposalNotFromLeader);
+            }
+        };
+
+        // Make sure the proposal is for this round
+        if round == self.current_round && !matches!(self.state, InstanceState::AwaitingProposal) {
+            return Err(QbftError::InvalidState);
         }
 
         // Fulldata is included in propose messages
@@ -502,9 +552,13 @@ where
         }
 
         // Make sure we have not already accepted another proposal for this round.
-        if self.proposal_accepted_for_current_round {
+        // Only reject if we've already accepted a proposal for THIS round
+        // Allow proposals for future rounds even if we have a proposal for current round
+        // question the second part
+        if self.proposal_accepted_for_current_round && round == self.current_round {
             warn!(from = ?operator_id, "Proposal has already been accepted for this round");
             return Err(QbftError::ProposalAlreadyReceived);
+            //return Err(QbftError::InvalidState);
         }
 
         // Accept this proposal
@@ -1143,6 +1197,17 @@ where
 
         debug!(from = ?operator_id, state = ?self.state, "ROUNDCHANGE received");
 
+        // Validate RoundChange justifications if present
+        if !wrapped_msg
+            .qbft_message
+            .round_change_justification
+            .is_empty()
+        {
+            // RoundChange messages can include prepare justifications
+            // These prove what value was previously prepared
+            self.validate_round_change_justifications_spec(&wrapped_msg)?;
+        }
+
         // Check if we already have quorum BEFORE adding the message
         // This matches Go's hasQuorumBefore check
         let had_quorum_before = self.round_change_container.has_quorum(round).is_some();
@@ -1360,69 +1425,6 @@ where
         MessageData::new(0, self.current_round.get() as u64, data_hash, full_data)
     }
 
-    // Construct a new unsigned message. This will be passed to the processor to be signed and then
-    // sent on the network
-    fn new_unsigned_message(
-        &self,
-        msg_type: QbftMessageType,
-        data_hash: D::Hash,
-        round_change_justification: Vec<SignedSSVMessage>,
-        prepare_justification: Vec<SignedSSVMessage>,
-        round: Option<Round>,
-    ) -> UnsignedWrappedQbftMessage {
-        let data = self.get_message_data(&msg_type, data_hash);
-
-        let round = if let Some(round) = round {
-            round
-        } else {
-            data.round.into()
-        };
-
-        // Clear full_data from justifications as these do not store full data.
-        let round_change_justification_vec: Vec<VariableList<u8, _>> = round_change_justification
-            .into_iter()
-            .map(|msg| msg.without_full_data())
-            .map(|msg| VariableList::from(msg.as_ssz_bytes()))
-            .collect();
-
-        let prepare_justification_vec: Vec<VariableList<u8, _>> = prepare_justification
-            .into_iter()
-            .map(|msg| msg.without_full_data())
-            .map(|msg| VariableList::from(msg.as_ssz_bytes()))
-            .collect();
-
-        let round_change_justification = VariableList::from(round_change_justification_vec);
-        let prepare_justification = VariableList::from(prepare_justification_vec);
-
-        // Create the QBFT message
-        let qbft_message = QbftMessage {
-            qbft_message_type: msg_type,
-            height: *self.instance_height as u64,
-            round: round.into(),
-            identifier: (&self.identifier).into(),
-            root: data.root,
-            data_round: data.data_round,
-            round_change_justification,
-            prepare_justification,
-        };
-
-        let ssv_message = SSVMessage::new(
-            MsgType::SSVConsensusMsgType,
-            self.identifier.clone(),
-            qbft_message.as_ssz_bytes(),
-        )
-        .expect("SSVMessage should be valid.");
-
-        // Wrap in unsigned SSV message
-        UnsignedWrappedQbftMessage {
-            unsigned_message: UnsignedSSVMessage {
-                ssv_message,
-                full_data: data.full_data,
-            },
-            qbft_message,
-        }
-    }
-
     // Get all of the round change jusitifcation messages
     fn get_round_change_justifications(&self) -> Vec<SignedSSVMessage> {
         // Short circuit if we are in first round
@@ -1535,6 +1537,72 @@ where
         vec![]
     }
 
+    // Create and Send new message
+    // ---------------------
+
+    // Construct a new unsigned message. This will be passed to the processor to be signed and then
+    // sent on the network
+    fn new_unsigned_message(
+        &self,
+        msg_type: QbftMessageType,
+        data_hash: D::Hash,
+        round_change_justification: Vec<SignedSSVMessage>,
+        prepare_justification: Vec<SignedSSVMessage>,
+        round: Option<Round>,
+    ) -> UnsignedWrappedQbftMessage {
+        let data = self.get_message_data(&msg_type, data_hash);
+
+        let round = if let Some(round) = round {
+            round
+        } else {
+            data.round.into()
+        };
+
+        // Clear full_data from justifications as these do not store full data.
+        let round_change_justification_vec: Vec<VariableList<u8, _>> = round_change_justification
+            .into_iter()
+            .map(|msg| msg.without_full_data())
+            .map(|msg| VariableList::from(msg.as_ssz_bytes()))
+            .collect();
+
+        let prepare_justification_vec: Vec<VariableList<u8, _>> = prepare_justification
+            .into_iter()
+            .map(|msg| msg.without_full_data())
+            .map(|msg| VariableList::from(msg.as_ssz_bytes()))
+            .collect();
+
+        let round_change_justification = VariableList::from(round_change_justification_vec);
+        let prepare_justification = VariableList::from(prepare_justification_vec);
+
+        // Create the QBFT message
+        let qbft_message = QbftMessage {
+            qbft_message_type: msg_type,
+            height: *self.instance_height as u64,
+            round: round.into(),
+            identifier: (&self.identifier).into(),
+            root: data.root,
+            data_round: data.data_round,
+            round_change_justification,
+            prepare_justification,
+        };
+
+        let ssv_message = SSVMessage::new(
+            MsgType::SSVConsensusMsgType,
+            self.identifier.clone(),
+            qbft_message.as_ssz_bytes(),
+        )
+        .expect("SSVMessage should be valid.");
+
+        // Wrap in unsigned SSV message
+        UnsignedWrappedQbftMessage {
+            unsigned_message: UnsignedSSVMessage {
+                ssv_message,
+                full_data: data.full_data,
+            },
+            qbft_message,
+        }
+    }
+
     // Send a new qbft proposal message
     pub fn send_proposal(&mut self, hash: D::Hash, data: Arc<D>) {
         // Store the data we're proposing
@@ -1631,52 +1699,17 @@ where
             })
     }
 
-    // Spec related code
+    // Spec test related helper functions
+    // ------------------------
 
-    // Expose the ability to create new unsigned messages for spec testing
     /// Helper function for spec tests to set the current round
     pub fn set_current_round_spec(&mut self, round: Round) {
         self.current_round = round;
     }
 
-    /// Helper function for spec tests to set last prepared round and value
-    pub fn set_last_prepared_spec(&mut self, round: Round, value: D::Hash, full_data: D) {
-        self.last_prepared_round = Some(round);
-        self.last_prepared_value = Some(value);
-        // Store the full data so it can be included in the message
-        self.data.insert(value, Arc::new(full_data));
-    }
-
-    /// Helper function for spec tests to add a prepare justification
-    pub fn add_prepare_justification_spec(
-        &mut self,
-        round: Round,
-        operator_id: OperatorId,
-        msg: WrappedQbftMessage,
-    ) {
-        self.prepare_container.add_message(round, operator_id, &msg);
-    }
-
     /// Helper function for spec tests to store data for proposals
     pub fn store_data_spec(&mut self, hash: D::Hash, data: D) {
         self.data.insert(hash, Arc::new(data));
-    }
-
-    pub fn new_unsigned_message_spec(
-        &self,
-        msg_type: QbftMessageType,
-        data_hash: D::Hash,
-        round_change_justification: Vec<SignedSSVMessage>,
-        prepare_justification: Vec<SignedSSVMessage>,
-        round: Option<Round>,
-    ) -> UnsignedWrappedQbftMessage {
-        self.new_unsigned_message(
-            msg_type,
-            data_hash,
-            round_change_justification,
-            prepare_justification,
-            round,
-        )
     }
 
     /// Helper for spec tests to add messages directly to containers
@@ -1732,256 +1765,7 @@ where
         self.state = state;
     }
 
-    /// Force stop for spec tests
-    pub fn force_stop_spec(&mut self) {
-        // Set the round to the cutoff to simulate stopping
-        self.current_round = Round::from(15);
-    }
-
-    /// Process a message for spec tests - wrapper that returns proper error strings
-    pub fn process_message_spec(
-        &mut self,
-        wrapped_msg: WrappedQbftMessage,
-    ) -> Result<(), QbftError> {
-        // Check cutoff round (15 for tests)
-        const TEST_CUTOFF_ROUND: u64 = 15;
-        if self.current_round >= Round::from(TEST_CUTOFF_ROUND) {
-            return Err(QbftError::RoundCutoff);
-        }
-
-        // Check if instance is already decided
-        if matches!(self.state, InstanceState::Complete) {
-            // For decided instances, proposals should return an error
-            if matches!(
-                wrapped_msg.qbft_message.qbft_message_type,
-                QbftMessageType::Proposal
-            ) {
-                return Err(QbftError::InvalidState);
-            }
-            // Other messages are silently ignored when decided
-        }
-
-        // Ensure that this message is for the correct round
-        if wrapped_msg.qbft_message.round < self.current_round.into() {
-            debug!(
-                message_round = wrapped_msg.qbft_message.round,
-                current_round = *self.current_round,
-                "Message received for a previous round"
-            );
-            return Err(QbftError::PastRound);
-        }
-        // === Basic Validation (matching Go's BaseMsgValidation) ===
-        //let res = self.validate_message(&wrapped_msg)?;
-
-        // Check for future round
-        // - RoundChange messages are always allowed for future rounds
-        // - Proposals are allowed for future rounds if they have justifications
-        // - Other messages (Prepare, Commit) are not allowed for future rounds
-        if wrapped_msg.qbft_message.round > self.current_round.into() {
-            match wrapped_msg.qbft_message.qbft_message_type {
-                QbftMessageType::RoundChange => {
-                    // Round changes for future rounds are always allowed
-                }
-                QbftMessageType::Proposal => {
-                    // Proposals for future rounds are only allowed with justifications
-                    if wrapped_msg
-                        .qbft_message
-                        .round_change_justification
-                        .is_empty()
-                    {
-                        return Err(QbftError::WrongRound);
-                    }
-                }
-                _ => {
-                    // Prepare and Commit messages for future rounds are not allowed
-                    return Err(QbftError::WrongRound);
-                }
-            }
-        }
-        //let _ = self.validate_message(&wrapped_msg)?;
-
-        // Check height: CHECKING THIS
-        if wrapped_msg.qbft_message.height != *self.instance_height as u64 {
-            return Err(QbftError::WrongHeight);
-        }
-
-        // Check committee membership: CHECKING THIS
-        for signer in wrapped_msg.signed_message.operator_ids() {
-            if !self.check_committee(signer) {
-                return Err(QbftError::SignerNotInCommittee);
-            }
-        }
-
-        // Check for multi-signers on non-commit messages
-        if wrapped_msg.signed_message.operator_ids().len() > 1 {
-            match wrapped_msg.qbft_message.qbft_message_type {
-                QbftMessageType::Commit => {
-                    // Multi-signer commits (decide messages) are only valid if they include us
-                    if !wrapped_msg
-                        .signed_message
-                        .operator_ids()
-                        .contains(&self.config.operator_id())
-                    {
-                        // This is a multi-signer commit that doesn't include us - invalid
-                        return Err(QbftError::MultipleSignersNotAllowed);
-                    }
-                }
-                _ => return Err(QbftError::MultipleSignersNotAllowed),
-            }
-        }
-
-        // Check we have at least one signer
-        if wrapped_msg.signed_message.operator_ids().is_empty() {
-            return Err(QbftError::NoSigners);
-        }
-
-        let signer = if wrapped_msg.signed_message.operator_ids().len() == 1 {
-            *wrapped_msg.signed_message.operator_ids().first().unwrap()
-        } else {
-            OperatorId::from(0) // For decide messages
-        };
-
-        // === Message Type Specific Validation ===
-        let msg_round: Round = wrapped_msg.qbft_message.round.into();
-
-        match wrapped_msg.qbft_message.qbft_message_type {
-            QbftMessageType::Proposal => {
-                // Validate full data integrity (H(data) == root)
-                // This matches Go's validation in isValidProposal
-                // Always validate, even for empty data (empty data has a specific hash)
-                {
-                    // added this in
-                    let mut hasher = Sha256::new();
-                    hasher.update(wrapped_msg.signed_message.full_data());
-                    let hash_bytes: [u8; 32] = hasher.finalize().into();
-                    let computed_hash = Hash256::from(hash_bytes);
-
-                    if computed_hash != wrapped_msg.qbft_message.root {
-                        return Err(QbftError::InvalidFullData);
-                    }
-
-                    // this should be caught by the ssz decode
-                    // For spec tests: check for invalid value
-                    // The Go tests use []byte{1, 1, 1, 1} as TestingInvalidValueCheck
-                    if wrapped_msg.signed_message.full_data() == &[1u8, 1, 1, 1] {
-                        return Err(QbftError::ProposalInvalidValue);
-                    }
-                }
-
-                // For spec tests: validate justifications BEFORE checking leader
-                // This is because test proposals intentionally use wrong leaders to test
-                // justification validation error paths
-
-                // For any proposal with round > 0, validate justifications first
-                if msg_round > Round::default() {
-                    // If there are justifications, validate them (and skip leader check)
-                    // The tests use invalid leaders to test justification errors
-                    self.validate_justifications_spec(&wrapped_msg)?;
-                    // For spec tests with justifications, we skip the leader check
-                    // since tests intentionally use wrong leaders
-                } else {
-                    // For round 1 proposals (no justifications), check the leader
-                    if !self.check_leader_for_round(&signer, msg_round) {
-                        return Err(QbftError::ProposalNotFromLeader);
-                    }
-                }
-
-                // Check state (only for current round proposals)
-                if msg_round == self.current_round
-                    && !matches!(self.state, InstanceState::AwaitingProposal)
-                {
-                    return Err(QbftError::InvalidState);
-                }
-
-                // For spec tests, we need to handle proposal specially
-                // The issue is that received_propose expects data but spec tests don't provide valid BeaconVote
-                // We'll modify the flow to handle this case
-
-                // First accept the proposal and update state
-                if !self
-                    .propose_container
-                    .add_message(msg_round, signer, &wrapped_msg)
-                {
-                    return Err(QbftError::ProposalAlreadyReceived);
-                }
-
-                // Only reject if we've already accepted a proposal for THIS round
-                // Allow proposals for future rounds even if we have a proposal for current round
-                if self.proposal_accepted_for_current_round && msg_round == self.current_round {
-                    return Err(QbftError::InvalidState);
-                }
-
-                // Accept this proposal
-                self.proposal_accepted_for_current_round = true;
-                self.proposal_root = Some(wrapped_msg.qbft_message.root);
-                self.state = InstanceState::Prepare {
-                    proposal_root: wrapped_msg.qbft_message.root,
-                };
-
-                // For spec tests, we need to store dummy data so send_prepare doesn't return early
-                // Store the start_data (or create dummy data) for this proposal
-                if !self.data.contains_key(&wrapped_msg.qbft_message.root) {
-                    // Use the start_data as a dummy since we don't have real data
-                    self.data
-                        .insert(wrapped_msg.qbft_message.root, self.start_data.clone());
-                }
-
-                // Send prepare message
-                let _ = self.send_prepare(wrapped_msg.qbft_message.root);
-            }
-            QbftMessageType::Prepare => {
-                // Check if we already accepted a proposal for this round
-                if !self.proposal_accepted_for_current_round {
-                    return Err(QbftError::NoProposalAccepted);
-                }
-
-                // Check prepare data matches accepted proposal
-                if let Some(ref proposal_root) = self.proposal_root {
-                    if wrapped_msg.qbft_message.root != *proposal_root {
-                        return Err(QbftError::ProposedDataMismatch);
-                    }
-                }
-
-                // Process the prepare
-                let _ = self.received_prepare(signer, msg_round, wrapped_msg);
-            }
-            QbftMessageType::Commit => {
-                // For spec tests, we need to validate commits more strictly
-                // Check if we received a proposal for this round
-                if !self.proposal_accepted_for_current_round {
-                    return Err(QbftError::NoProposalAccepted);
-                }
-
-                // Check commit data matches the accepted proposal
-                if let Some(ref proposal_root) = self.proposal_root {
-                    if wrapped_msg.qbft_message.root != *proposal_root {
-                        return Err(QbftError::ProposedDataMismatch);
-                    }
-                }
-
-                // Process the commit
-                let _ = self.received_commit(signer, msg_round, wrapped_msg);
-            }
-            QbftMessageType::RoundChange => {
-                // Validate RoundChange justifications if present
-                if !wrapped_msg
-                    .qbft_message
-                    .round_change_justification
-                    .is_empty()
-                {
-                    // RoundChange messages can include prepare justifications
-                    // These prove what value was previously prepared
-                    self.validate_round_change_justifications_spec(&wrapped_msg)?;
-                }
-
-                // Process round change
-                let _ = self.received_round_change(signer, msg_round, wrapped_msg);
-            }
-        }
-
-        Ok(())
-    }
-
+    /// Helper function to get the commit container
     pub fn get_commit_container(&self) -> &MessageContainer {
         &self.commit_container
     }
