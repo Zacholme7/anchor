@@ -107,7 +107,7 @@ impl SpecTest for ControllerTest {
                 let messages = run_data.input_messages.as_ref().unwrap_or(&empty_messages);
 
                 for msg in messages.iter() {
-                    match controller.process_msg(msg) {
+                    match controller.process_msg(msg).await {
                         Ok(Some(decided_data)) => {
                             decided_count += 1;
 
@@ -130,6 +130,7 @@ impl SpecTest for ControllerTest {
 
                 if let Some(expected) = &run_data.expected_decided_state {
                     if expected.decided_count != decided_count as u64 {
+                        println!("expected {}, got {}", expected.decided_count, decided_count);
                         last_error = Some("Decided count mismatch".to_string());
                     }
                 }

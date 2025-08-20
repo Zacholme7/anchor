@@ -164,7 +164,10 @@ impl QbftManagerController {
     }
 
     /// Process message - matches Go's ProcessMsg (returns decided value when ready)
-    pub fn process_msg(&mut self, msg: &TestSignedSSVMessage) -> Result<Option<Vec<u8>>, String> {
+    pub async fn process_msg(
+        &mut self,
+        msg: &TestSignedSSVMessage,
+    ) -> Result<Option<Vec<u8>>, String> {
         let (signed_ssv_msg, qbft_msg) = self.convert_test_message(msg)?;
         let instance_height = InstanceHeight::from(qbft_msg.height as usize);
 
@@ -172,6 +175,9 @@ impl QbftManagerController {
             .manager
             .receive_data(signed_ssv_msg, qbft_msg)
             .map_err(|e| format!("QbftManager receive_data failed: {e:?}"))?;
+
+        // Give QBFT time to process the message
+        tokio::time::sleep(tokio::time::Duration::from_millis(25)).await;
 
         if let Ok(instances) = self.completed_instances.lock() {
             if let Some(decided_data) = instances.get(&instance_height) {
