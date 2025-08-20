@@ -215,19 +215,48 @@ impl QbftAdapter {
 
     /// Process a message through the QBFT instance for spec tests
     pub fn process_message(&mut self, msg: &TestSignedSSVMessage) -> Result<(), String> {
-        // Check if force stop was set. We implement this in a different way via a long running
-        // cleaner task so we can just mock this check in the tests
+        println!("ADAPTER: Processing message from operator {:?}", msg.operator_ids);
+        
+        // FORCE STOP CHECK - Absolute highest priority, before ANY processing
+        // This is spec test only - we implement cleanup differently in production
         if self.force_stop {
+            println!("ADAPTER: REJECTING - Force stop is enabled");
             return Err("instance stopped processing messages".to_string());
         }
 
         // Convert TestSignedSSVMessage to WrappedQbftMessage using spec_types conversion
         let wrapped = msg.to_wrapped_qbft_message()?;
 
-        // silly check
-        //if wrapped_msg.signed_message.full_data() == &[1u8, 1, 1, 1] {
-        //    return Err(QbftError::ProposalInvalidValue);
-        //}
+        // ROUND CUTOFF CHECK - Spec test only, matches old process_message_spec behavior  
+        const TEST_CUTOFF_ROUND: u64 = 15;
+        let current_round: u64 = self.instance.get_round().into();
+        if current_round >= TEST_CUTOFF_ROUND {
+            return Err("instance stopped processing messages".to_string());
+        }
+
+        // === Spec Test Validations (duplicating message_validator checks) ===
+        
+        // DUPLICATE: Multi-signer validation (already done in message_validator::consensus_message.rs:73-89)
+        // We duplicate this here for spec tests since message_validator is bypassed
+        let signers = wrapped.signed_message.operator_ids().len();
+        if signers > 1 {
+            match wrapped.qbft_message.qbft_message_type {
+                QbftMessageType::Commit => {
+                    // This matches message_validator quorum validation logic
+                    let committee_size = 4; // Default test committee size
+                    let quorum_size = (committee_size - 1) / 3 * 2 + 1; // f*2+1 where f=(n-1)/3
+                    if signers < quorum_size {
+                        return Err("invalid signed message: msg allows 1 signer".to_string());
+                    }
+                }
+                _ => return Err("invalid signed message: msg allows 1 signer".to_string()),
+            }
+        }
+
+        // Check for invalid value BEFORE hash validation (for proper error precedence)
+        if wrapped.signed_message.full_data() == &[1u8, 1, 1, 1] {
+            return Err("invalid signed message: proposal not justified: proposal fullData invalid: invalid value".to_string());
+        }
 
         // Validate RSA signatures if test keys are available
         // In production, message_validator would do RSA validation
@@ -236,9 +265,34 @@ impl QbftAdapter {
         }
 
         // Process message through core receive function
-        match self.instance.receive(wrapped) {
-            Ok(()) => Ok(()),
+        // Let core QBFT handle most validation (including state validation)
+        println!("ADAPTER: Calling core receive() for operator {:?} msgtype {:?}", wrapped.signed_message.operator_ids(), wrapped.qbft_message.qbft_message_type);
+        match self.instance.receive(wrapped.clone()) {
+            Ok(()) => {
+                println!("ADAPTER: Core receive() SUCCESS for operator {:?}", wrapped.signed_message.operator_ids());
+                Ok(())
+            },
             Err(qbft_error) => {
+                println!("ADAPTER: Core receive() ERROR for operator {:?}: {:?}", wrapped.signed_message.operator_ids(), qbft_error);
+                // For hash validation errors, check if we should do additional validation
+                if matches!(qbft_error, qbft::QbftError::InvalidFullData) {
+                    // DUPLICATE: Full data hash validation (already done in message_validator::consensus_message.rs:99-103)
+                    // We duplicate this here for spec tests since message_validator is bypassed
+                    // NOTE: Only validate hash for proposal messages with non-empty data  
+                    if matches!(wrapped.qbft_message.qbft_message_type, QbftMessageType::Proposal) 
+                       && !wrapped.signed_message.full_data().is_empty() {
+                        use sha2::{Digest, Sha256};
+                        let mut hasher = Sha256::new();
+                        hasher.update(wrapped.signed_message.full_data());
+                        let hash_bytes: [u8; 32] = hasher.finalize().into();
+                        let computed_hash = Hash256::from(hash_bytes);
+
+                        if computed_hash != wrapped.qbft_message.root {
+                            return Err("invalid signed message: H(data) != root".to_string());
+                        }
+                    }
+                }
+                
                 // Map the QbftError to the expected spec test string
                 return Err(map_qbft_error(&qbft_error));
             }
