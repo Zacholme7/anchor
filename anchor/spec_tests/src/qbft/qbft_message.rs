@@ -15,18 +15,28 @@ use types::Hash256;
 pub struct QbftMessageTest {
     #[serde(rename = "Name")]
     pub name: String,
+
     #[serde(rename = "Type")]
     pub test_type: String,
+
     #[serde(rename = "Documentation")]
     pub documentation: String,
+
     #[serde(rename = "Messages")]
     pub messages: Vec<TestSignedSSVMessage>,
-    #[serde(rename = "EncodedMessages")]
-    #[serde(deserialize_with = "deserialize_base64_list_option")]
+
+    #[serde(
+        rename = "EncodedMessages",
+        deserialize_with = "deserialize_base64_list_option"
+    )]
     pub encoded_messages: Option<Vec<Vec<u8>>>,
-    #[serde(rename = "ExpectedRoots")]
-    #[serde(deserialize_with = "deserialize_hash256_list_option")]
+
+    #[serde(
+        rename = "ExpectedRoots",
+        deserialize_with = "deserialize_hash256_list_option"
+    )]
     pub expected_roots: Option<Vec<Hash256>>,
+
     #[serde(rename = "ExpectedError")]
     pub expected_error: String,
 }

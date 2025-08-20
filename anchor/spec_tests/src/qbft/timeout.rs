@@ -20,21 +20,28 @@ use types::Hash256;
 pub struct TimeoutTest {
     #[serde(rename = "Name")]
     pub name: String,
+
     #[serde(rename = "Type")]
     pub test_type: String,
+
     #[serde(rename = "Documentation")]
     pub documentation: String,
+
     #[serde(rename = "Pre")]
     pub pre: TimeoutTestPre,
-    #[serde(rename = "PostRoot")]
-    #[serde(deserialize_with = "deserialize_hex_hash256")]
+
+    #[serde(rename = "PostRoot", deserialize_with = "deserialize_hex_hash256")]
     pub post_root: Hash256,
+
     #[serde(rename = "OutputMessages")]
     pub output_messages: Option<Vec<TestSignedSSVMessage>>,
+
     #[serde(rename = "ExpectedTimerState")]
     pub expected_timer_state: Option<ExpectedTimerState>,
+
     #[serde(rename = "ExpectedError")]
     pub expected_error: String,
+
     #[serde(skip)]
     qbft_state: Option<QbftStartingState>,
 }
@@ -43,8 +50,8 @@ pub struct TimeoutTest {
 pub struct TimeoutTestPre {
     #[serde(rename = "State")]
     pub state: QbftInstanceState,
-    #[serde(rename = "StartValue")]
-    #[serde(deserialize_with = "deserialize_base64_option")]
+
+    #[serde(rename = "StartValue", deserialize_with = "deserialize_base64_option")]
     pub start_value: Option<Vec<u8>>,
 }
 
@@ -52,31 +59,46 @@ pub struct TimeoutTestPre {
 pub struct QbftInstanceState {
     #[serde(rename = "CommitteeMember")]
     pub committee_member: SpecTestCommitteeMember,
-    #[serde(rename = "ID")]
-    #[serde(deserialize_with = "deserialize_base64")]
+
+    #[serde(rename = "ID", deserialize_with = "deserialize_base64")]
     pub id: Vec<u8>,
+
     #[serde(rename = "Round")]
     pub round: u64,
+
     #[serde(rename = "Height")]
     pub height: u64,
+
     #[serde(rename = "LastPreparedRound")]
     pub last_prepared_round: u64,
-    #[serde(rename = "LastPreparedValue")]
-    #[serde(deserialize_with = "deserialize_base64_option")]
+
+    #[serde(
+        rename = "LastPreparedValue",
+        deserialize_with = "deserialize_base64_option"
+    )]
     pub last_prepared_value: Option<Vec<u8>>,
+
     #[serde(rename = "ProposalAcceptedForCurrentRound")]
     pub proposal_accepted_for_current_round: Option<AcceptedProposal>,
+
     #[serde(rename = "Decided")]
     pub decided: bool,
-    #[serde(rename = "DecidedValue")]
-    #[serde(deserialize_with = "deserialize_base64_option")]
+
+    #[serde(
+        rename = "DecidedValue",
+        deserialize_with = "deserialize_base64_option"
+    )]
     pub decided_value: Option<Vec<u8>>,
+
     #[serde(rename = "ProposeContainer")]
     pub propose_container: MessageContainer,
+
     #[serde(rename = "PrepareContainer")]
     pub prepare_container: MessageContainer,
+
     #[serde(rename = "CommitContainer")]
     pub commit_container: MessageContainer,
+
     #[serde(rename = "RoundChangeContainer")]
     pub round_change_container: MessageContainer,
 }
@@ -109,6 +131,7 @@ impl SpecTest for TimeoutTest {
             round_change_container: self.pre.state.round_change_container.clone(),
             round_change_justifications: None,
             prepare_justifications: None,
+            force_stop: false,
         };
 
         self.qbft_state = Some(state);

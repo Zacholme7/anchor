@@ -1,4 +1,5 @@
 use super::spec_types::{AcceptedProposal, MessageContainer, TestSignedSSVMessage};
+use crate::utils::error_mapping::map_qbft_error;
 use crate::utils::misc::calculate_quorum;
 use crate::utils::rsa_signing::sign_message_with_full_data;
 use crate::utils::rsa_validation::validate_rsa_signatures;
@@ -23,7 +24,6 @@ use types::Hash256;
 struct TestLeaderFunction {
     height: InstanceHeight,
 }
-
 impl LeaderFunction for TestLeaderFunction {
     fn leader_function(
         &self,
@@ -48,10 +48,10 @@ impl LeaderFunction for TestLeaderFunction {
 pub struct QbftStartingState {
     pub height: InstanceHeight,
     pub identifier: MessageId,
-    pub committee: Option<IndexSet<OperatorId>>, // Only committee is optional
+    pub committee: Option<IndexSet<OperatorId>>,
     pub operator_id: OperatorId,
     pub round: Round,
-    pub start_value: Vec<u8>, // Raw SSZ bytes to decode into BeaconVote
+    pub start_value: Vec<u8>,
     pub proposal_accepted: Option<AcceptedProposal>,
     pub propose_container: MessageContainer,
     pub prepare_container: MessageContainer,
@@ -59,6 +59,7 @@ pub struct QbftStartingState {
     pub round_change_container: MessageContainer,
     pub round_change_justifications: Option<Vec<TestSignedSSVMessage>>,
     pub prepare_justifications: Option<Vec<TestSignedSSVMessage>>,
+    pub force_stop: bool,
 }
 
 // Simple mock handler type
@@ -66,17 +67,18 @@ type MockHandler = Box<dyn FnMut(UnsignedWrappedQbftMessage)>;
 
 // Adapter over our core qbft instance
 pub struct QbftAdapter {
+    // Test instance
     instance: Qbft<TestLeaderFunction, BeaconVote, MockHandler>,
+    // Key to sign messages
     operator_rsa_key: Rsa<Private>,
-    operator_id: OperatorId,
-    // Store original state value bytes for fulldata
-    last_prepared_value_bytes: Option<Vec<u8>>,
     // Capture send messages
     captured_messages: Rc<RefCell<Vec<SignedSSVMessage>>>, // Capture sent messages
     // Track number of timeouts triggered
     timeout_count: u64, // Track number of timeouts triggered
     // Store test keys for validation
     test_keys: Option<TestKeySet>, // Store test keys for validation
+    // Force stop flag for spec tests
+    force_stop: bool,
 }
 
 impl QbftAdapter {
@@ -129,24 +131,25 @@ impl QbftAdapter {
         let start_data = BeaconVote::from_ssz_bytes(&state.start_value)
             .expect("Failed to decode BeaconVote from start_value");
 
-        let mut instance = Qbft::new(config, start_data, state.identifier.clone(), mock_handler);
+        let instance = Qbft::new(config, start_data, state.identifier.clone(), mock_handler);
 
-        // Set the round
-        instance.set_current_round_spec(state.round);
-
+        // Build the adapter
         let mut adapter = Self {
             instance,
             operator_rsa_key: rsa_key,
-            operator_id: state.operator_id,
-            last_prepared_value_bytes: None,
             captured_messages: captured,
             timeout_count: 0,
             test_keys: Some(test_keys),
+            force_stop: state.force_stop,
         };
 
-        // Clear any messages sent during creation
+        // Start round is called right away, just clear these messages since we
+        // want to test specific message combinations
         adapter.captured_messages.borrow_mut().clear();
         adapter.timeout_count = 0;
+
+        // Set the round
+        adapter.setup_round(state.round);
 
         // Set the proposal accepted for current round
         if let Some(ref proposal_accepted) = state.proposal_accepted {
@@ -162,7 +165,7 @@ impl QbftAdapter {
             adapter.setup_prepare_justifications(pre_jus);
         }
 
-        // Populate all containers
+        // Populate all message containers
         adapter.populate_containers(&state);
 
         adapter
@@ -172,68 +175,49 @@ impl QbftAdapter {
     pub fn create_message(
         &mut self,
         msg_type: QbftMessageType,
-        data: &[u8],
-        rc_justifications: &Option<Vec<SignedSSVMessage>>,
-        pre_justifications: &Option<Vec<SignedSSVMessage>>,
-        round: Option<u64>,
-    ) -> Result<SignedSSVMessage, bool> {
-        // have to store the data
-        //self.instance.store_data_spec(hash, dummy_vote);
+        root: Hash256,
+        data: Vec<u8>,
+    ) -> SignedSSVMessage {
+        let start_data = BeaconVote::from_ssz_bytes(&data)
+            .expect("Failed to decode BeaconVote from start_value");
 
-        /*
-                match msg_type {
-                    QbftMessageType::Proposal => self.instance.send_proposal(),
-                    QbftMessageType::Prepare => self.instance.send_prepare(),
-                    QbftMessageType::Commit => self.instance.send_commit()
-                    QbftMessageType::RoundChange => self.instance.send_round_change(),
-                }
-        */
+        // delegate message creation based on message type
+        match msg_type {
+            QbftMessageType::Proposal => self.instance.send_proposal(root, start_data.into()),
+            QbftMessageType::Prepare => self.instance.send_prepare(root),
+            QbftMessageType::Commit => self.instance.send_commit(root),
+            QbftMessageType::RoundChange => self.instance.send_round_change(root),
+        }
 
-        // Receive the message here
-        let unsigned_msg = self.get_captured_messages();
-        let unsigned_message = unsigned_msg.first().unwrap();
-        // Sign it, could even put this in the receive
-        // let signed = sign(unsigned_msg);
+        // The "send_*" functions will build the message for the type and send it
+        // on the message sender to be signed
+        let captured_msgs = self.get_captured_messages();
+        let signed_msg = captured_msgs.first().unwrap();
 
-        //Ok(signed_msg)
-        todo!()
+        signed_msg.to_owned()
     }
 
+    // Trigger a timeout by ending the round
     pub fn trigger_timeout(&mut self) -> Result<(), String> {
-        const TEST_CUTOFF_ROUND: u64 = 15;
-
         let current_round: u64 = self.instance.get_round().into();
 
         // Check if we're at or past the cutoff round (matching Go test behavior)
-        if current_round >= TEST_CUTOFF_ROUND {
+        if current_round >= 15 {
             return Err("instance stopped processing timeouts".to_string());
         }
 
         // Increment timeout counter before triggering the timeout
         self.timeout_count += 1;
-
         self.instance.end_round();
         Ok(())
     }
 
     /// Process a message through the QBFT instance for spec tests
     pub fn process_message(&mut self, msg: &TestSignedSSVMessage) -> Result<(), String> {
-        // Check if instance is already decided
-        if self.instance.is_decided_spec() {
-            // For post-decided tests, proposals should return an error
-            if let Some(ref ssv_msg) = msg.ssv_message {
-                if let Ok(qbft_msg) = QbftMessage::from_ssz_bytes(ssv_msg.data()) {
-                    if matches!(qbft_msg.qbft_message_type, QbftMessageType::Proposal) {
-                        // Proposals after decided should return an error
-                        return Err(
-                            "invalid signed message: proposal is not valid with current state"
-                                .to_string(),
-                        );
-                    }
-                }
-            }
-            // Non-proposal messages are silently ignored after decided
-            return Ok(());
+        // Check if force stop was set. We implement this in a different way via a long running
+        // cleaner task so we can just mock this check in the tests
+        if self.force_stop {
+            return Err("instance stopped processing messages".to_string());
         }
 
         // Convert TestSignedSSVMessage to WrappedQbftMessage using spec_types conversion
@@ -245,13 +229,12 @@ impl QbftAdapter {
             validate_rsa_signatures(&wrapped, test_keys)?;
         }
 
-        // Process through the core QBFT instance - it handles all protocol validation
-        match self.instance.process_message_spec(wrapped) {
+        // Process message through core receive function
+        match self.instance.receive(wrapped) {
             Ok(()) => Ok(()),
             Err(qbft_error) => {
                 // Map the QbftError to the expected spec test string
-                use crate::utils::error_mapping::map_qbft_error;
-                Err(map_qbft_error(&qbft_error))
+                return Err(map_qbft_error(&qbft_error));
             }
         }
     }
@@ -332,6 +315,11 @@ impl QbftAdapter {
         self.instance.set_state_spec(InstanceState::Prepare {
             proposal_root: qbft_msg.root,
         });
+    }
+
+    /// Set the round of the instance
+    pub fn setup_round(&mut self, round: Round) {
+        self.instance.set_current_round_spec(round);
     }
 
     /// Get the current round

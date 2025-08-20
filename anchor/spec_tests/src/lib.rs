@@ -207,7 +207,7 @@ mod spec_tests {
         }
 
         #[test]
-        fn test_qbft_message_processing() {
+        fn test_qbft_processing() {
             assert!(run_tests(SpecTestType::Qbft(
                 QbftSpecTestType::MsgProcessing
             )))

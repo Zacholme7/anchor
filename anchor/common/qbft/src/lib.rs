@@ -339,7 +339,6 @@ where
     /// If there is no past consensus data in the round change quorum or we disagree with quorum set
     /// this function will return None, and we obtain the data as if we were beginning this
     /// instance.
-
     fn justify_round_change_quorum(&self) -> Option<ValidData<D>> {
         // Get all round change messages for the current round
         let round_changes = self
@@ -417,6 +416,9 @@ where
 
     /// Receive a new message from the network
     pub fn receive(&mut self, wrapped_msg: WrappedQbftMessage) -> Result<(), QbftError> {
+        // Make sure we are not decided already
+        if self.completed.is_some() {}
+
         // Perform base qbft releveant verification on the message
         let (valid_data, signer) = match self.validate_message(&wrapped_msg) {
             Ok((Some(data), signer)) => (data, signer),
@@ -1534,7 +1536,7 @@ where
     }
 
     // Send a new qbft proposal message
-    fn send_proposal(&mut self, hash: D::Hash, data: Arc<D>) {
+    pub fn send_proposal(&mut self, hash: D::Hash, data: Arc<D>) {
         // Store the data we're proposing
         self.data.insert(hash, data.clone());
 
@@ -1561,7 +1563,7 @@ where
     }
 
     // Send a new qbft prepare message
-    fn send_prepare(&mut self, data_hash: D::Hash) {
+    pub fn send_prepare(&mut self, data_hash: D::Hash) {
         // Only send prepare if we've seen this data
         if !self.data.contains_key(&data_hash) {
             warn!("Attempted to prepare unknown data");
@@ -1576,7 +1578,7 @@ where
     }
 
     // Send a new qbft commit message
-    fn send_commit(&mut self, data_hash: D::Hash) {
+    pub fn send_commit(&mut self, data_hash: D::Hash) {
         // Construct unsigned commit
         let unsigned_msg =
             self.new_unsigned_message(QbftMessageType::Commit, data_hash, vec![], vec![], None);
@@ -1585,7 +1587,7 @@ where
     }
 
     // Send a new qbft round change message
-    fn send_round_change(&mut self, data_hash: D::Hash) {
+    pub fn send_round_change(&mut self, data_hash: D::Hash) {
         // For Round Change messages
         // round_change_justification: list of prepare messages
         let round_change_justifications = self.get_round_change_prepare_justifications();
@@ -1925,7 +1927,7 @@ where
                 }
 
                 // Send prepare message
-                self.send_prepare(wrapped_msg.qbft_message.root);
+                let _ = self.send_prepare(wrapped_msg.qbft_message.root);
             }
             QbftMessageType::Prepare => {
                 // Check if we already accepted a proposal for this round
@@ -1941,7 +1943,7 @@ where
                 }
 
                 // Process the prepare
-                self.received_prepare(signer, msg_round, wrapped_msg);
+                let _ = self.received_prepare(signer, msg_round, wrapped_msg);
             }
             QbftMessageType::Commit => {
                 // For spec tests, we need to validate commits more strictly
@@ -1958,7 +1960,7 @@ where
                 }
 
                 // Process the commit
-                self.received_commit(signer, msg_round, wrapped_msg);
+                let _ = self.received_commit(signer, msg_round, wrapped_msg);
             }
             QbftMessageType::RoundChange => {
                 // Validate RoundChange justifications if present
@@ -1973,7 +1975,7 @@ where
                 }
 
                 // Process round change
-                self.received_round_change(signer, msg_round, wrapped_msg);
+                let _ = self.received_round_change(signer, msg_round, wrapped_msg);
             }
         }
 

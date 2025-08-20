@@ -1,4 +1,3 @@
-use super::spec_test_data::SpecTestData;
 use crate::utils::deserializers::{deserialize_base64, deserialize_hex};
 use crate::utils::error_mapping::map_signed_message_error;
 use base64::prelude::*;
@@ -6,10 +5,10 @@ use qbft::WrappedQbftMessage;
 use serde::Deserialize;
 use ssv_types::{
     OperatorId,
-    consensus::{QbftMessage, QbftMessageType},
+    consensus::QbftMessage,
     message::{SSVMessage, SignedSSVMessage, SignedSSVMessageError},
 };
-use ssz::{Decode, Encode};
+use ssz::Decode;
 use std::collections::HashMap;
 
 /// Error type for test message conversion
@@ -37,17 +36,20 @@ pub enum TestMessageConversionError {
 pub struct SpecTestCommitteeMember {
     #[serde(rename = "OperatorID")]
     pub operator_id: OperatorId,
-    #[serde(rename = "CommitteeID")]
-    #[serde(deserialize_with = "deserialize_hex")]
+
+    #[serde(rename = "CommitteeID", deserialize_with = "deserialize_hex")]
     pub committee_id: Vec<u8>,
+
     #[serde(rename = "SSVOperatorPubKey")]
     pub ssv_operator_pub_key: Option<String>,
+
     #[serde(rename = "FaultyNodes")]
     pub faulty_nodes: u64,
+
     #[serde(rename = "Committee")]
     pub committee: Vec<SpecTestOperator>,
-    #[serde(rename = "DomainType")]
-    #[serde(deserialize_with = "deserialize_hex")]
+
+    #[serde(rename = "DomainType", deserialize_with = "deserialize_hex")]
     pub domain_type: Vec<u8>,
 }
 
@@ -65,23 +67,16 @@ pub struct SpecTestOperator {
 pub struct ExpectedTimerState {
     #[serde(rename = "Timeouts")]
     pub timeouts: u64,
+
     #[serde(rename = "Round")]
     pub round: Option<u64>,
 }
 
 /// Container for QBFT messages indexed by a key
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct MessageContainer {
     #[serde(rename = "Msgs")]
     pub msgs: HashMap<String, TestSignedSSVMessage>,
-}
-
-impl Default for MessageContainer {
-    fn default() -> Self {
-        Self {
-            msgs: HashMap::new(),
-        }
-    }
 }
 
 /// Accepted proposal for the current round
@@ -89,6 +84,7 @@ impl Default for MessageContainer {
 pub struct AcceptedProposal {
     #[serde(rename = "SignedMessage")]
     pub signed_message: TestSignedSSVMessage,
+
     #[serde(rename = "QBFTMessage")]
     pub qbft_message: QbftMessageData,
 }
@@ -98,34 +94,41 @@ pub struct AcceptedProposal {
 pub struct QbftMessageData {
     #[serde(rename = "MsgType")]
     pub msg_type: u64,
+
     #[serde(rename = "Height")]
     pub height: u64,
+
     #[serde(rename = "Round")]
     pub round: u64,
-    #[serde(rename = "Identifier")]
-    #[serde(deserialize_with = "deserialize_base64")]
+
+    #[serde(rename = "Identifier", deserialize_with = "deserialize_base64")]
     pub identifier: Vec<u8>,
-    #[serde(rename = "Root")]
-    #[serde(deserialize_with = "deserialize_hex")]
+
+    #[serde(rename = "Root", deserialize_with = "deserialize_hex")]
     pub root: Vec<u8>,
+
     #[serde(rename = "DataRound")]
     pub data_round: u64,
+
     #[serde(rename = "RoundChangeJustification")]
     pub round_change_justification: Vec<serde_json::Value>,
+
     #[serde(rename = "PrepareJustification")]
     pub prepare_justification: Vec<serde_json::Value>,
 }
 
 // Intermediate test-specific SignedSSVMessage that can handle null SSVMessage
 #[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct TestSignedSSVMessage {
     #[serde(rename = "Signatures")]
     pub signatures: Vec<String>,
+
     #[serde(rename = "OperatorIDs")]
     pub operator_ids: Option<Vec<OperatorId>>,
+
     #[serde(rename = "SSVMessage")]
     pub ssv_message: Option<SSVMessage>,
+
     #[serde(rename = "FullData")]
     pub full_data: Option<String>,
 }
@@ -181,97 +184,25 @@ impl TryFrom<TestSignedSSVMessage> for SignedSSVMessage {
 impl TestSignedSSVMessage {
     /// Convert to WrappedQbftMessage for processing by core QBFT
     pub fn to_wrapped_qbft_message(&self) -> Result<WrappedQbftMessage, String> {
-        // Get the SSVMessage from the test message
-        let ssv_message = self
-            .ssv_message
-            .as_ref()
-            .ok_or_else(|| "TestSignedSSVMessage has null SSVMessage".to_string())?;
-
-        // Decode QBFT message first to check type
-        let qbft_message = QbftMessage::from_ssz_bytes(ssv_message.data())
-            .map_err(|e| format!("Failed to decode QBFT message: {:?}", e))?;
-
-        // Convert signatures - test messages have base64 encoded signatures
-        let signatures: Vec<[u8; 256]> = self
-            .signatures
-            .iter()
-            .map(|sig_str| {
-                let sig_bytes = BASE64_STANDARD
-                    .decode(sig_str)
-                    .map_err(|e| format!("Failed to decode signature: {:?}", e))?;
-                if sig_bytes.len() != 256 {
-                    return Err(format!("Invalid signature length: {}", sig_bytes.len()));
-                }
-                let mut sig = [0u8; 256];
-                sig.copy_from_slice(&sig_bytes);
-                Ok(sig)
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-
-        // Convert operator IDs
-        let operator_ids: Vec<OperatorId> = self
-            .operator_ids
-            .as_ref()
-            .ok_or_else(|| "TestSignedSSVMessage has null OperatorIDs".to_string())?
-            .clone();
-
-        // Handle full_data conversion based on message type
-        let full_data = if let Some(data_str) = &self.full_data {
-            let raw_data = BASE64_STANDARD
-                .decode(data_str)
-                .map_err(|e| format!("Failed to decode full_data: {:?}", e))?;
-
-            if !raw_data.is_empty() && qbft_message.qbft_message_type == QbftMessageType::Proposal {
-                // For proposals, keep the full_data for validation
-                // The core will validate H(data) == root
-                raw_data
-            } else if !raw_data.is_empty()
-                && qbft_message.qbft_message_type == QbftMessageType::RoundChange
-            {
-                // For RoundChange with prepared value, encode as SpecTestData
-                if qbft_message.data_round > 0 {
-                    let test_data = SpecTestData::new(raw_data.clone());
-                    test_data.as_ssz_bytes()
-                } else {
-                    raw_data
-                }
-            } else {
-                // For other types or empty data, keep as is
-                raw_data
-            }
-        } else {
-            vec![]
-        };
-
-        // Create SignedSSVMessage - this may fail for invalid messages (e.g., duplicate signers)
-        // We need to propagate this error so it can be matched against expected errors
-        // Note: We create the message first to let validation catch issues like duplicate signers
-        let signed_ssv_message = match SignedSSVMessage::new(
-            signatures,
-            operator_ids.clone(),
-            ssv_message.clone(),
-            full_data,
-        ) {
+        // Use conversion to get teh signed ssv message
+        let signed_message: SignedSSVMessage = match self.clone().try_into() {
             Ok(msg) => msg,
-            Err(e) => {
-                // Convert the error to match Go's format using centralized mapping
-                let error_str = map_signed_message_error(&e);
-                return Err(error_str);
+            Err(TestMessageConversionError::SignedSSVMessage(e)) => {
+                let err_string = map_signed_message_error(&e);
+                return Err(err_string);
             }
+            Err(_) => return Err("Unknown error".to_string()),
         };
 
-        // Check for multi-signers after successful creation
-        // Multi-signers are only allowed for commit messages
-        // Note: This check is for valid messages with multiple unique signers
-        if signed_ssv_message.operator_ids().len() > 1
-            && qbft_message.qbft_message_type != QbftMessageType::Commit
-        {
-            return Err("invalid signed message: msg allows 1 signer".to_string());
-        }
+        //signed_msg.validate();
+
+        // Get the qbft message
+        let ssv_message = signed_message.ssv_message();
+        let qbft_message = QbftMessage::from_ssz_bytes(ssv_message.data()).unwrap();
 
         // Create WrappedQbftMessage (we already decoded qbft_message above)
         Ok(WrappedQbftMessage {
-            signed_message: signed_ssv_message,
+            signed_message,
             qbft_message,
         })
     }

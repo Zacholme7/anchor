@@ -9,16 +9,22 @@ use ssv_types::{OperatorId, Round};
 pub struct RoundRobinTest {
     #[serde(rename = "Name")]
     pub name: String,
+
     #[serde(rename = "Type")]
     pub test_type: String,
+
     #[serde(rename = "Documentation")]
     pub documentation: String,
+
     #[serde(rename = "Share")]
     pub share: SpecTestCommitteeMember,
+
     #[serde(rename = "Heights")]
     pub heights: Vec<u64>,
+
     #[serde(rename = "Rounds")]
     pub rounds: Vec<u64>,
+
     #[serde(rename = "Proposers")]
     pub proposers: Vec<u64>,
 }

@@ -88,7 +88,7 @@ impl<D: QbftData<Hash = Hash256>> QbftInstance<D> {
             QbftInstance::Initialized(initialized) => {
                 // If the instance is already initialized, receive it in the instance
                 // right away
-                initialized.qbft.receive(message);
+                let _ = initialized.qbft.receive(message);
             }
             QbftInstance::Uninitialized(uninitialized) => {
                 // The instance has not been initialized yet, save it in the buffer to
@@ -141,7 +141,7 @@ impl Uninitialized {
                 "Replaying buffered messages"
             );
             for message in self.message_buffer {
-                instance.receive(message);
+                let _ = instance.receive(message);
             }
         }
 
