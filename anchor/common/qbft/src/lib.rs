@@ -266,8 +266,16 @@ where
                         return Err(QbftError::WrongRound);
                     }
                 }
+                QbftMessageType::Commit => {
+                    // Single-signature commits from future rounds are not allowed
+                    // But multi-signature commits (decided messages) should be allowed from any round
+                    if wrapped_msg.signed_message.operator_ids().len() == 1 {
+                        return Err(QbftError::WrongRound);
+                    }
+                    // Multi-signature commits are allowed - they represent decided values
+                }
                 _ => {
-                    // Prepare and Commit messages for future rounds are not allowed
+                    // Prepare messages for future rounds are not allowed
                     return Err(QbftError::WrongRound);
                 }
             }
@@ -292,7 +300,7 @@ where
 
         // The rest of the verification only pertains to messages with one signature
         if wrapped_msg.signed_message.operator_ids().len() > 1 {
-            // Just make sure the commit message aggregation includes us
+            // Multi-signer messages are ONLY allowed for COMMIT type
             if let QbftMessageType::Commit = wrapped_msg.qbft_message.qbft_message_type {
                 // Multi-signer commits (decide messages) are only valid if they include us
                 if !wrapped_msg
@@ -303,9 +311,12 @@ where
                     // This is a multi-signer commit that doesn't include us - invalid
                     return Err(QbftError::MultipleSignersNotAllowed);
                 }
+                let valid_data = Some(ValidData::new(None, wrapped_msg.qbft_message.root));
+                return Ok((valid_data, OperatorId::from(0)));
+            } else {
+                // Multi-signer messages for non-COMMIT types are not allowed
+                return Err(QbftError::MultipleSignersNotAllowed);
             }
-            let valid_data = Some(ValidData::new(None, wrapped_msg.qbft_message.root));
-            return Ok((valid_data, OperatorId::from(0)));
         }
 
         // Message is not a decide message, we know there is only one signer
@@ -597,15 +608,13 @@ where
             return Err(QbftError::WrongMessageType);
         }
 
-        // Make sure that we have accepted a proposal for this round
-        if !self.proposal_accepted_for_current_round {
-            return Err(QbftError::NoProposalAccepted);
-        }
-
-        // Check that the commit message is for the accepted proposal
-        if let Some(accepted_root) = self.proposal_root {
-            if wrapped_msg.qbft_message.root != accepted_root {
-                return Err(QbftError::ProposedDataMismatch);
+        // If we have accepted a proposal, check that the commit matches it
+        // But allow commits without proposal (for catch-up scenarios)
+        if self.proposal_accepted_for_current_round {
+            if let Some(accepted_root) = self.proposal_root {
+                if wrapped_msg.qbft_message.root != accepted_root {
+                    return Err(QbftError::ProposedDataMismatch);
+                }
             }
         }
 
@@ -621,22 +630,35 @@ where
 
         // Check if we have a commit quorum
         if let Some(hash) = self.commit_container.has_quorum(round) {
-            // Make sure that the root of the data that we have come to a commit consensus on
-            // matches the root of the proposal that we have accepted
-            let proposal_root = match self.state {
-                InstanceState::Commit { proposal_root } => proposal_root,
+            debug!("Commit quorum detected for round {} with hash {:?}", round, hash);
+            // Handle commit quorum based on our current state
+            match self.state {
+                InstanceState::Commit { proposal_root } => {
+                    // We already accepted a proposal and are in commit state
+                    if hash != proposal_root {
+                        warn!("COMMIT quorum root does not match accepted PROPOSAL root");
+                        return Err(QbftError::ProposedDataMismatch);
+                    }
+                }
                 InstanceState::Prepare { proposal_root } => {
-                    // Transition to Commit state first (this is important for state machine correctness)
+                    // Transition to Commit state first
+                    if hash != proposal_root {
+                        warn!("COMMIT quorum root does not match accepted PROPOSAL root");
+                        return Err(QbftError::ProposedDataMismatch);
+                    }
                     self.state = InstanceState::Commit { proposal_root };
-                    proposal_root
+                }
+                InstanceState::AwaitingProposal => {
+                    // Catch-up scenario: we have commit quorum without seeing proposal
+                    // This is valid - we can decide based on commit quorum alone
+                    // Transition directly to Commit state
+                    debug!("Received commit quorum without proposal - catch-up scenario");
+                    self.state = InstanceState::Commit { proposal_root: hash };
+                    self.proposal_root = Some(hash);
                 }
                 _ => {
                     return Err(QbftError::InvalidState);
                 }
-            };
-            if hash != proposal_root {
-                warn!("COMMIT quorum root does not match accepted PROPOSAL root");
-                return Err(QbftError::ProposedDataMismatch);
             }
 
             // Aggregate all of the commit messages
@@ -832,10 +854,17 @@ where
 
     // We have received a decided message
     fn received_decided(&mut self, wrapped_msg: WrappedQbftMessage) -> Result<(), QbftError> {
+
         // Make sure we have a quorum of signatures
         if wrapped_msg.signed_message.operator_ids().len() < self.config().quorum_size() {
+            // For multi-sig messages without quorum, we check if we have accepted a proposal
+            // If not, return the appropriate error
+            if !self.proposal_accepted_for_current_round {
+                return Err(QbftError::NoProposalAccepted);
+            }
             return Err(QbftError::NotEnoughSignatures);
         }
+
 
         // All message and signature verification has already succeeded. Regardless of what state
         // this instance is at, we have all of the information necessary to mark it as
@@ -1225,29 +1254,56 @@ where
         &self,
         commit_quorum: Vec<WrappedQbftMessage>,
     ) -> Option<SignedSSVMessage> {
+        
         // We know this exists, but in favor of avoiding expect match the first element to Some.
         // This will be the commit message that we aggregate on top of
         if let Some(first_commit) = commit_quorum.first() {
             let mut aggregated_commit = first_commit.signed_message.clone();
-            let aggregated_ssv = aggregated_commit.ssv_message();
+            let _aggregated_ssv = aggregated_commit.ssv_message();
 
-            // Sanity check that all of the messages match
-            commit_quorum[1..]
+            // Sanity check that all commits are for the same consensus instance
+            // We check that the important consensus fields match (height, round, root, type)
+            // but NOT the identifier field which contains operator-specific info
+            let first_qbft = &first_commit.qbft_message;
+            let all_match = commit_quorum[1..]
                 .iter()
-                .all(|commit_msg| aggregated_ssv == commit_msg.signed_message.ssv_message())
-                .then_some(())?;
+                .enumerate()
+                .all(|(_idx, commit_msg)| {
+                    let qbft = &commit_msg.qbft_message;
+                    // Check that consensus-critical fields match
+                    let matches = 
+                        qbft.qbft_message_type == first_qbft.qbft_message_type &&
+                        qbft.height == first_qbft.height &&
+                        qbft.round == first_qbft.round &&
+                        qbft.root == first_qbft.root &&
+                        qbft.data_round == first_qbft.data_round;
+                    
+                    if !matches {
+                    }
+                    matches
+                });
+            
+            if !all_match {
+                return None;
+            }
 
             // Aggregate all of the commits together
             let signed_commits = commit_quorum[1..]
                 .iter()
                 .map(|msg| msg.signed_message.clone());
-            aggregated_commit.aggregate(signed_commits).ok()?;
+            if let Err(_e) = aggregated_commit.aggregate(signed_commits) {
+                return None;
+            }
 
             // Set full data
             let hash = first_commit.qbft_message.root;
-            aggregated_commit
-                .set_full_data(self.data.get(&hash)?.as_ssz_bytes())
-                .ok()?;
+            if let Some(data) = self.data.get(&hash) {
+                if let Err(_e) = aggregated_commit.set_full_data(data.as_ssz_bytes()) {
+                    return None;
+                }
+            } else {
+                return None;
+            }
 
             return Some(aggregated_commit);
         }

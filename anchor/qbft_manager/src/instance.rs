@@ -200,10 +200,15 @@ impl<D: QbftData<Hash = Hash256>> Initialized<D> {
     }
 
     fn complete_if_done(self, message_sender: &Arc<dyn MessageSender>) -> QbftInstance<D> {
+        eprintln!("🔍 CHECKING_IF_COMPLETE: qbft.completed() = {:?}", self.qbft.completed().is_some());
         if let Some(completed) = self.qbft.completed() {
+            eprintln!("✔️ INSTANCE_COMPLETED: sending to {} callbacks", self.on_completed.len());
             for on_completed in self.on_completed {
                 if on_completed.send(completed.clone()).is_err() {
+                    eprintln!("❌ COULD_NOT_SEND_RESULT");
                     error!("could not send qbft result");
+                } else {
+                    eprintln!("✅ RESULT_SENT_TO_CALLBACK");
                 }
             }
 

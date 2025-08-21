@@ -52,6 +52,7 @@ pub enum QbftError {
     PrepareJustificationRootMismatch,
     PrepareJustificationInvalidValue,
     ProposalInvalidValue,
+    ProposalNotJustified,
 
     // State errors
     InstanceAlreadyDecided,

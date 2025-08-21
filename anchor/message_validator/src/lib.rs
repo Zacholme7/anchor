@@ -3,6 +3,8 @@ mod duty_state;
 mod message_counts;
 mod partial_signature;
 
+pub use consensus_message::validate_justifications;
+
 use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -156,6 +158,7 @@ pub enum ValidationFailure {
     UnexpectedPrepareJustifications,
     MalformedRoundChangeJustifications,
     UnexpectedRoundChangeJustifications,
+    ProposalNotJustifiedNoQuorum,
     NoPartialSignatureMessages,
     NoValidators,
     NoSignatures,

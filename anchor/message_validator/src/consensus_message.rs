@@ -144,9 +144,7 @@ pub(crate) fn validate_consensus_message_semantics(
     Ok(())
 }
 
-pub(crate) fn validate_justifications(
-    consensus_message: &QbftMessage,
-) -> Result<(), ValidationFailure> {
+pub fn validate_justifications(consensus_message: &QbftMessage) -> Result<(), ValidationFailure> {
     // Rule: Can only exist for Proposal messages
     let prepare_justifications = &consensus_message.prepare_justification;
     if !prepare_justifications.is_empty()
@@ -162,6 +160,14 @@ pub(crate) fn validate_justifications(
         && consensus_message.qbft_message_type != QbftMessageType::RoundChange
     {
         return Err(ValidationFailure::UnexpectedRoundChangeJustifications);
+    }
+
+    // Rule: Proposals for round > 0 must have round change justifications
+    if consensus_message.qbft_message_type == QbftMessageType::Proposal 
+        && consensus_message.round > 1 
+        && round_change_justifications.is_empty() 
+    {
+        return Err(ValidationFailure::ProposalNotJustifiedNoQuorum);
     }
 
     Ok(())

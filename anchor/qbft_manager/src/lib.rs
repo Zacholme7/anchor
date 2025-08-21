@@ -113,6 +113,8 @@ pub struct QbftManager {
     validator_consensus_data_instances: Map<ValidatorInstanceId, ValidatorConsensusData>,
     // All of the QBFT instances that are voting on beacon data
     beacon_vote_instances: Map<CommitteeInstanceId, BeaconVote>,
+    // Track the highest explicitly started height for each committee (for sequential validation)
+    committee_heights: DashMap<CommitteeId, InstanceHeight>,
     // Utility to sign and serialize network messages
     message_sender: Arc<dyn MessageSender>,
     // Network domain to embed into messages
@@ -120,6 +122,14 @@ pub struct QbftManager {
 }
 
 impl QbftManager {
+    // Helper to extract committee ID from a generic ID (for type checking)
+    fn extract_committee_id<D: QbftDecidable>(id: &D::Id) -> Option<&CommitteeInstanceId> {
+        // This is a bit of a hack but works for our needs
+        // We use Any to downcast to the concrete type
+        use std::any::Any;
+        (id as &dyn Any).downcast_ref::<CommitteeInstanceId>()
+    }
+
     // Construct a new QBFT Manager
     pub fn new(
         processor: Senders,
@@ -133,6 +143,7 @@ impl QbftManager {
             operator_id,
             validator_consensus_data_instances: DashMap::new(),
             beacon_vote_instances: DashMap::new(),
+            committee_heights: DashMap::new(),
             message_sender,
             domain,
         });
@@ -180,7 +191,29 @@ impl QbftManager {
 
         // Get or spawn a new qbft instance. This will return the sender that we can use to send
         // new messages to the specific instance
-        let sender = D::get_or_spawn_instance(self, id);
+        let sender = D::get_or_spawn_instance(self, id.clone());
+
+        // Track the height for committee instances to enforce sequential processing
+        if let Some(committee_id) = Self::extract_committee_id::<D>(&id) {
+            let height = initial.instance_height(&id);
+            
+            // Check if we're trying to start an instance with a past height
+            if let Some(current_height) = self.committee_heights.get(&committee_id.committee) {
+                if *height < **current_height {
+                    return Err(QbftError::PastHeight);
+                }
+            }
+            
+            self.committee_heights
+                .entry(committee_id.committee)
+                .and_modify(|h| {
+                    if *height > **h {
+                        *h = height;
+                    }
+                })
+                .or_insert(height);
+        }
+
         self.processor.urgent_consensus.send_immediate(
             move |drop_on_finish: DropOnFinish| {
                 // A message to initialize this instance
@@ -208,6 +241,24 @@ impl QbftManager {
         full_message: SignedSSVMessage,
         qbft_message: ssv_types::consensus::QbftMessage,
     ) -> Result<(), QbftError> {
+        /*
+                // Validate multi-signature messages early - they must be COMMIT type
+                if full_message.operator_ids().len() > 1 {
+                    if qbft_message.qbft_message_type != ssv_types::consensus::QbftMessageType::Commit {
+                        // Multi-signature messages are only allowed for COMMIT type
+                        return Err(QbftError::MultipleSignersNotAllowed);
+                    }
+                }
+
+                // Validate proposals for round > 1 must have round change justification
+                if qbft_message.qbft_message_type == ssv_types::consensus::QbftMessageType::Proposal {
+                    if qbft_message.round > 1 && qbft_message.round_change_justification.is_empty() {
+                        // Proposal for round > 1 without justification
+                        return Err(QbftError::ProposalNotJustified);
+                    }
+                }
+        */
+
         let msg_id = full_message.ssv_message().msg_id();
         let instance_height: InstanceHeight = (qbft_message.height as usize).into();
 
@@ -238,6 +289,26 @@ impl QbftManager {
                 )
             }
             Some(DutyExecutor::Committee(committee)) => {
+                // Check if this is a future height message
+                if let Some(current_height) = self.committee_heights.get(&committee) {
+                    if *instance_height > **current_height {
+                        // This is a future message - reject it
+                        debug!(?instance_height, current_height = ?*current_height,
+                               "Rejecting future height message");
+                        return Err(QbftError::FutureMessageHeight);
+                    }
+                } else {
+                    // No instance has been started for this committee yet
+                    // The first instance must be at height 0
+                    if *instance_height != 0 {
+                        debug!(
+                            ?instance_height,
+                            "Rejecting message - no instance started and height != 0"
+                        );
+                        return Err(QbftError::FutureMessageHeight);
+                    }
+                }
+
                 let id = CommitteeInstanceId {
                     committee,
                     instance_height,
@@ -298,7 +369,7 @@ impl QbftManager {
 
 // Trait that describes any data that is able to be decided upon during a qbft instance
 pub trait QbftDecidable: QbftData<Hash = Hash256> + Send + Sync + 'static {
-    type Id: Hash + Eq + Send + Debug;
+    type Id: Hash + Eq + Send + Debug + Clone + 'static;
 
     fn get_map(manager: &QbftManager) -> &Map<Self::Id, Self>;
 
@@ -375,6 +446,9 @@ pub enum QbftError {
     ConfigBuilderError(ConfigBuilderError),
     InconsistentMessageId,
     OwnOperatorIdUnknown,
+    MultipleSignersNotAllowed,
+    FutureMessageHeight,
+    PastHeight,
 }
 
 impl From<processor::Error> for QbftError {

@@ -67,8 +67,10 @@ pub struct QbftMessage {
     pub identifier: VariableList<u8, U56>,
     pub root: Hash256,
     pub data_round: u64,
-    pub round_change_justification: VariableList<VariableList<u8, RoundChangeLength>, U13>, /* always without full_data */
-    pub prepare_justification: VariableList<VariableList<u8, JustificationLength>, U13>, /* always without full_data */
+    // always without full data
+    pub round_change_justification: VariableList<VariableList<u8, RoundChangeLength>, U13>,
+    // always without full data
+    pub prepare_justification: VariableList<VariableList<u8, JustificationLength>, U13>,
 }
 
 impl Display for QbftMessage {
