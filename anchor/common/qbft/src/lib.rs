@@ -616,7 +616,10 @@ where
                     return Err(QbftError::ProposedDataMismatch);
                 }
             }
-        }
+        } else {
+            debug!(from=?operator_id, ?self.state, "Have not accepted Proposal for current round yet");
+            return Err(QbftError::NoProposalAccepted);
+        };
 
         debug!(from = ?operator_id, state = ?self.state, "COMMIT received");
 
@@ -630,7 +633,10 @@ where
 
         // Check if we have a commit quorum
         if let Some(hash) = self.commit_container.has_quorum(round) {
-            debug!("Commit quorum detected for round {} with hash {:?}", round, hash);
+            debug!(
+                "Commit quorum detected for round {} with hash {:?}",
+                round, hash
+            );
             // Handle commit quorum based on our current state
             match self.state {
                 InstanceState::Commit { proposal_root } => {
@@ -653,7 +659,9 @@ where
                     // This is valid - we can decide based on commit quorum alone
                     // Transition directly to Commit state
                     debug!("Received commit quorum without proposal - catch-up scenario");
-                    self.state = InstanceState::Commit { proposal_root: hash };
+                    self.state = InstanceState::Commit {
+                        proposal_root: hash,
+                    };
                     self.proposal_root = Some(hash);
                 }
                 _ => {
@@ -854,7 +862,6 @@ where
 
     // We have received a decided message
     fn received_decided(&mut self, wrapped_msg: WrappedQbftMessage) -> Result<(), QbftError> {
-
         // Make sure we have a quorum of signatures
         if wrapped_msg.signed_message.operator_ids().len() < self.config().quorum_size() {
             // For multi-sig messages without quorum, we check if we have accepted a proposal
@@ -864,7 +871,6 @@ where
             }
             return Err(QbftError::NotEnoughSignatures);
         }
-
 
         // All message and signature verification has already succeeded. Regardless of what state
         // this instance is at, we have all of the information necessary to mark it as
@@ -1254,7 +1260,6 @@ where
         &self,
         commit_quorum: Vec<WrappedQbftMessage>,
     ) -> Option<SignedSSVMessage> {
-        
         // We know this exists, but in favor of avoiding expect match the first element to Some.
         // This will be the commit message that we aggregate on top of
         if let Some(first_commit) = commit_quorum.first() {
@@ -1271,18 +1276,16 @@ where
                 .all(|(_idx, commit_msg)| {
                     let qbft = &commit_msg.qbft_message;
                     // Check that consensus-critical fields match
-                    let matches = 
-                        qbft.qbft_message_type == first_qbft.qbft_message_type &&
-                        qbft.height == first_qbft.height &&
-                        qbft.round == first_qbft.round &&
-                        qbft.root == first_qbft.root &&
-                        qbft.data_round == first_qbft.data_round;
-                    
-                    if !matches {
-                    }
+                    let matches = qbft.qbft_message_type == first_qbft.qbft_message_type
+                        && qbft.height == first_qbft.height
+                        && qbft.round == first_qbft.round
+                        && qbft.root == first_qbft.root
+                        && qbft.data_round == first_qbft.data_round;
+
+                    if !matches {}
                     matches
                 });
-            
+
             if !all_match {
                 return None;
             }

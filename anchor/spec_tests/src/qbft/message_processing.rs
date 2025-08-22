@@ -160,10 +160,19 @@ impl SpecTest for MessageProcessingTest {
                 Some(e) => {
                     // make sure the errors match
                     if e != self.expected_error {
+                        // Debug output for test 43
+                        if self.name == "no previous accepted proposal" {
+                            eprintln!("Test 43 error mismatch:");
+                            eprintln!("  Expected: {}", self.expected_error);
+                            eprintln!("  Got: {}", e);
+                        }
                         return false;
                     }
                 }
                 None => {
+                    if self.name == "no previous accepted proposal" {
+                        eprintln!("Test 43: Expected error but got none");
+                    }
                     return false;
                 }
             }

@@ -70,8 +70,10 @@ impl MessageContainer {
 
         // Debug output
         if !value_counts.is_empty() {
-            eprintln!("MessageContainer::has_quorum for round {}: counts={:?}, quorum_size={}", 
-                round, value_counts, self.quorum_size);
+            eprintln!(
+                "MessageContainer::has_quorum for round {}: counts={:?}, quorum_size={}",
+                round, value_counts, self.quorum_size
+            );
         }
 
         // Find any value that has reached quorum

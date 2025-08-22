@@ -127,6 +127,7 @@ fn run_tests(test_type: SpecTestType) -> bool {
                 let filename = path.file_name().map(|name| name.to_string_lossy());
 
                 let matches = filename
+                    .as_ref()
                     .map(|name| {
                         let split: HashSet<String> = name.split('.').map(String::from).collect();
 
@@ -168,6 +169,15 @@ fn run_tests(test_type: SpecTestType) -> bool {
 
     let mut result = true;
     for (i, mut test) in tests.into_iter().enumerate() {
+        // Check for TEST_NUM environment variable to run a single test
+        if let Ok(test_num) = std::env::var("TEST_NUM") {
+            if let Ok(num) = test_num.parse::<usize>() {
+                if i + 1 != num {
+                    continue; // Skip this test
+                }
+            }
+        }
+
         println!("Running test {}", i + 1);
         test.setup();
         let test_result = test.run();

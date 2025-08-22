@@ -84,23 +84,22 @@ pub struct ExpectedDecidedState {
 
 impl SpecTest for ControllerTest {
     fn run(&self) -> bool {
-        let rt = tokio::runtime::Runtime::new().unwrap();
+        // Create a new runtime for each test to ensure complete isolation
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .worker_threads(2)
+            .build()
+            .unwrap();
 
-        rt.block_on(async {
+        let result = rt.block_on(async {
             // Check if TEST_FILTER env var is set to filter tests
             if let Ok(filter) = std::env::var("TEST_FILTER") {
                 if !self.name.contains(&filter) {
-                    println!("⏭️  SKIPPING TEST: {} (filter: {})", self.name, filter);
                     return true; // Skip this test but report as passing
                 } else {
-                    println!("▶️  RUNNING TEST: {} (matched filter: {})", self.name, filter);
                 }
             }
             
-            println!("🧪 RUNNING TEST: {}", self.name);
-            println!("📖 Description: {}", self.documentation);
-
-
             let committee_member = self.controller.as_ref().unwrap().committee_member.clone();
             let mut controller = QbftManagerController::new(committee_member);
             let mut last_error: Option<String> = None;
@@ -111,76 +110,49 @@ impl SpecTest for ControllerTest {
                     .map(|h| InstanceHeight::from(h as usize))
                     .unwrap_or_else(|| InstanceHeight::from(i));
 
-                println!("🎯 === Running instance {} at height {:?} ===", i, height);
 
                 let value = run_data.input_value.clone().unwrap_or_default();
-                println!("📝 Starting instance with {} bytes of input value", value.len());
 
                 if let Err(e) = controller.start_new_instance(height, value).await {
-                    println!("❌ Failed to start instance: {}", e);
                     last_error = Some(e);
                 }
-
+                
                 let mut decided_count = 0;
                 let empty_messages = vec![];
                 let messages = run_data.input_messages.as_ref().unwrap_or(&empty_messages);
 
-                println!("📨 Processing {} messages for instance {}", messages.len(), i);
-
-
-                for (msg_idx, msg) in messages.iter().enumerate() {
-                    println!("📩 Processing message {} of {}", msg_idx + 1, messages.len());
-
+                for msg in messages {
                     match controller.process_msg(msg).await {
                         Ok(Some(decided_data)) => {
                             decided_count += 1;
-                            println!("✅ Message {} triggered decision #{} ({} bytes)",
-                                     msg_idx + 1, decided_count, decided_data.len());
-
                             if let Some(expected) = &run_data.expected_decided_state {
                                 if let Some(expected_bytes) = &expected.decided_value {
                                     if decided_data != *expected_bytes {
-                                        println!("❌ Value mismatch: got {} bytes, expected {} bytes",
-                                               decided_data.len(), expected_bytes.len());
                                         last_error = Some(format!("Decided value mismatch: got {} bytes, expected {} bytes",
                                                                 decided_data.len(), expected_bytes.len()));
-                                    } else {
-                                        println!("✅ Decision value matches expected");
                                     }
                                 }
                             }
                         }
-                        Ok(None) => {
-                            println!("⏳ Message {} - no decision yet", msg_idx + 1);
-                        }
+                        Ok(None) => {}
                         Err(e) => {
-                            println!("❌ Message {} failed: {}", msg_idx + 1, e);
                             last_error = Some(e);
                         }
                     }
                 }
 
                 // Give the consensus tasks time to complete
-                println!("⏳ Waiting for consensus to complete...");
-                tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                 
                 // Check if THIS specific instance has decided
                 if controller.is_instance_decided(height) {
                     decided_count = 1;
                 }
 
-                println!("🏁 Instance {} complete: got {} decisions", i, decided_count);
-
                 if let Some(expected) = &run_data.expected_decided_state {
-                    println!("🎯 Expected {} decisions, got {}", expected.decided_count, decided_count);
                     if expected.decided_count != decided_count as u64 {
-                        println!("❌ MISMATCH: expected {}, got {}", expected.decided_count, decided_count);
                         last_error = Some("Decided count mismatch".to_string());
-                    } else {
-                        println!("✅ Decision count matches expected");
                     }
-                } else {
-                    println!("ℹ️  No expected decision state for instance {}", i);
                 }
 
                 if let Ok(_root) = controller.get_root() {
@@ -188,13 +160,23 @@ impl SpecTest for ControllerTest {
                 }
             }
 
+            // The controller will be dropped and cleanup will happen via Drop trait
+            drop(controller);
 
             if !self.expected_error.is_empty() {
                 last_error.is_some()
             } else {
                 last_error.is_none()
             }
-        })
+        });
+
+        // Properly shutdown the runtime to ensure all tasks are cleaned up
+        rt.shutdown_timeout(std::time::Duration::from_millis(500));
+
+        // Add a delay after each test to ensure complete cleanup
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        result
     }
 
     fn test_type() -> SpecTestType {
