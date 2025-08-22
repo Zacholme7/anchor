@@ -21,6 +21,7 @@ use crate::utils::{
     test_keys::TestKeySet,
 };
 use message_validator::validate_consensus_message_semantics;
+const TEST_CUTOFF_ROUND: u64 = 15;
 
 /// Test leader function that matches Go test harness behavior
 #[derive(Debug, Clone, Copy, Default)]
@@ -212,7 +213,7 @@ impl QbftAdapter {
 
         // Check if we're at or past the cutoff round.
         // Manager is reponsible for this, so mock it here
-        if current_round >= 15 {
+        if current_round >= TEST_CUTOFF_ROUND {
             return Err("instance stopped processing timeouts".to_string());
         }
 
@@ -230,7 +231,6 @@ impl QbftAdapter {
         }
 
         //  Spec test only, matches old process_message_spec behavior
-        const TEST_CUTOFF_ROUND: u64 = 15;
         let current_round: u64 = self.instance.get_round().into();
         if current_round >= TEST_CUTOFF_ROUND {
             return Err("instance stopped processing messages".to_string());
