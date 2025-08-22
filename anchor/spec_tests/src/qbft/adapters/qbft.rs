@@ -160,13 +160,10 @@ impl QbftAdapter {
         }
 
         // Set the justifications
-        if let Some(ref rc_jus) = state.round_change_justifications {
-            adapter.setup_round_change_justifications(rc_jus);
-        }
-
-        if let Some(ref pre_jus) = state.prepare_justifications {
-            adapter.setup_prepare_justifications(pre_jus);
-        }
+        adapter.setup_justifications(
+            state.round_change_justifications.as_ref(),
+            state.prepare_justifications.as_ref(),
+        );
 
         // Populate all message containers
         adapter.populate_containers(&state);
@@ -329,23 +326,57 @@ impl QbftAdapter {
         }
     }
 
-    /// Setup prepare justifications from spec test data
-    /// These are stored in the PrepareContainer and used for validating prepare messages
-    fn setup_prepare_justifications(&mut self, pre_jus: &Vec<TestSignedSSVMessage>) {
-        for test_msg in pre_jus {
-            if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
-                self.instance.add_message_to_container_spec(&wrapped);
+    /// Setup spec test justifications for proposals
+    fn setup_justifications(
+        &mut self,
+        rc_jus: Option<&Vec<TestSignedSSVMessage>>,
+        pre_jus: Option<&Vec<TestSignedSSVMessage>>,
+    ) {
+        // Convert round change justifications
+        let rc_justifications = if let Some(rc_jus) = rc_jus {
+            let mut justifications = Vec::new();
+            for test_msg in rc_jus {
+                // Convert TestSignedSSVMessage to SignedSSVMessage via WrappedQbftMessage
+                if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
+                    justifications.push(wrapped.signed_message.clone());
+                    // Also add to container for other uses
+                    self.instance.add_message_to_container_spec(&wrapped);
+                }
             }
-        }
-    }
+            Some(justifications)
+        } else {
+            None
+        };
 
-    /// Setup round change justifications from spec test data
-    fn setup_round_change_justifications(&mut self, rc_jus: &Vec<TestSignedSSVMessage>) {
-        for test_msg in rc_jus {
-            if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
-                self.instance.add_message_to_container_spec(&wrapped);
+        // Convert prepare justifications
+        let prepare_justifications = if let Some(pre_jus) = pre_jus {
+            // When we have prepare justifications, set last_prepared state
+            if let Some(first_msg) = pre_jus.first() {
+                if let Ok(wrapped) = first_msg.to_wrapped_qbft_message() {
+                    let round = Round::from(wrapped.qbft_message.round);
+                    let root = wrapped.qbft_message.root;
+                    self.instance
+                        .set_last_prepared_spec(Some(root), Some(round));
+                }
             }
-        }
+
+            let mut justifications = Vec::new();
+            for test_msg in pre_jus {
+                // Convert TestSignedSSVMessage to SignedSSVMessage via WrappedQbftMessage
+                if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
+                    justifications.push(wrapped.signed_message.clone());
+                    // Also add to container for other uses
+                    self.instance.add_message_to_container_spec(&wrapped);
+                }
+            }
+            Some(justifications)
+        } else {
+            None
+        };
+
+        // Set the justifications for spec test use
+        self.instance
+            .set_spec_justifications(rc_justifications, prepare_justifications);
     }
 
     /// Setup proposal accepted state

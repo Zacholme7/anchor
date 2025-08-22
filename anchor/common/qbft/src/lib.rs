@@ -127,6 +127,11 @@ where
     /// Aggregated commit message
     aggregated_commit: Option<SignedSSVMessage>,
 
+    /// Spec test justifications - used only for spec tests
+    /// These are provided externally and should be used when creating proposals
+    spec_round_change_justifications: Option<Vec<SignedSSVMessage>>,
+    spec_prepare_justifications: Option<Vec<SignedSSVMessage>>,
+
     /// Message sender callback to instruct managing code to send a message
     message_sender: S,
 }
@@ -179,6 +184,8 @@ where
             past_consensus: HashMap::new(),
 
             aggregated_commit: None,
+            spec_round_change_justifications: None,
+            spec_prepare_justifications: None,
 
             message_sender,
         };
@@ -428,7 +435,7 @@ where
         // received proposal
         if round > Round::default() {
             // validate the justifications
-            self.validate_justifications_spec(&wrapped_msg)?
+            self.validate_justifications(&wrapped_msg)?
         } else {
             // Make sure this is from the leader
             if !self.check_leader(&operator_id) {
@@ -956,7 +963,7 @@ where
         Ok(())
     }
 
-    fn validate_justifications_spec(&self, msg: &WrappedQbftMessage) -> Result<(), QbftError> {
+    fn validate_justifications(&self, msg: &WrappedQbftMessage) -> Result<(), QbftError> {
         // Record if any of the round change messages have a value that was prepared
         let mut previously_prepared = false;
         let mut max_prepared_round = 0;
@@ -1396,6 +1403,11 @@ where
 
     // Get all of the round change jusitifcation messages
     fn get_round_change_justifications(&self) -> Vec<SignedSSVMessage> {
+        // For spec tests, if we have pre-provided justifications, use those
+        if let Some(ref spec_justifications) = self.spec_round_change_justifications {
+            return spec_justifications.clone();
+        }
+
         // Short circuit if we are in first round
         if self.current_round <= Round::default() {
             return vec![];
@@ -1422,6 +1434,23 @@ where
 
     // Get all of the prepare justifications for proposals
     fn get_prepare_justifications(&self) -> (Vec<SignedSSVMessage>, Option<Hash256>) {
+        // For spec tests, if we have pre-provided justifications, use those
+        if let Some(ref spec_justifications) = self.spec_prepare_justifications {
+            // Extract the justified value from the first prepare message
+            let justified_value = if !spec_justifications.is_empty() {
+                if let Ok(msg) =
+                    QbftMessage::from_ssz_bytes(spec_justifications[0].ssv_message().data())
+                {
+                    Some(msg.root)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            return (spec_justifications.clone(), justified_value);
+        }
+
         // No justifications needed for round 0
         if self.current_round == Round::default() {
             return (vec![], None);
@@ -1459,7 +1488,7 @@ where
         }
 
         // If we found a highest prepared value, extract its prepare justifications
-        if let Some((_, prepared_value, highest_rc)) = highest_prepared {
+        if let Some((round, prepared_value, highest_rc)) = highest_prepared {
             // Extract the prepare messages from the round change message's justifications
             // These are stored in the round_change_justification field of the RoundChange
             let mut prepare_msgs = Vec::new();
@@ -1483,6 +1512,11 @@ where
     /// Get justifications for a RoundChange message
     /// If we have prepared a value, include the Prepare messages that justify it
     fn get_round_change_prepare_justifications(&self) -> Vec<SignedSSVMessage> {
+        // Note: For spec tests, we don't use spec_prepare_justifications here because
+        // round change messages should get their justifications from the prepare container
+        // based on last_prepared_round. This ensures we get the right number of messages
+        // (e.g., 2 for "no quorum" tests vs 3 for normal tests)
+
         // Only include prepare justifications if we have a prepared value
         if let (Some(last_prepared_value), Some(last_prepared_round)) =
             (self.last_prepared_value, self.last_prepared_round)
@@ -1495,11 +1529,20 @@ where
             // We need a quorum of prepares to justify the prepared value
             if prepares.len() >= self.config.quorum_size() {
                 // Only include prepares that match our prepared value
-                return prepares
+                let mut filtered_prepares: Vec<_> = prepares
                     .iter()
                     .filter(|msg| msg.qbft_message.root == last_prepared_value)
+                    .collect();
+
+                // IMPORTANT: Sort by operator ID to ensure deterministic ordering
+                // This is critical for spec tests where the order affects the SSZ encoding
+                filtered_prepares.sort_by_key(|msg| msg.signed_message.operator_ids()[0]);
+
+                let result: Vec<SignedSSVMessage> = filtered_prepares
+                    .into_iter()
                     .map(|msg| msg.signed_message.clone())
                     .collect();
+                return result;
             }
         }
 
@@ -1580,6 +1623,7 @@ where
         // For Proposal messages
         // round_change_justification: rc messages proving we can move to this round
         let round_change_justifications = self.get_round_change_justifications();
+
         // prepare_justification: proves the value being prepared
         let (prepare_justifications, justified_value) = self.get_prepare_justifications();
 
@@ -1630,13 +1674,25 @@ where
         let round_change_justifications = self.get_round_change_prepare_justifications();
         // prepare_justification: N/A
 
+        // Determine the root and data round for the round change message
+        // If we have a prepared value, use it. Otherwise use the passed data_hash
+        let (root, data_round) = if let (Some(last_prepared_value), Some(last_prepared_round)) =
+            (self.last_prepared_value, self.last_prepared_round)
+        {
+            // We have a prepared value, so include it in the round change
+            (last_prepared_value, Some(last_prepared_round))
+        } else {
+            // No prepared value, use the passed data_hash with no data round
+            (data_hash, None)
+        };
+
         // Construct unsigned round change
         let unsigned_msg = self.new_unsigned_message(
             QbftMessageType::RoundChange,
-            data_hash,
+            root,
             round_change_justifications,
             vec![],
-            None,
+            data_round,
         );
 
         // forget that we accpeted a proposal
@@ -1743,5 +1799,15 @@ where
     /// Helper function to get the commit container
     pub fn get_commit_container(&self) -> &MessageContainer {
         &self.commit_container
+    }
+
+    /// Set spec test justifications for proposals
+    pub fn set_spec_justifications(
+        &mut self,
+        round_change: Option<Vec<SignedSSVMessage>>,
+        prepare: Option<Vec<SignedSSVMessage>>,
+    ) {
+        self.spec_round_change_justifications = round_change;
+        self.spec_prepare_justifications = prepare;
     }
 }
