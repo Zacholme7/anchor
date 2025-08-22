@@ -1,14 +1,20 @@
-use super::adapters::manager::QbftManagerController;
-use super::adapters::spec_types::{
-    ExpectedTimerState, SpecTestCommitteeMember, TestSignedSSVMessage,
-};
-use crate::utils::deserializers::{
-    deserialize_base64, deserialize_base64_option, deserialize_hex_hash256_option,
-};
-use crate::{QbftSpecTestType, SpecTest, SpecTestType};
+use std::time::Duration;
+
 use qbft::InstanceHeight;
 use serde::Deserialize;
+use tokio::runtime::Builder;
 use types::Hash256;
+
+use super::adapters::{
+    manager::QbftManagerController,
+    spec_types::{ExpectedTimerState, SpecTestCommitteeMember, TestSignedSSVMessage},
+};
+use crate::{
+    QbftSpecTestType, SpecTest, SpecTestType,
+    utils::deserializers::{
+        deserialize_base64, deserialize_base64_option, deserialize_hex_hash256_option,
+    },
+};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ControllerTest {
@@ -84,22 +90,14 @@ pub struct ExpectedDecidedState {
 
 impl SpecTest for ControllerTest {
     fn run(&self) -> bool {
-        // Create a new runtime for each test to ensure complete isolation
-        let rt = tokio::runtime::Builder::new_multi_thread()
+        // Create a new runtime for each test
+        let rt = Builder::new_multi_thread()
             .enable_all()
-            .worker_threads(2)
+            .worker_threads(1)
             .build()
             .unwrap();
 
         let result = rt.block_on(async {
-            // Check if TEST_FILTER env var is set to filter tests
-            if let Ok(filter) = std::env::var("TEST_FILTER") {
-                if !self.name.contains(&filter) {
-                    return true; // Skip this test but report as passing
-                } else {
-                }
-            }
-            
             let committee_member = self.controller.as_ref().unwrap().committee_member.clone();
             let mut controller = QbftManagerController::new(committee_member);
             let mut last_error: Option<String> = None;
@@ -109,18 +107,19 @@ impl SpecTest for ControllerTest {
                     .height
                     .map(|h| InstanceHeight::from(h as usize))
                     .unwrap_or_else(|| InstanceHeight::from(i));
-
-
                 let value = run_data.input_value.clone().unwrap_or_default();
 
+
+                // Start the new qbft instance
                 if let Err(e) = controller.start_new_instance(height, value).await {
                     last_error = Some(e);
                 }
-                
+
                 let mut decided_count = 0;
                 let empty_messages = vec![];
-                let messages = run_data.input_messages.as_ref().unwrap_or(&empty_messages);
 
+                // Go through all of the run data messages
+                let messages = run_data.input_messages.as_ref().unwrap_or(&empty_messages);
                 for msg in messages {
                     match controller.process_msg(msg).await {
                         Ok(Some(decided_data)) => {
@@ -139,14 +138,6 @@ impl SpecTest for ControllerTest {
                             last_error = Some(e);
                         }
                     }
-                }
-
-                // Give the consensus tasks time to complete
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                
-                // Check if THIS specific instance has decided
-                if controller.is_instance_decided(height) {
-                    decided_count = 1;
                 }
 
                 if let Some(expected) = &run_data.expected_decided_state {
@@ -171,11 +162,7 @@ impl SpecTest for ControllerTest {
         });
 
         // Properly shutdown the runtime to ensure all tasks are cleaned up
-        rt.shutdown_timeout(std::time::Duration::from_millis(500));
-
-        // Add a delay after each test to ensure complete cleanup
-        std::thread::sleep(std::time::Duration::from_millis(100));
-
+        rt.shutdown_timeout(Duration::from_millis(500));
         result
     }
 

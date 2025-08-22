@@ -5,7 +5,6 @@
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Deserializer, de::Error};
-use ssv_types::msgid::MessageId;
 use ssv_types::{
     ValidatorIndex,
     consensus::{
@@ -14,6 +13,7 @@ use ssv_types::{
         BEACON_ROLE_VALIDATOR_REGISTRATION, BEACON_ROLE_VOLUNTARY_EXIT, BeaconRole, DataVersion,
         QbftMessageType,
     },
+    msgid::MessageId,
 };
 use types::{
     CommitteeIndex, ForkName, Hash256, PublicKeyBytes, Signature, Slot, VariableList, typenum::U13,

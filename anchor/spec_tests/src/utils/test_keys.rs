@@ -1,11 +1,12 @@
 use std::{collections::HashMap, str::FromStr, sync::LazyLock};
 
-use super::rsa_validation::verify_rsa_signature;
 use hex::FromHex;
 use openssl::{pkey::Private, rsa::Rsa};
 use ssv_types::{OperatorId, message::SignedSSVMessage};
 use ssz::Encode;
 use types::{PublicKeyBytes, SecretKey};
+
+use super::rsa_validation::verify_rsa_signature;
 
 // https://github.com/ssvlabs/ssv-spec/blob/main/types/testingutils/keys.go#L76
 

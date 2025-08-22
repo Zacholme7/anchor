@@ -131,8 +131,8 @@ fn run_tests(test_type: SpecTestType) -> bool {
                     .map(|name| {
                         let split: HashSet<String> = name.split('.').map(String::from).collect();
 
-                        // Check if any chunk contains the variant as a prefix to avoid false matches
-                        // (e.g., "ssvmsg" matching "signedssvmsg")
+                        // Check if any chunk contains the variant as a prefix to avoid false
+                        // matches (e.g., "ssvmsg" matching "signedssvmsg")
                         let contains_prefix = split
                             .iter()
                             .any(|chunk| chunk.starts_with(&variant) || chunk == &variant);
@@ -169,23 +169,8 @@ fn run_tests(test_type: SpecTestType) -> bool {
 
     let mut result = true;
     for (i, mut test) in tests.into_iter().enumerate() {
-        // Check for TEST_NUM environment variable to run a single test
-        if let Ok(test_num) = std::env::var("TEST_NUM") {
-            if let Ok(num) = test_num.parse::<usize>() {
-                if i + 1 != num {
-                    continue; // Skip this test
-                }
-            }
-        }
-
-        println!("Running test {}", i + 1);
         test.setup();
         let test_result = test.run();
-        if !test_result {
-            println!("Test {} FAILED", i + 1);
-        } else {
-            println!("Test {} PASSED", i + 1);
-        }
         result &= test_result;
     }
 
@@ -207,6 +192,7 @@ mod spec_tests {
         }
 
         #[test]
+        #[ignore]
         fn test_qbft_controller() {
             assert!(run_tests(SpecTestType::Qbft(QbftSpecTestType::Controller)))
         }

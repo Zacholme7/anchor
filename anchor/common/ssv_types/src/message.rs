@@ -609,7 +609,8 @@ impl SignedSSVMessage {
 
         // Note: Len Signers & Operators will only be > 1 after commit aggregation
 
-        // Rule: Signer can't be zero (check this before sorted check since [1,2,0] should error as ZeroSigner)
+        // Rule: Signer can't be zero (check this before sorted check since [1,2,0] should error as
+        // ZeroSigner)
         if self.operator_ids.iter().any(|&id| *id == 0) {
             return Err(SignedSSVMessageError::ZeroSigner);
         }

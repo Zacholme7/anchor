@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 // Re-Exports for Manager
 pub use config::{Config, ConfigBuilder};
@@ -15,7 +18,6 @@ use ssv_types::{
     msgid::MessageId,
 };
 use ssz::{Decode, Encode};
-use std::collections::HashSet;
 use tracing::{debug, error, warn};
 use types::{FixedBytesExtended, Hash256};
 
@@ -268,7 +270,8 @@ where
                 }
                 QbftMessageType::Commit => {
                     // Single-signature commits from future rounds are not allowed
-                    // But multi-signature commits (decided messages) should be allowed from any round
+                    // But multi-signature commits (decided messages) should be allowed from any
+                    // round
                     if wrapped_msg.signed_message.operator_ids().len() == 1 {
                         return Err(QbftError::WrongRound);
                     }
@@ -549,7 +552,8 @@ where
 
             // Success! We have come to a prepare consensus on a value
 
-            // Move the state forward since we have a prepare quorum (only if not already in Commit state)
+            // Move the state forward since we have a prepare quorum (only if not already in Commit
+            // state)
             let should_send_commit = match self.state {
                 InstanceState::Prepare { .. } => {
                     self.state = InstanceState::Commit { proposal_root };
@@ -748,8 +752,9 @@ where
             let is_leader = self.check_leader(&self.config.operator_id());
 
             if matches!(self.state, InstanceState::SentRoundChange) || is_leader {
-                // Don't process if we're already at the target round and have moved past initial state
-                // This prevents duplicate proposals when RC quorum is reached multiple times
+                // Don't process if we're already at the target round and have moved past initial
+                // state This prevents duplicate proposals when RC quorum is reached
+                // multiple times
                 if self.current_round == round
                     && !matches!(self.state, InstanceState::SentRoundChange)
                 {
@@ -1036,8 +1041,9 @@ where
                 let mut rc_prep_unique_signers = std::collections::HashSet::new();
 
                 // Validate each prepare message in the round change justification
-                // In round change messages, the prepare justifications are stored in round_change_justification
-                // when the round change has prepared (data_round > 0)
+                // In round change messages, the prepare justifications are stored in
+                // round_change_justification when the round change has prepared
+                // (data_round > 0)
                 for prepare_msg in &round_change.round_change_justification {
                     let typed_prepare = match SignedSSVMessage::from_ssz_bytes(prepare_msg) {
                         Ok(msg) => msg,
@@ -1059,7 +1065,8 @@ where
                     }
 
                     // CRITICAL: Check that the prepare round matches the round change's data_round
-                    // This matches Go's validSignedPrepareForHeightRoundAndRootVerifySignature check
+                    // This matches Go's validSignedPrepareForHeightRoundAndRootVerifySignature
+                    // check
                     if prepare_qbft.round != round_change.data_round {
                         // This is the error we need for the test!
                         // In Go: "round change justification invalid: wrong msg round"
@@ -1373,7 +1380,7 @@ where
                         }),
                 );
             } else {
-                // No prepare justifications - use empty root (like Go does)
+                // No prepare justifications
                 return MessageData::new(
                     0, // NoRound
                     self.current_round.get() as u64,
@@ -1383,7 +1390,7 @@ where
             }
         }
 
-        // Standard message data for Proposal, Prepare, and Commit
+        // Standard message data for Proposal (without justifications), Prepare, and Commit
         MessageData::new(0, self.current_round.get() as u64, data_hash, full_data)
     }
 
@@ -1725,6 +1732,12 @@ where
     /// Helper function for spec tests to set instance state
     pub fn set_state_spec(&mut self, state: InstanceState) {
         self.state = state;
+    }
+
+    /// Helper function for spec tests to set last prepared value and round
+    pub fn set_last_prepared_spec(&mut self, value: Option<D::Hash>, round: Option<Round>) {
+        self.last_prepared_value = value;
+        self.last_prepared_round = round;
     }
 
     /// Helper function to get the commit container

@@ -1,23 +1,25 @@
-use super::spec_types::{AcceptedProposal, MessageContainer, TestSignedSSVMessage};
-use crate::utils::error_mapping::map_qbft_error;
-use crate::utils::misc::calculate_quorum;
-use crate::utils::rsa_signing::sign_message_with_full_data;
-use crate::utils::rsa_validation::validate_rsa_signatures;
-use crate::utils::test_keys::TestKeySet;
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
-use openssl::pkey::Private;
-use openssl::rsa::Rsa;
-use qbft::{ConfigBuilder, InstanceHeight, InstanceState, LeaderFunction};
-use qbft::{Qbft, UnsignedWrappedQbftMessage};
-use ssv_types::consensus::{BeaconVote, QbftMessage, QbftMessageType};
-use ssv_types::message::SignedSSVMessage;
-use ssv_types::msgid::MessageId;
-use ssv_types::{IndexSet, OperatorId, Round};
+use std::{cell::RefCell, rc::Rc};
+
+use base64::{Engine, engine::general_purpose::STANDARD};
+use openssl::{pkey::Private, rsa::Rsa};
+use qbft::{
+    ConfigBuilder, InstanceHeight, InstanceState, LeaderFunction, Qbft, UnsignedWrappedQbftMessage,
+};
+use ssv_types::{
+    IndexSet, OperatorId, Round,
+    consensus::{BeaconVote, QbftMessage, QbftMessageType},
+    message::SignedSSVMessage,
+    msgid::MessageId,
+};
 use ssz::Decode;
-use std::cell::RefCell;
-use std::rc::Rc;
 use types::Hash256;
+
+use super::spec_types::{AcceptedProposal, MessageContainer, TestSignedSSVMessage};
+use crate::utils::{
+    error_mapping::map_qbft_error, misc::calculate_quorum,
+    rsa_signing::sign_message_with_full_data, rsa_validation::validate_rsa_signatures,
+    test_keys::TestKeySet,
+};
 
 /// Test leader function that matches Go test harness behavior
 #[derive(Debug, Clone, Copy, Default)]
@@ -233,8 +235,9 @@ impl QbftAdapter {
 
         // === Spec Test Validations (duplicating message_validator checks) ===
 
-        // DUPLICATE: Multi-signer validation (already done in message_validator::consensus_message.rs:73-89)
-        // We duplicate this here for spec tests since message_validator is bypassed
+        // DUPLICATE: Multi-signer validation (already done in
+        // message_validator::consensus_message.rs:73-89) We duplicate this here for spec
+        // tests since message_validator is bypassed
         let signers = wrapped.signed_message.operator_ids().len();
         if signers > 1 {
             match wrapped.qbft_message.qbft_message_type {
@@ -268,7 +271,8 @@ impl QbftAdapter {
             Err(qbft_error) => {
                 // For hash validation errors, check if we should do additional validation
                 if matches!(qbft_error, qbft::QbftError::InvalidFullData) {
-                    // DUPLICATE: Full data hash validation (already done in message_validator::consensus_message.rs:99-103)
+                    // DUPLICATE: Full data hash validation (already done in
+                    // message_validator::consensus_message.rs:99-103)
                     // We duplicate this here for spec tests since message_validator is bypassed
                     // NOTE: Only validate hash for proposal messages with non-empty data
                     if matches!(
@@ -330,8 +334,6 @@ impl QbftAdapter {
     fn setup_prepare_justifications(&mut self, pre_jus: &Vec<TestSignedSSVMessage>) {
         for test_msg in pre_jus {
             if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
-                // Add prepare justification messages to the container
-                // This matches Go's behavior where justifications are stored in message containers
                 self.instance.add_message_to_container_spec(&wrapped);
             }
         }
@@ -341,8 +343,6 @@ impl QbftAdapter {
     fn setup_round_change_justifications(&mut self, rc_jus: &Vec<TestSignedSSVMessage>) {
         for test_msg in rc_jus {
             if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
-                // Add round change justification messages to the container
-                // This matches Go's behavior where justifications are stored in message containers
                 self.instance.add_message_to_container_spec(&wrapped);
             }
         }

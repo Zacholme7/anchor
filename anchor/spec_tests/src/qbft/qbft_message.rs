@@ -1,15 +1,17 @@
-use crate::adapters::spec_types::TestSignedSSVMessage;
-use crate::utils::deserializers::{
-    deserialize_base64_list_option, deserialize_hash256_list_option,
-};
-use crate::utils::error_mapping::{QbftMessageError, map_qbft_message_error};
-use crate::{QbftSpecTestType, SpecTest, SpecTestType};
 use serde::Deserialize;
-use ssv_types::consensus::QbftMessage;
-use ssv_types::message::SignedSSVMessage;
+use ssv_types::{consensus::QbftMessage, message::SignedSSVMessage};
 use ssz::{Decode, Encode};
 use tree_hash::TreeHash;
 use types::Hash256;
+
+use crate::{
+    QbftSpecTestType, SpecTest, SpecTestType,
+    adapters::spec_types::TestSignedSSVMessage,
+    utils::{
+        deserializers::{deserialize_base64_list_option, deserialize_hash256_list_option},
+        error_mapping::{QbftMessageError, map_qbft_message_error},
+    },
+};
 
 #[derive(Deserialize)]
 pub struct QbftMessageTest {
@@ -70,7 +72,7 @@ impl SpecTest for QbftMessageTest {
 
             // Validate the QBFT message (assuming validate() returns Result<(), String> or similar)
             // For now, validate() returns bool, but we'll use it as if it could fail
-            //if !qbft_message.validate() {
+            // if !qbft_message.validate() {
             // When validate() is properly implemented, it should return an error we can capture
             // For now, this won't actually trigger since validate() always returns true
             // continue;

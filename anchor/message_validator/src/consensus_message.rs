@@ -144,7 +144,9 @@ pub(crate) fn validate_consensus_message_semantics(
     Ok(())
 }
 
-pub fn validate_justifications(consensus_message: &QbftMessage) -> Result<(), ValidationFailure> {
+pub(crate) fn validate_justifications(
+    consensus_message: &QbftMessage,
+) -> Result<(), ValidationFailure> {
     // Rule: Can only exist for Proposal messages
     let prepare_justifications = &consensus_message.prepare_justification;
     if !prepare_justifications.is_empty()
@@ -160,14 +162,6 @@ pub fn validate_justifications(consensus_message: &QbftMessage) -> Result<(), Va
         && consensus_message.qbft_message_type != QbftMessageType::RoundChange
     {
         return Err(ValidationFailure::UnexpectedRoundChangeJustifications);
-    }
-
-    // Rule: Proposals for round > 0 must have round change justifications
-    if consensus_message.qbft_message_type == QbftMessageType::Proposal 
-        && consensus_message.round > 1 
-        && round_change_justifications.is_empty() 
-    {
-        return Err(ValidationFailure::ProposalNotJustifiedNoQuorum);
     }
 
     Ok(())
@@ -418,10 +412,10 @@ mod tests {
     use bls::{Hash256, PublicKeyBytes};
     use openssl::hash::MessageDigest;
     use ssv_types::{
-        OperatorId, RSA_SIGNATURE_SIZE, VariableList,
+        OperatorId,
         consensus::{QbftMessage, QbftMessageType},
         domain_type::DomainType,
-        message::{MsgType, SSVMessage, SignedSSVMessage},
+        message::{MsgType, RSA_SIGNATURE_SIZE, SSVMessage, SignedSSVMessage},
         msgid::{DutyExecutor, MessageId, Role},
     };
     use ssz::Encode;
@@ -645,7 +639,7 @@ mod tests {
         let ssv_msg = SSVMessage::new(MsgType::SSVConsensusMsgType, msg_id, invalid_data)
             .expect("SSVMessage should be created");
         let signed_msg = SignedSSVMessage::new(
-            vec![[0xAA; RSA_SIGNATURE_SIZE]],
+            vec![vec![0xAA; RSA_SIGNATURE_SIZE]],
             vec![OperatorId(1)],
             ssv_msg,
             vec![],
@@ -838,15 +832,15 @@ mod tests {
             identifier: (&msg_id_b).into(), // Mismatched ID
             root: Hash256::from([0u8; 32]),
             data_round: 1,
-            round_change_justification: VariableList::empty(),
-            prepare_justification: VariableList::empty(),
+            round_change_justification: vec![],
+            prepare_justification: vec![],
         };
 
         let qbft_bytes = qbft_msg.as_ssz_bytes();
         let ssv_msg = SSVMessage::new(MsgType::SSVConsensusMsgType, msg_id_a, qbft_bytes)
             .expect("SSVMessage should be created");
         let signed_msg = SignedSSVMessage::new(
-            vec![[0xAA; RSA_SIGNATURE_SIZE]],
+            vec![vec![0xAA; RSA_SIGNATURE_SIZE]],
             vec![OperatorId(42)],
             ssv_msg,
             vec![],
@@ -882,7 +876,7 @@ mod tests {
         let ssv_msg = SSVMessage::new(MsgType::SSVConsensusMsgType, msg_id, qbft_bytes)
             .expect("SSVMessage should be created");
         let signed_msg = SignedSSVMessage::new(
-            vec![[0xAA; RSA_SIGNATURE_SIZE]],
+            vec![vec![0xAA; RSA_SIGNATURE_SIZE]],
             vec![OperatorId(1)],
             ssv_msg,
             vec![],
@@ -1140,14 +1134,12 @@ mod tests {
         let signature = signer.sign_to_vec().expect("Failed to create signature");
 
         // Pad signature to RSA_SIGNATURE_SIZE if needed
-        let padded_signature: [u8; RSA_SIGNATURE_SIZE] = if signature.len() < RSA_SIGNATURE_SIZE {
-            let mut padded = [0; RSA_SIGNATURE_SIZE];
+        let padded_signature = if signature.len() < RSA_SIGNATURE_SIZE {
+            let mut padded = vec![0; RSA_SIGNATURE_SIZE];
             padded[..signature.len()].copy_from_slice(&signature);
             padded
         } else {
             signature
-                .try_into()
-                .expect("Signature should not be longer than RSA_SIGNATURE_SIZE bytes")
         };
 
         // Create signed message
@@ -1203,7 +1195,7 @@ mod tests {
             .expect("SSVMessage should be created");
 
         // Create an invalid signature (just random bytes)
-        let invalid_signature = [0xBB; RSA_SIGNATURE_SIZE];
+        let invalid_signature = vec![0xBB; RSA_SIGNATURE_SIZE];
 
         // Create signed message with invalid signature
         let signed_msg = SignedSSVMessage::new(
@@ -1278,7 +1270,7 @@ mod tests {
 
         // Create a signed SSV message
         let signed_msg = SignedSSVMessage::new(
-            vec![[0xAA; RSA_SIGNATURE_SIZE]],
+            vec![vec![0xAA; RSA_SIGNATURE_SIZE]],
             vec![OperatorId(1)],
             ssv_msg,
             vec![],

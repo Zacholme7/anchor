@@ -1,14 +1,18 @@
-use super::adapters::qbft::{QbftAdapter, QbftStartingState};
-use super::adapters::spec_types::{
-    AcceptedProposal, ExpectedTimerState, MessageContainer, SpecTestCommitteeMember,
-    TestSignedSSVMessage,
-};
-use crate::utils::deserializers::{deserialize_base64, deserialize_base64_option};
-use crate::{QbftSpecTestType, SpecTest, SpecTestType};
 use qbft::InstanceHeight;
 use serde::Deserialize;
-use ssv_types::msgid::MessageId;
-use ssv_types::{IndexSet, OperatorId, Round};
+use ssv_types::{IndexSet, OperatorId, Round, msgid::MessageId};
+
+use super::adapters::{
+    qbft::{QbftAdapter, QbftStartingState},
+    spec_types::{
+        AcceptedProposal, ExpectedTimerState, MessageContainer, SpecTestCommitteeMember,
+        TestSignedSSVMessage,
+    },
+};
+use crate::{
+    QbftSpecTestType, SpecTest, SpecTestType,
+    utils::deserializers::{deserialize_base64, deserialize_base64_option},
+};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MessageProcessingTest {
@@ -111,9 +115,13 @@ impl SpecTest for MessageProcessingTest {
             .state
             .committee_member
             .committee
-            .iter()
-            .map(|op| OperatorId::from(op.operator_id))
-            .collect();
+            .as_ref()
+            .map(|ops| {
+                ops.iter()
+                    .map(|op| OperatorId::from(op.operator_id))
+                    .collect()
+            })
+            .unwrap_or_default();
 
         let state = QbftStartingState {
             height: InstanceHeight::from(self.pre.state.height as usize),

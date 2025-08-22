@@ -1,20 +1,23 @@
-use super::adapters::qbft::{QbftAdapter, QbftStartingState};
-use super::adapters::spec_types::{
-    AcceptedProposal, ExpectedTimerState, MessageContainer, SpecTestCommitteeMember,
-    TestSignedSSVMessage,
-};
-use crate::utils::deserializers::{
-    deserialize_base64, deserialize_base64_option, deserialize_hex_hash256,
-};
-use crate::utils::test_keys::TestKeySet;
-use crate::{QbftSpecTestType, SpecTest, SpecTestType};
 use qbft::InstanceHeight;
 use serde::Deserialize;
-use ssv_types::message::SignedSSVMessage;
-use ssv_types::msgid::MessageId;
-use ssv_types::{IndexSet, OperatorId, Round};
+use ssv_types::{IndexSet, OperatorId, Round, message::SignedSSVMessage, msgid::MessageId};
 use tree_hash::TreeHash;
 use types::Hash256;
+
+use super::adapters::{
+    qbft::{QbftAdapter, QbftStartingState},
+    spec_types::{
+        AcceptedProposal, ExpectedTimerState, MessageContainer, SpecTestCommitteeMember,
+        TestSignedSSVMessage,
+    },
+};
+use crate::{
+    QbftSpecTestType, SpecTest, SpecTestType,
+    utils::{
+        deserializers::{deserialize_base64, deserialize_base64_option, deserialize_hex_hash256},
+        test_keys::TestKeySet,
+    },
+};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TimeoutTest {
@@ -111,9 +114,13 @@ impl SpecTest for TimeoutTest {
             .state
             .committee_member
             .committee
-            .iter()
-            .map(|op| OperatorId::from(op.operator_id))
-            .collect();
+            .as_ref()
+            .map(|ops| {
+                ops.iter()
+                    .map(|op| OperatorId::from(op.operator_id))
+                    .collect()
+            })
+            .unwrap_or_default();
 
         let state = QbftStartingState {
             height: InstanceHeight::from(self.pre.state.height as usize),

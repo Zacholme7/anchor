@@ -1,4 +1,9 @@
-use super::spec_types::TestSignedSSVMessage;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Arc, Mutex},
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+
 use indexmap::IndexSet;
 use message_sender::testing::MockMessageSender;
 use processor::{self, Senders};
@@ -10,15 +15,11 @@ use ssv_types::{
     message::SignedSSVMessage,
 };
 use ssz::{Decode, Encode};
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use task_executor::ShutdownReason;
-use task_executor::TaskExecutor;
-use tokio::runtime::Handle;
-use tokio::sync::mpsc;
-use tokio::time::Instant;
+use task_executor::{ShutdownReason, TaskExecutor};
+use tokio::{runtime::Handle, sync::mpsc, time::Instant};
 use types::{Address, Slot};
+
+use super::spec_types::TestSignedSSVMessage;
 
 /// QbftManager test setup - handles all the infrastructure needed for QbftManager testing
 pub struct QbftManagerTestSetup {
@@ -81,13 +82,6 @@ impl QbftManagerTestSetup {
             _exit_signal: exit_signal,
             _shutdown_tx: shutdown_tx,
         })
-    }
-}
-
-impl Drop for QbftManagerTestSetup {
-    fn drop(&mut self) {
-        // Don't signal shutdown as it might hang the test
-        // The controller drop will handle task cleanup
     }
 }
 
@@ -193,7 +187,8 @@ impl QbftManagerController {
                 }
                 Err(e) => {
                     // For PastHeight errors, we should still store the decision
-                    // The manager rejects creating instances for past heights but the decision is valid
+                    // The manager rejects creating instances for past heights but the decision is
+                    // valid
                     if matches!(e, qbft_manager::QbftError::PastHeight) {
                         // Store the decision for this past height
                         if let Ok(mut instances) = completed_instances.lock() {
@@ -235,7 +230,8 @@ impl QbftManagerController {
                 "not processing consensus message since instance is already decided".to_string(),
             );
         } else if is_decided && is_multi_sig {
-            // For multi-sig messages on already decided instances, just return None (no new decision)
+            // For multi-sig messages on already decided instances, just return None (no new
+            // decision)
             return Ok(None);
         }
 
@@ -376,9 +372,13 @@ impl QbftManagerController {
         let cluster_members: IndexSet<OperatorId> = self
             .committee_member
             .committee
-            .iter()
-            .map(|op| OperatorId::from(op.operator_id))
-            .collect();
+            .as_ref()
+            .map(|ops| {
+                ops.iter()
+                    .map(|op| OperatorId::from(op.operator_id))
+                    .collect()
+            })
+            .unwrap_or_default();
 
         // Parse committee ID to use as cluster ID
         // Convert committee_id bytes to ClusterId (both are 32-byte arrays)
@@ -420,28 +420,5 @@ impl QbftManagerController {
     /// Get controller root for state validation (matches Go's GetRoot)
     pub fn get_root(&self) -> Result<Vec<u8>, String> {
         Ok(vec![0u8; 32])
-    }
-}
-
-impl Drop for QbftManagerController {
-    fn drop(&mut self) {
-        // Abort all spawned tasks to prevent them from interfering with other tests
-        for task in &self.spawned_tasks {
-            task.abort();
-        }
-
-        // Give time for tasks to actually abort and release resources
-        // This is important because the QbftManager might be processing messages
-        std::thread::sleep(std::time::Duration::from_millis(100));
-
-        // Also clear the completed instances to prevent state leakage
-        if let Ok(mut instances) = self.completed_instances.lock() {
-            instances.clear();
-        }
-
-        // Clear running instances
-        if let Ok(mut running) = self.running_instances.lock() {
-            running.clear();
-        }
     }
 }

@@ -1,5 +1,5 @@
-use crate::utils::deserializers::{deserialize_base64, deserialize_hex};
-use crate::utils::error_mapping::map_signed_message_error;
+use std::collections::HashMap;
+
 use base64::prelude::*;
 use qbft::WrappedQbftMessage;
 use serde::Deserialize;
@@ -9,7 +9,11 @@ use ssv_types::{
     message::{SSVMessage, SignedSSVMessage, SignedSSVMessageError},
 };
 use ssz::Decode;
-use std::collections::HashMap;
+
+use crate::utils::{
+    deserializers::{deserialize_base64, deserialize_hex},
+    error_mapping::map_signed_message_error,
+};
 
 /// Error type for test message conversion
 #[derive(Debug, Clone)]
@@ -47,7 +51,7 @@ pub struct SpecTestCommitteeMember {
     pub faulty_nodes: u64,
 
     #[serde(rename = "Committee")]
-    pub committee: Vec<SpecTestOperator>,
+    pub committee: Option<Vec<SpecTestOperator>>,
 
     #[serde(rename = "DomainType", deserialize_with = "deserialize_hex")]
     pub domain_type: Vec<u8>,

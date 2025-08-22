@@ -1,12 +1,9 @@
-use crate::utils::test_keys::TestKeySet;
-use openssl::hash::MessageDigest;
-use openssl::pkey::PKey;
-use openssl::sign::Verifier;
+use openssl::{hash::MessageDigest, pkey::PKey, sign::Verifier};
 use qbft::WrappedQbftMessage;
-use ssv_types::OperatorId;
-use ssv_types::consensus::QbftMessageType;
-use ssv_types::message::SignedSSVMessage;
+use ssv_types::{OperatorId, consensus::QbftMessageType, message::SignedSSVMessage};
 use ssz::{Decode, Encode};
+
+use crate::utils::test_keys::TestKeySet;
 
 /// Validate RSA signatures for justifications in QBFT messages
 /// In production, message_validator does this. In tests, we need to do it here.

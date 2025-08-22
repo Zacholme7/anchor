@@ -1,9 +1,10 @@
-use super::adapters::spec_types::SpecTestCommitteeMember;
-use crate::{QbftSpecTestType, SpecTest, SpecTestType};
 use indexmap::IndexSet;
 use qbft::{DefaultLeaderFunction, InstanceHeight, LeaderFunction};
 use serde::Deserialize;
 use ssv_types::{OperatorId, Round};
+
+use super::adapters::spec_types::SpecTestCommitteeMember;
+use crate::{QbftSpecTestType, SpecTest, SpecTestType};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RoundRobinTest {
@@ -50,9 +51,13 @@ impl SpecTest for RoundRobinTest {
         let committee_ids: Vec<OperatorId> = self
             .share
             .committee
-            .iter()
-            .map(|member| OperatorId::from(member.operator_id))
-            .collect();
+            .as_ref()
+            .map(|ops| {
+                ops.iter()
+                    .map(|member| OperatorId::from(member.operator_id))
+                    .collect()
+            })
+            .unwrap_or_default();
 
         for i in 0..self.heights.len() {
             let height = self.heights[i];

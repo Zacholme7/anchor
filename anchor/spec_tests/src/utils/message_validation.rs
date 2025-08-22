@@ -1,9 +1,10 @@
-use ssv_types::OperatorId;
-use ssv_types::consensus::{QbftMessage, QbftMessageType};
-use ssv_types::message::SignedSSVMessage;
-use ssv_types::msgid::MessageId;
-use types::VariableList;
-use types::typenum::U56;
+use ssv_types::{
+    OperatorId,
+    consensus::{QbftMessage, QbftMessageType},
+    message::SignedSSVMessage,
+    msgid::MessageId,
+};
+use types::{VariableList, typenum::U56};
 
 /// Extract the decided value from a SignedSSVMessage.
 /// The decided value is in the full_data field.

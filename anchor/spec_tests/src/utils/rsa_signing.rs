@@ -1,10 +1,10 @@
-use openssl::hash::MessageDigest;
-use openssl::pkey::{PKey, Private};
-use openssl::rsa::Rsa;
-use openssl::sign::Signer;
-use ssv_types::OperatorId;
-use ssv_types::consensus::UnsignedSSVMessage;
-use ssv_types::message::SignedSSVMessage;
+use openssl::{
+    hash::MessageDigest,
+    pkey::{PKey, Private},
+    rsa::Rsa,
+    sign::Signer,
+};
+use ssv_types::{OperatorId, consensus::UnsignedSSVMessage, message::SignedSSVMessage};
 use ssz::Encode;
 
 /// Sign a message with RSA key using SHA256
