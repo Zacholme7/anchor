@@ -52,6 +52,11 @@ trait SpecTest {
     // Run the test and verify that the output is what we were expecting.
     fn run(&self) -> bool;
 
+    // Get the test name. Default implementation returns empty string.
+    fn name(&self) -> &str {
+        ""
+    }
+
     // Return the type of this test. Used as a Key for the loaders and path construction
     fn test_type() -> SpecTestType
     where
@@ -112,11 +117,15 @@ fn run_tests(test_type: SpecTestType) -> bool {
     // Check for TEST_FILTER environment variable for filtering specific tests by name
     let test_filter = std::env::var("TEST_FILTER").ok();
 
+    let mut file_count = 0;
     let mut tests: Vec<Box<dyn SpecTest>> = WalkDir::new(test_dir)
         .into_iter()
         .filter_map(Result::ok)
         .filter_map(|entry| {
             let path = entry.path();
+            if path.is_file() {
+                file_count += 1;
+            }
 
             // Check if it is an encoding test
             let is_encoding = test_type.is_encoding();
@@ -168,7 +177,6 @@ fn run_tests(test_type: SpecTestType) -> bool {
                     let loader = TEST_LOADERS
                         .get(&test_type)
                         .unwrap_or_else(|| panic!("No loader registered for: {test_type}"));
-                    println!("Loading test file: {}", path.to_string_lossy());
                     return Some(loader(&path.to_string_lossy()));
                 }
             }
@@ -176,13 +184,26 @@ fn run_tests(test_type: SpecTestType) -> bool {
         })
         .collect();
 
-    println!("Loaded {} tests", tests.len());
-
+    let total_tests = tests.len();
+    let mut passed = 0;
+    let mut failed_tests = Vec::new();
     let mut result = true;
-    for test in tests.iter_mut() {
+    for (idx, test) in tests.iter_mut().enumerate() {
         test.setup();
         let test_result = test.run();
+        if test_result {
+            passed += 1;
+        } else {
+            println!("Test {}: {} - FAILED", idx + 1, test.name());
+            failed_tests.push(idx + 1);
+            println!("");
+        }
         result &= test_result;
+    }
+
+    println!("Controller tests: {}/{} passed", passed, total_tests);
+    if !failed_tests.is_empty() {
+        println!("Failed tests: {:?}", failed_tests);
     }
 
     result
@@ -203,7 +224,6 @@ mod spec_tests {
         }
 
         #[test]
-        #[ignore]
         fn test_qbft_controller() {
             assert!(run_tests(SpecTestType::Qbft(QbftSpecTestType::Controller)))
         }

@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use indexmap::IndexSet;
@@ -11,15 +11,19 @@ use qbft::InstanceHeight;
 use qbft_manager::{CommitteeInstanceId, QbftManager};
 use slot_clock::{ManualSlotClock, SlotClock};
 use ssv_types::{
-    Cluster, ClusterId, CommitteeId, OperatorId, consensus::BeaconVote, domain_type::DomainType,
-    message::SignedSSVMessage,
+    Cluster, ClusterId, CommitteeId, OperatorId, consensus::BeaconVote, consensus::QbftMessage,
+    consensus::QbftMessageType, domain_type::DomainType, message::SignedSSVMessage,
 };
 use ssz::{Decode, Encode};
 use task_executor::{ShutdownReason, TaskExecutor};
+use tokio::time::Duration;
+use tokio::time::sleep;
 use tokio::{runtime::Handle, sync::mpsc, time::Instant};
 use types::{Address, Slot};
 
 use super::spec_types::TestSignedSSVMessage;
+
+// remove 17 becuase we will just spawn a new instance
 
 /// QbftManager test setup - handles all the infrastructure needed for QbftManager testing
 pub struct QbftManagerTestSetup {
@@ -32,19 +36,18 @@ pub struct QbftManagerTestSetup {
 }
 
 impl QbftManagerTestSetup {
-    /// Create QbftManager test setup
-    pub fn new(operator_id: OperatorId, domain: DomainType) -> Result<Self, String> {
+    /// Create QbftManager test setup with a unique executor name
+    pub fn new(
+        operator_id: OperatorId,
+        domain: DomainType,
+        executor_name: String,
+    ) -> Result<Self, String> {
         let handle =
             Handle::try_current().map_err(|_| "Must be created within tokio runtime context")?;
 
         let (exit_signal, exit_receiver) = async_channel::bounded(1);
         let (shutdown_tx, _shutdown_rx) = futures::channel::mpsc::channel::<ShutdownReason>(1);
-        let executor = TaskExecutor::new(
-            handle,
-            exit_receiver,
-            shutdown_tx.clone(),
-            "controller_spec_test".into(),
-        );
+        let executor = TaskExecutor::new(handle, exit_receiver, shutdown_tx.clone(), executor_name);
 
         let config = processor::Config {
             max_workers: 15,
@@ -85,35 +88,26 @@ impl QbftManagerTestSetup {
     }
 }
 
-/// QbftManagerController - Test adapter for QBFT controller spec tests
-///
-/// Current status: 47/53 tests passing (88.7% pass rate)
-///
-/// Known limitations with 6 failing tests that expect different consensus behavior:
-/// - "sorted decided" - expects graceful handling of messages after decision
-/// - "decide invalid value (should pass)" - expects decision with invalid data
-/// - "decide current instance past round" - expects decision from past round
-/// - 3 others with various expectation mismatches
-///
-/// These failures are due to fundamental differences between the Go and Rust implementations,
-/// not bugs in the code.
 pub struct QbftManagerController {
     test_setup: QbftManagerTestSetup,
     operator_id: OperatorId,
     committee_member: super::spec_types::SpecTestCommitteeMember,
-    // Shared state for completed decisions
+    identifier: Vec<u8>, // Controller identifier for validation
+    // Shared state for completed decisions (stores decided value + aggregated commit)
     completed_instances: Arc<Mutex<HashMap<InstanceHeight, Vec<u8>>>>,
     // Track which decisions have been returned to avoid duplicates
     returned_decisions: HashMap<InstanceHeight, bool>,
     // Track running instances to prevent starting duplicates
-    running_instances: Arc<Mutex<HashSet<InstanceHeight>>>,
-    // Track spawned tasks so we can abort them on drop
-    spawned_tasks: Vec<tokio::task::JoinHandle<()>>,
+    running_instances: HashSet<InstanceHeight>,
 }
 
 impl QbftManagerController {
-    /// Create new controller from committee member (updated to use test data)
-    pub fn new(committee_member: super::spec_types::SpecTestCommitteeMember) -> Self {
+    /// Create new controller from committee member with unique executor name
+    pub fn new(
+        committee_member: super::spec_types::SpecTestCommitteeMember,
+        identifier: Vec<u8>,
+        test_name: String,
+    ) -> Self {
         let operator_id = committee_member.operator_id;
 
         // Parse domain type from committee member (hex string -> DomainType)
@@ -125,17 +119,27 @@ impl QbftManagerController {
             DomainType([0; 4]) // Fallback to default
         };
 
-        let test_setup = QbftManagerTestSetup::new(operator_id, domain)
+        // Create a unique executor name using the test name and timestamp
+        let unique_executor_name = format!(
+            "controller_spec_test_{}_{}",
+            test_name.replace(" ", "_"),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+
+        let test_setup = QbftManagerTestSetup::new(operator_id, domain, unique_executor_name)
             .expect("Failed to create QbftManager test setup");
 
         Self {
             test_setup,
             operator_id,
             committee_member,
+            identifier,
             completed_instances: Arc::new(Mutex::new(HashMap::new())),
             returned_decisions: HashMap::new(),
-            running_instances: Arc::new(Mutex::new(HashSet::new())),
-            spawned_tasks: Vec::new(),
+            running_instances: HashSet::new(),
         }
     }
 
@@ -145,16 +149,17 @@ impl QbftManagerController {
         height: InstanceHeight,
         value: Vec<u8>,
     ) -> Result<(), String> {
-        // Check if an instance is already running at this height
-        // We track this through our running_instances set
-        if let Ok(mut running) = self.running_instances.lock() {
-            if running.contains(&height) {
-                return Err("instance already running".to_string());
-            }
-            // Mark this instance as running
-            running.insert(height);
+        // If value is empty, don't start an instance. We can only start instance with value SSZ
+        if value.is_empty() {
+            return Ok(());
+        }
+
+        // We handle duplicate instances gracefully in the manager and dont explicitly consider it
+        // an error
+        if self.running_instances.contains(&height) {
+            return Err("instance already running".to_string());
         } else {
-            return Err("Failed to lock running_instances".to_string());
+            self.running_instances.insert(height);
         }
 
         let beacon_vote = BeaconVote::from_ssz_bytes(&value)
@@ -170,40 +175,25 @@ impl QbftManagerController {
         let start_time = Instant::now();
         let manager = self.test_setup.manager.clone();
         let completed_instances = Arc::clone(&self.completed_instances);
-        let beacon_vote_bytes = beacon_vote.as_ssz_bytes(); // Clone the bytes before moving
 
-        let task = tokio::spawn(async move {
-            match manager
+        // Start the new instance and handle the result
+        tokio::spawn(async move {
+            if let Ok(completed) = manager
                 .decide_instance(instance_id, beacon_vote, start_time, &cluster)
                 .await
             {
-                Ok(completed) => {
-                    if let qbft::Completed::Success(beacon_vote_data) = completed {
-                        let decided_data = beacon_vote_data.as_ssz_bytes();
-                        if let Ok(mut instances) = completed_instances.lock() {
-                            instances.insert(height, decided_data.clone());
-                        }
-                    }
-                }
-                Err(e) => {
-                    // For PastHeight errors, we should still store the decision
-                    // The manager rejects creating instances for past heights but the decision is
-                    // valid
-                    if matches!(e, qbft_manager::QbftError::PastHeight) {
-                        // Store the decision for this past height
-                        if let Ok(mut instances) = completed_instances.lock() {
-                            instances.insert(height, beacon_vote_bytes.clone());
-                        }
+                // Save the completion
+                if let qbft::Completed::Success(beacon_vote_data) = completed {
+                    let decided_data = beacon_vote_data.as_ssz_bytes();
+                    if let Ok(mut instances) = completed_instances.lock() {
+                        instances.insert(height, decided_data);
                     }
                 }
             }
         });
 
-        // Store the task handle so we can abort it on drop
-        self.spawned_tasks.push(task);
-
         // Give the instance time to initialize
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        sleep(Duration::from_millis(50)).await;
 
         Ok(())
     }
@@ -215,6 +205,15 @@ impl QbftManagerController {
     ) -> Result<Option<Vec<u8>>, String> {
         let (signed_ssv_msg, qbft_msg) = self.convert_test_message(msg)?;
         let instance_height = InstanceHeight::from(qbft_msg.height as usize);
+
+        if qbft_msg.qbft_message_type == QbftMessageType::Proposal {
+            if qbft_msg.round > 1 && qbft_msg.round_change_justification.is_empty() {
+                return Err("could not process msg: invalid signed message: proposal not justified: change round has no quorum".to_string());
+            }
+        }
+
+        // Issue is that we have no ways to communicate errors from manager to here
+
         // Check if instance is already decided
         // For multi-signature messages (decided messages), we don't error if already decided
         // For single-signature messages, we return an error if already decided
@@ -225,21 +224,25 @@ impl QbftManagerController {
             false
         };
 
-        if is_decided && !is_multi_sig {
+        // Check if this is a "decided message" (multi-sig commit with quorum)
+        // Following Go's IsDecidedMsg logic
+        let is_decided_msg = is_multi_sig
+            && qbft_msg.qbft_message_type == ssv_types::consensus::QbftMessageType::Commit
+            && signed_ssv_msg.operator_ids().len() >= 3; // Has quorum
+
+        // Handle decided messages first (they bypass the already-decided check)
+        if is_decided_msg {
+            // Decided messages are processed even if instance is already decided
+            // They just won't trigger a new decision
+            if is_decided {
+                return Ok(None);
+            }
+            // If not decided yet, let it continue to process below
+        } else if is_decided {
+            // For all non-decided messages on already-decided instances, return error
             return Err(
                 "not processing consensus message since instance is already decided".to_string(),
             );
-        } else if is_decided && is_multi_sig {
-            // For multi-sig messages on already decided instances, just return None (no new
-            // decision)
-            return Ok(None);
-        }
-
-        // Validate proposal justifications for rounds > 1
-        if qbft_msg.qbft_message_type == ssv_types::consensus::QbftMessageType::Proposal {
-            if qbft_msg.round > 1 && qbft_msg.round_change_justification.is_empty() {
-                return Err("could not process msg: invalid signed message: proposal not justified: change round has no quorum".to_string());
-            }
         }
 
         // Check if this is a multi-signature message for a new instance
@@ -264,6 +267,7 @@ impl QbftManagerController {
             }
         }
 
+        // Send the message to the instance
         let result = self
             .test_setup
             .manager
@@ -273,14 +277,14 @@ impl QbftManagerController {
         result?;
 
         // Give QBFT time to process the message
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        sleep(Duration::from_millis(100)).await;
 
         // For multi-sig commit messages, check if they were properly processed
         if is_multi_sig
             && qbft_msg.qbft_message_type == ssv_types::consensus::QbftMessageType::Commit
         {
             // Give a bit more time for past height decisions to be stored
-            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            sleep(Duration::from_millis(50)).await;
 
             // Check if we have enough signatures for quorum
             let has_quorum = signed_ssv_msg.operator_ids().len() >= 3;
@@ -329,18 +333,10 @@ impl QbftManagerController {
             }
         }
 
+        // After processing, look if we have a decided
         if let Ok(instances) = self.completed_instances.lock() {
             if let Some(decided_data) = instances.get(&instance_height) {
-                // Check if we've already returned this decision
-                if !self
-                    .returned_decisions
-                    .get(&instance_height)
-                    .unwrap_or(&false)
-                {
-                    self.returned_decisions.insert(instance_height, true);
-                    return Ok(Some(decided_data.clone()));
-                } else {
-                }
+                return Ok(Some(decided_data.clone()));
             }
         }
 
@@ -351,7 +347,7 @@ impl QbftManagerController {
     fn convert_test_message(
         &self,
         test_msg: &TestSignedSSVMessage,
-    ) -> Result<(SignedSSVMessage, ssv_types::consensus::QbftMessage), String> {
+    ) -> Result<(SignedSSVMessage, QbftMessage), String> {
         // Use existing conversion logic from spec_types.rs
         let signed_ssv_msg: SignedSSVMessage = test_msg
             .clone()
@@ -359,9 +355,8 @@ impl QbftManagerController {
             .map_err(|e| format!("Failed to convert TestSignedSSVMessage: {e:?}"))?;
 
         // Extract QbftMessage from SSV message data using SSZ decode
-        let qbft_msg =
-            ssv_types::consensus::QbftMessage::from_ssz_bytes(signed_ssv_msg.ssv_message().data())
-                .map_err(|e| format!("Failed to decode QbftMessage: {e:?}"))?;
+        let qbft_msg = QbftMessage::from_ssz_bytes(signed_ssv_msg.ssv_message().data())
+            .map_err(|e| format!("Failed to decode QbftMessage: {e:?}"))?;
 
         Ok((signed_ssv_msg, qbft_msg))
     }

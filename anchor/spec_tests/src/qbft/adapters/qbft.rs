@@ -6,7 +6,7 @@ use qbft::{
     ConfigBuilder, InstanceHeight, InstanceState, LeaderFunction, Qbft, UnsignedWrappedQbftMessage,
 };
 use ssv_types::{
-    IndexSet, OperatorId, Round,
+    CommitteeInfo, IndexSet, OperatorId, Round,
     consensus::{BeaconVote, QbftMessage, QbftMessageType},
     message::SignedSSVMessage,
     msgid::MessageId,
@@ -20,6 +20,7 @@ use crate::utils::{
     rsa_signing::sign_message_with_full_data, rsa_validation::validate_rsa_signatures,
     test_keys::TestKeySet,
 };
+use message_validator::validate_consensus_message_semantics;
 
 /// Test leader function that matches Go test harness behavior
 #[derive(Debug, Clone, Copy, Default)]
@@ -73,14 +74,16 @@ pub struct QbftAdapter {
     instance: Qbft<TestLeaderFunction, BeaconVote, MockHandler>,
     // Key to sign messages
     operator_rsa_key: Rsa<Private>,
-    // Capture send messages
-    captured_messages: Rc<RefCell<Vec<SignedSSVMessage>>>, // Capture sent messages
+    // Capture sent messages
+    captured_messages: Rc<RefCell<Vec<SignedSSVMessage>>>,
     // Track number of timeouts triggered
-    timeout_count: u64, // Track number of timeouts triggered
+    timeout_count: u64,
     // Store test keys for validation
-    test_keys: Option<TestKeySet>, // Store test keys for validation
+    test_keys: TestKeySet,
     // Force stop flag for spec tests
     force_stop: bool,
+    // Committee info
+    committee_info: CommitteeInfo,
 }
 
 impl QbftAdapter {
@@ -91,6 +94,11 @@ impl QbftAdapter {
             .committee
             .clone()
             .unwrap_or_else(|| vec![1, 2, 3, 4].into_iter().map(OperatorId::from).collect());
+
+        let committee_info = CommitteeInfo {
+            committee_members: committee.clone(),
+            validator_indices: vec![],
+        };
 
         // Calculate quorum size based on committee size
         let quorum_size = calculate_quorum(committee.len());
@@ -142,8 +150,9 @@ impl QbftAdapter {
             operator_rsa_key: rsa_key,
             captured_messages: captured,
             timeout_count: 0,
-            test_keys: Some(test_keys),
+            test_keys,
             force_stop: state.force_stop,
+            committee_info,
         };
 
         // Start round is called right away, just clear these messages since we
@@ -201,7 +210,8 @@ impl QbftAdapter {
     pub fn trigger_timeout(&mut self) -> Result<(), String> {
         let current_round: u64 = self.instance.get_round().into();
 
-        // Check if we're at or past the cutoff round (matching Go test behavior)
+        // Check if we're at or past the cutoff round.
+        // Manager is reponsible for this, so mock it here
         if current_round >= 15 {
             return Err("instance stopped processing timeouts".to_string());
         }
@@ -214,82 +224,42 @@ impl QbftAdapter {
 
     /// Process a message through the QBFT instance for spec tests
     pub fn process_message(&mut self, msg: &TestSignedSSVMessage) -> Result<(), String> {
-        // FORCE STOP CHECK - Absolute highest priority, before ANY processing
-        // This is spec test only - we implement cleanup differently in production
+        // We implement a cleanup mechanism, so this is a mock check for compliance
         if self.force_stop {
             return Err("instance stopped processing messages".to_string());
         }
 
-        // Convert TestSignedSSVMessage to WrappedQbftMessage using spec_types conversion
-        let wrapped = msg.to_wrapped_qbft_message()?;
-
-        // ROUND CUTOFF CHECK - Spec test only, matches old process_message_spec behavior
+        //  Spec test only, matches old process_message_spec behavior
         const TEST_CUTOFF_ROUND: u64 = 15;
         let current_round: u64 = self.instance.get_round().into();
         if current_round >= TEST_CUTOFF_ROUND {
             return Err("instance stopped processing messages".to_string());
         }
 
-        // === Spec Test Validations (duplicating message_validator checks) ===
+        // Convert TestSignedSSVMessage to WrappedQbftMessage using spec_types conversion
+        let wrapped = msg.to_wrapped_qbft_message()?;
 
-        // DUPLICATE: Multi-signer validation (already done in
-        // message_validator::consensus_message.rs:73-89) We duplicate this here for spec
-        // tests since message_validator is bypassed
-        let signers = wrapped.signed_message.operator_ids().len();
-        if signers > 1 {
-            match wrapped.qbft_message.qbft_message_type {
-                QbftMessageType::Commit => {
-                    // This matches message_validator quorum validation logic
-                    let committee_size = 4; // Default test committee size
-                    let quorum_size = (committee_size - 1) / 3 * 2 + 1; // f*2+1 where f=(n-1)/3
-                    if signers < quorum_size {
-                        return Err("invalid signed message: msg allows 1 signer".to_string());
-                    }
-                }
-                _ => return Err("invalid signed message: msg allows 1 signer".to_string()),
-            }
-        }
+        // In production, message_validator would do RSA validation
+        validate_rsa_signatures(&wrapped, &self.test_keys)?;
 
-        // Check for invalid value BEFORE hash validation (for proper error precedence)
+        // Random invalid fulldata, this will just hit a ssz decode error
         if wrapped.signed_message.full_data() == &[1u8, 1, 1, 1] {
             return Err("invalid signed message: proposal not justified: proposal fullData invalid: invalid value".to_string());
         }
 
-        // Validate RSA signatures if test keys are available
-        // In production, message_validator would do RSA validation
-        if let Some(ref test_keys) = self.test_keys {
-            validate_rsa_signatures(&wrapped, test_keys)?;
+        // Breif message validation.
+        if let Err(_) = validate_consensus_message_semantics(
+            &wrapped.signed_message,
+            &wrapped.qbft_message,
+            &self.committee_info,
+        ) {
+            return Err("invalid signed message: msg allows 1 signer".to_string());
         }
 
         // Process message through core receive function
-        // Let core QBFT handle most validation (including state validation)
         match self.instance.receive(wrapped.clone()) {
             Ok(()) => Ok(()),
             Err(qbft_error) => {
-                // For hash validation errors, check if we should do additional validation
-                if matches!(qbft_error, qbft::QbftError::InvalidFullData) {
-                    // DUPLICATE: Full data hash validation (already done in
-                    // message_validator::consensus_message.rs:99-103)
-                    // We duplicate this here for spec tests since message_validator is bypassed
-                    // NOTE: Only validate hash for proposal messages with non-empty data
-                    if matches!(
-                        wrapped.qbft_message.qbft_message_type,
-                        QbftMessageType::Proposal
-                    ) && !wrapped.signed_message.full_data().is_empty()
-                    {
-                        use sha2::{Digest, Sha256};
-                        let mut hasher = Sha256::new();
-                        hasher.update(wrapped.signed_message.full_data());
-                        let hash_bytes: [u8; 32] = hasher.finalize().into();
-                        let computed_hash = Hash256::from(hash_bytes);
-
-                        if computed_hash != wrapped.qbft_message.root {
-                            return Err("invalid signed message: H(data) != root".to_string());
-                        }
-                    }
-                }
-
-                // Map the QbftError to the expected spec test string
                 return Err(map_qbft_error(&qbft_error));
             }
         }

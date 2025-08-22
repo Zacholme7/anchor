@@ -68,13 +68,7 @@ impl MessageContainer {
             *value_counts.entry(msg.qbft_message.root).or_default() += 1;
         }
 
-        // Debug output
-        if !value_counts.is_empty() {
-            eprintln!(
-                "MessageContainer::has_quorum for round {}: counts={:?}, quorum_size={}",
-                round, value_counts, self.quorum_size
-            );
-        }
+        // Debug output removed for cleaner test output
 
         // Find any value that has reached quorum
         value_counts

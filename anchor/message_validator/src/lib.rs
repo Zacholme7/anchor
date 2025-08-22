@@ -41,6 +41,7 @@ use crate::{
 };
 
 const VALIDATOR_CLEANER_NAME: &str = "validator_cleaner";
+pub use consensus_message::validate_consensus_message_semantics;
 
 pub(crate) const FIRST_ROUND: u64 = 1;
 

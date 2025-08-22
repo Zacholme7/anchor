@@ -89,28 +89,43 @@ pub struct ExpectedDecidedState {
 }
 
 impl SpecTest for ControllerTest {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
     fn run(&self) -> bool {
-        // Create a new runtime for each test
+        // Create a new runtime for each test with a unique thread name
+        let test_id = format!(
+            "{}_{}",
+            self.name.replace(" ", "_"),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
         let rt = Builder::new_multi_thread()
             .enable_all()
             .worker_threads(1)
+            .thread_name(test_id)
             .build()
             .unwrap();
 
         let result = rt.block_on(async {
-            let committee_member = self.controller.as_ref().unwrap().committee_member.clone();
-            let mut controller = QbftManagerController::new(committee_member);
+            let test_controller = self.controller.as_ref().unwrap();
+            let committee_member = test_controller.committee_member.clone();
+            let identifier = test_controller.identifier.clone();
+            let mut controller = QbftManagerController::new(committee_member, identifier, self.name.clone());
             let mut last_error: Option<String> = None;
 
             for (i, run_data) in self.run_instance_data.iter().enumerate() {
+                // Determine the height for this RunInstanceData
                 let height = run_data
                     .height
                     .map(|h| InstanceHeight::from(h as usize))
                     .unwrap_or_else(|| InstanceHeight::from(i));
+
+                // Always try to start an instance if we have an InputValue (matching Go behavior)
                 let value = run_data.input_value.clone().unwrap_or_default();
-
-
-                // Start the new qbft instance
                 if let Err(e) = controller.start_new_instance(height, value).await {
                     last_error = Some(e);
                 }
@@ -120,7 +135,7 @@ impl SpecTest for ControllerTest {
 
                 // Go through all of the run data messages
                 let messages = run_data.input_messages.as_ref().unwrap_or(&empty_messages);
-                for msg in messages {
+                for (_idx, msg) in messages.iter().enumerate() {
                     match controller.process_msg(msg).await {
                         Ok(Some(decided_data)) => {
                             decided_count += 1;
@@ -142,7 +157,8 @@ impl SpecTest for ControllerTest {
 
                 if let Some(expected) = &run_data.expected_decided_state {
                     if expected.decided_count != decided_count as u64 {
-                        last_error = Some("Decided count mismatch".to_string());
+                        println!("Expected {} decided, got {} decided", expected.decided_count, decided_count);
+                        return false;
                     }
                 }
 
@@ -155,14 +171,25 @@ impl SpecTest for ControllerTest {
             drop(controller);
 
             if !self.expected_error.is_empty() {
-                last_error.is_some()
+                if !last_error.is_some() {
+                    println!("Expecteding an error {:?}, our error is {:?}", self.expected_error, last_error);
+                    return false;
+                }
             } else {
-                last_error.is_none()
+                if last_error.is_some() {
+                    println!("Not expecting an error {:?}, our error is {:?}", self.expected_error, last_error);
+                    return false;
+                }
             }
+            true
         });
 
         // Properly shutdown the runtime to ensure all tasks are cleaned up
-        rt.shutdown_timeout(Duration::from_millis(500));
+        rt.shutdown_timeout(Duration::from_millis(1000));
+
+        // Add a small delay to ensure everything is fully cleaned up before the next test
+        std::thread::sleep(Duration::from_millis(100));
+
         result
     }
 

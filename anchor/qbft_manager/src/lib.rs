@@ -241,22 +241,6 @@ impl QbftManager {
         full_message: SignedSSVMessage,
         qbft_message: ssv_types::consensus::QbftMessage,
     ) -> Result<(), QbftError> {
-        // Validate multi-signature messages early - they must be COMMIT type
-        // if full_message.operator_ids().len() > 1 {
-        // if qbft_message.qbft_message_type != ssv_types::consensus::QbftMessageType::Commit {
-        // Multi-signature messages are only allowed for COMMIT type
-        // return Err(QbftError::MultipleSignersNotAllowed);
-        // }
-        // }
-        //
-        // Validate proposals for round > 1 must have round change justification
-        // if qbft_message.qbft_message_type == ssv_types::consensus::QbftMessageType::Proposal {
-        // if qbft_message.round > 1 && qbft_message.round_change_justification.is_empty() {
-        // Proposal for round > 1 without justification
-        // return Err(QbftError::ProposalNotJustified);
-        // }
-        // }
-
         let msg_id = full_message.ssv_message().msg_id();
         let instance_height: InstanceHeight = (qbft_message.height as usize).into();
 
