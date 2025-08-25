@@ -156,15 +156,8 @@ impl SpecTest for MessageProcessingTest {
         let mut adapter = QbftAdapter::new_with_state(state.clone());
 
         // Process each input message
-        println!(
-            "DEBUG: Processing {} input messages for test '{}'",
-            self.input_messages.len(),
-            self.name
-        );
         let mut last_error = None;
-        for (i, msg) in self.input_messages.iter().enumerate() {
-            let operator_ids = &msg.operator_ids;
-            println!("DEBUG: Input message {}: operators {:?}", i, operator_ids);
+        for msg in self.input_messages.iter() {
             if let Err(e) = adapter.process_message(msg) {
                 last_error = Some(e);
             }
@@ -191,71 +184,14 @@ impl SpecTest for MessageProcessingTest {
         // Check output messages
         if let Some(expected_msgs) = &self.output_messages {
             let captured = adapter.get_captured_messages();
-            // todo!() signatures are different, compare more closely
             if captured.len() != expected_msgs.len() {
-                println!(
-                    "Test '{}' failed: Expected {} messages, got {}",
-                    self.name,
-                    expected_msgs.len(),
-                    captured.len()
-                );
                 return false;
             }
 
-            for (idx, (captured_msg, expected_msg)) in
-                captured.iter().zip(expected_msgs).enumerate()
-            {
+            for (captured_msg, expected_msg) in captured.iter().zip(expected_msgs) {
                 let expected_signed: SignedSSVMessage = expected_msg.clone().try_into().unwrap();
 
                 if captured_msg.tree_hash_root() != expected_signed.tree_hash_root() {
-                    println!("Test '{}' failed at message {}", self.name, idx);
-
-                    // Debug: print operator IDs from both messages
-                    println!("Expected operator: {:?}", expected_msg.operator_ids);
-                    println!("Captured operator: {:?}", captured_msg.operator_ids());
-
-                    // Debug: check if data matches except for signature
-                    use ssz::Decode;
-                    let expected_qbft = ssv_types::consensus::QbftMessage::from_ssz_bytes(
-                        expected_signed.ssv_message().data(),
-                    )
-                    .ok();
-                    let captured_qbft = ssv_types::consensus::QbftMessage::from_ssz_bytes(
-                        captured_msg.ssv_message().data(),
-                    )
-                    .ok();
-
-                    if let (Some(exp), Some(cap)) = (expected_qbft, captured_qbft) {
-                        println!(
-                            "Expected QBFT type: {:?}, round: {}",
-                            exp.qbft_message_type, exp.round
-                        );
-                        println!(
-                            "Captured QBFT type: {:?}, round: {}",
-                            cap.qbft_message_type, cap.round
-                        );
-                        println!(
-                            "Round change justification lengths - Expected: {}, Captured: {}",
-                            exp.round_change_justification.len(),
-                            cap.round_change_justification.len()
-                        );
-
-                        // Debug: Print the actual tree hash roots
-                        if exp.qbft_message_type == ssv_types::consensus::QbftMessageType::Proposal
-                        {
-                            println!("Expected root: {:?}", exp.root);
-                            println!("Captured root: {:?}", cap.root);
-                            println!(
-                                "Expected tree_hash_root: {:?}",
-                                expected_signed.tree_hash_root()
-                            );
-                            println!(
-                                "Captured tree_hash_root: {:?}",
-                                captured_msg.tree_hash_root()
-                            );
-                        }
-                    }
-
                     return false;
                 }
             }

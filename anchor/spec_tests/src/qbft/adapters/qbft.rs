@@ -163,8 +163,12 @@ impl QbftAdapter {
             committee_info,
         };
 
+        // Start round is called right away, just clear these messages since we
+        // want to test specific message combinations
+        adapter.captured_messages.borrow_mut().clear();
+        adapter.timeout_count = 0;
+
         // Set the round
-        println!("DEBUG: Setting round to {:?} from test data", state.round);
         adapter.setup_round(state.round);
 
         // Set the proposal accepted for current round
@@ -179,20 +183,7 @@ impl QbftAdapter {
         );
 
         // Populate all message containers
-        println!(
-            "DEBUG: Before populate_containers, round is: {:?}",
-            adapter.get_round()
-        );
         adapter.populate_containers(&state);
-        println!(
-            "DEBUG: After populate_containers, round is: {:?}",
-            adapter.get_round()
-        );
-
-        // Start round is called right away, just clear these messages since we
-        // want to test specific message combinations
-        adapter.captured_messages.borrow_mut().clear();
-        adapter.timeout_count = 0;
 
         adapter
     }
@@ -286,6 +277,11 @@ impl QbftAdapter {
 
     /// Populate containers with messages from QbftStartingState
     fn populate_containers(&mut self, state: &QbftStartingState) {
+        // If force_stop is true, don't populate containers as instance should not process anything
+        if self.force_stop {
+            return;
+        }
+        
         // Process messages in their original order from the test data
         // IMPORTANT: Go preserves insertion order, so we must too
         // The test data uses numbered keys like "1", "2", "3" to indicate order
@@ -296,19 +292,7 @@ impl QbftAdapter {
         for key in propose_keys {
             if let Some(test_msg) = state.propose_container.msgs.get(key) {
                 if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
-                    println!(
-                        "DEBUG: Adding proposal to container for round {}",
-                        wrapped.qbft_message.round
-                    );
-                    let round_before = self.get_round();
                     self.instance.add_message_to_container_spec(&wrapped);
-                    let round_after = self.get_round();
-                    if round_before != round_after {
-                        println!(
-                            "DEBUG: Round changed from {} to {} after adding proposal!",
-                            round_before, round_after
-                        );
-                    }
                 }
             }
         }
@@ -337,23 +321,10 @@ impl QbftAdapter {
 
         // Process round change messages in numerical order
         let mut rc_keys: Vec<_> = state.round_change_container.msgs.keys().collect();
-        println!("DEBUG: Round change container raw keys: {:?}", rc_keys);
         rc_keys.sort_by_key(|k| k.parse::<u32>().unwrap_or(0));
-        println!("DEBUG: Round change container sorted keys: {:?}", rc_keys);
-        println!("DEBUG: Adding round change messages in order:");
         for key in rc_keys {
             if let Some(test_msg) = state.round_change_container.msgs.get(key) {
                 if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
-                    let operator_id = wrapped
-                        .signed_message
-                        .operator_ids()
-                        .first()
-                        .copied()
-                        .unwrap_or_default();
-                    println!(
-                        "  Key '{}': Operator {:?}, Round {}",
-                        key, operator_id, wrapped.qbft_message.round
-                    );
                     self.instance.add_message_to_container_spec(&wrapped);
                 }
             }

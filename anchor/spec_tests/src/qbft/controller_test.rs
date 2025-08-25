@@ -157,7 +157,6 @@ impl SpecTest for ControllerTest {
 
                 if let Some(expected) = &run_data.expected_decided_state {
                     if expected.decided_count != decided_count as u64 {
-                        println!("Expected {} decided, got {} decided", expected.decided_count, decided_count);
                         return false;
                     }
                 }
@@ -172,12 +171,10 @@ impl SpecTest for ControllerTest {
 
             if !self.expected_error.is_empty() {
                 if !last_error.is_some() {
-                    println!("Expecteding an error {:?}, our error is {:?}", self.expected_error, last_error);
                     return false;
                 }
             } else {
                 if last_error.is_some() {
-                    println!("Not expecting an error {:?}, our error is {:?}", self.expected_error, last_error);
                     return false;
                 }
             }
