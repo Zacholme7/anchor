@@ -106,6 +106,7 @@ impl SpecTest for CreateMessageTest {
     }
 
     fn run(&self) -> bool {
+        println!("{}", self.name);
         // Use the state constructed in setup()
         let state = self
             .qbft_state
@@ -118,11 +119,12 @@ impl SpecTest for CreateMessageTest {
         let signed_ssv_message =
             adapter.create_message(self.msg_type, self.root, state.start_value.clone());
 
-        // Compare to expected root
-        let root = signed_ssv_message.tree_hash_root();
-
         // Compare message root to expected root
-        if root != self.expected_root {
+        let actual_root = signed_ssv_message.tree_hash_root();
+        if actual_root != self.expected_root {
+            println!("Test {}: Root mismatch!", self.name);
+            println!("  Expected: {:?}", self.expected_root);
+            println!("  Actual:   {:?}", actual_root);
             return false;
         }
 

@@ -91,7 +91,10 @@ impl QbftAdapter {
     /// Build a QBFT instance with starting state
     pub fn new_with_state(state: QbftStartingState) -> Self {
         // Use committee from state or default 4-node committee
-        let committee: IndexSet<OperatorId> = state.committee.clone().unwrap();
+        let committee: IndexSet<OperatorId> = state
+            .committee
+            .clone()
+            .unwrap_or_else(|| vec![1, 2, 3, 4].into_iter().map(OperatorId::from).collect());
 
         // Get test keys and RSA key for this operator
         let test_keys = match &committee.len() {
@@ -160,12 +163,8 @@ impl QbftAdapter {
             committee_info,
         };
 
-        // Start round is called right away, just clear these messages since we
-        // want to test specific message combinations
-        adapter.captured_messages.borrow_mut().clear();
-        adapter.timeout_count = 0;
-
         // Set the round
+        println!("DEBUG: Setting round to {:?} from test data", state.round);
         adapter.setup_round(state.round);
 
         // Set the proposal accepted for current round
@@ -180,7 +179,20 @@ impl QbftAdapter {
         );
 
         // Populate all message containers
+        println!(
+            "DEBUG: Before populate_containers, round is: {:?}",
+            adapter.get_round()
+        );
         adapter.populate_containers(&state);
+        println!(
+            "DEBUG: After populate_containers, round is: {:?}",
+            adapter.get_round()
+        );
+
+        // Start round is called right away, just clear these messages since we
+        // want to test specific message combinations
+        adapter.captured_messages.borrow_mut().clear();
+        adapter.timeout_count = 0;
 
         adapter
     }
@@ -274,39 +286,76 @@ impl QbftAdapter {
 
     /// Populate containers with messages from QbftStartingState
     fn populate_containers(&mut self, state: &QbftStartingState) {
-        // Process propose messages in sorted order
-        let mut propose_msgs: Vec<_> = state.propose_container.msgs.iter().collect();
-        propose_msgs.sort_by_key(|(k, _)| k.as_str());
-        for (_, test_msg) in propose_msgs {
-            if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
-                self.instance.add_message_to_container_spec(&wrapped);
+        // Process messages in their original order from the test data
+        // IMPORTANT: Go preserves insertion order, so we must too
+        // The test data uses numbered keys like "1", "2", "3" to indicate order
+
+        // Process propose messages in numerical order (preserving test data order)
+        let mut propose_keys: Vec<_> = state.propose_container.msgs.keys().collect();
+        propose_keys.sort_by_key(|k| k.parse::<u32>().unwrap_or(0));
+        for key in propose_keys {
+            if let Some(test_msg) = state.propose_container.msgs.get(key) {
+                if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
+                    println!(
+                        "DEBUG: Adding proposal to container for round {}",
+                        wrapped.qbft_message.round
+                    );
+                    let round_before = self.get_round();
+                    self.instance.add_message_to_container_spec(&wrapped);
+                    let round_after = self.get_round();
+                    if round_before != round_after {
+                        println!(
+                            "DEBUG: Round changed from {} to {} after adding proposal!",
+                            round_before, round_after
+                        );
+                    }
+                }
             }
         }
 
-        // Process prepare messages in sorted order
-        let mut prepare_msgs: Vec<_> = state.prepare_container.msgs.iter().collect();
-        prepare_msgs.sort_by_key(|(k, _)| k.as_str());
-        for (_, test_msg) in prepare_msgs {
-            if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
-                self.instance.add_message_to_container_spec(&wrapped);
+        // Process prepare messages in numerical order
+        let mut prepare_keys: Vec<_> = state.prepare_container.msgs.keys().collect();
+        prepare_keys.sort_by_key(|k| k.parse::<u32>().unwrap_or(0));
+        for key in prepare_keys {
+            if let Some(test_msg) = state.prepare_container.msgs.get(key) {
+                if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
+                    self.instance.add_message_to_container_spec(&wrapped);
+                }
             }
         }
 
-        // Process commit messages in sorted order
-        let mut commit_msgs: Vec<_> = state.commit_container.msgs.iter().collect();
-        commit_msgs.sort_by_key(|(k, _)| k.as_str());
-        for (_, test_msg) in commit_msgs {
-            if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
-                self.instance.add_message_to_container_spec(&wrapped);
+        // Process commit messages in numerical order
+        let mut commit_keys: Vec<_> = state.commit_container.msgs.keys().collect();
+        commit_keys.sort_by_key(|k| k.parse::<u32>().unwrap_or(0));
+        for key in commit_keys {
+            if let Some(test_msg) = state.commit_container.msgs.get(key) {
+                if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
+                    self.instance.add_message_to_container_spec(&wrapped);
+                }
             }
         }
 
-        // Process round change messages in sorted order
-        let mut rc_msgs: Vec<_> = state.round_change_container.msgs.iter().collect();
-        rc_msgs.sort_by_key(|(k, _)| k.as_str());
-        for (_, test_msg) in rc_msgs {
-            if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
-                self.instance.add_message_to_container_spec(&wrapped);
+        // Process round change messages in numerical order
+        let mut rc_keys: Vec<_> = state.round_change_container.msgs.keys().collect();
+        println!("DEBUG: Round change container raw keys: {:?}", rc_keys);
+        rc_keys.sort_by_key(|k| k.parse::<u32>().unwrap_or(0));
+        println!("DEBUG: Round change container sorted keys: {:?}", rc_keys);
+        println!("DEBUG: Adding round change messages in order:");
+        for key in rc_keys {
+            if let Some(test_msg) = state.round_change_container.msgs.get(key) {
+                if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
+                    let operator_id = wrapped
+                        .signed_message
+                        .operator_ids()
+                        .first()
+                        .copied()
+                        .unwrap_or_default();
+                    println!(
+                        "  Key '{}': Operator {:?}, Round {}",
+                        key, operator_id, wrapped.qbft_message.round
+                    );
+                    self.instance.add_message_to_container_spec(&wrapped);
+                }
             }
         }
     }

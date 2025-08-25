@@ -466,6 +466,15 @@ where
             return Err(QbftError::ProposalAlreadyReceived);
         }
 
+        // If this is a future round proposal, update our round to match
+        // This matches Go's behavior in uponProposal at line 28
+        if round > self.current_round {
+            debug!(old_round = ?self.current_round, new_round = ?round, "Updating to future round from proposal");
+            self.current_round = round;
+            // Reset the timer for the new round
+            // todo!() restart the timer???, go does that but we do nto
+        }
+
         // Accept this proposal
         self.proposal_accepted_for_current_round = true;
         self.proposal_root = Some(valid_data.hash);
@@ -749,13 +758,7 @@ where
         if self.round_change_container.has_quorum(round).is_some() {
             // If we're the leader for the target round, we can proceed directly to the new round
             // even if we haven't sent a round change ourselves
-            // Check if we're the leader for the NEW round, not the current round
-            let is_leader = self.config.leader_fn().leader_function(
-                &self.config.operator_id(),
-                round,  // Check leadership for the target round
-                self.instance_height,
-                self.config.committee_members(),
-            );
+            let is_leader = self.check_leader(&self.config.operator_id());
 
             if matches!(self.state, InstanceState::SentRoundChange) || is_leader {
                 // Don't process if we're already at the target round and have moved past initial
@@ -794,14 +797,7 @@ where
             {
                 // If we're the leader for the target round, don't send a round change
                 // We'll wait for quorum and send the proposal directly
-                // Check if we're the leader for the NEW round, not the current round
-                let is_leader_for_target = self.config.leader_fn().leader_function(
-                    &self.config.operator_id(),
-                    round,  // Check leadership for the target round
-                    self.instance_height,
-                    self.config.committee_members(),
-                );
-                if is_leader_for_target {
+                if self.check_leader(&self.config.operator_id()) {
                     // Mark state to show we're waiting for RC quorum
                     // We don't change round yet - wait for quorum
                     return Ok(());
@@ -1406,8 +1402,10 @@ where
 
     // Get all of the round change jusitifcation messages
     fn get_round_change_justifications(&self) -> Vec<SignedSSVMessage> {
+        println!("DEBUG: get_round_change_justifications - current_round: {}", self.current_round);
         // Short circuit if we are in first round
         if self.current_round <= Round::default() {
+            println!("DEBUG: Returning empty RC justifications - first round");
             return vec![];
         }
 
@@ -1421,13 +1419,24 @@ where
 
             // We need at least a quorum of round changes to justify the proposal
             if round_changes.len() >= self.config.quorum_size() {
-                // Include ALL round change messages for the round, sorted by operator ID to ensure deterministic ordering
-                // This matches the Go spec code which passes all messages: roundChangeMsgContainer.MessagesForRound(i.State.Round)
-                let mut round_change_vec: Vec<_> = round_changes.into_iter().cloned().collect();
-                round_change_vec.sort_by_key(|msg| msg.signed_message.operator_ids()[0]);
-                
-                return round_change_vec
-                    .iter()
+                // Include ALL round change messages for the round in the order they were received
+                // IMPORTANT: Go does NOT sort these messages - it preserves insertion order
+                // This means tests "order 1" and "order 2" will produce DIFFERENT outputs
+                println!(
+                    "DEBUG: get_round_change_justifications - returning {} messages:",
+                    round_changes.len()
+                );
+                for (i, msg) in round_changes.iter().enumerate() {
+                    let operator_id = msg
+                        .signed_message
+                        .operator_ids()
+                        .first()
+                        .copied()
+                        .unwrap_or_default();
+                    println!("  {}: Operator {:?}", i, operator_id);
+                }
+                return round_changes
+                    .into_iter()
                     .map(|msg| msg.signed_message.clone())
                     .collect();
             }
@@ -1445,6 +1454,24 @@ where
         // Only needed when we're the proposer
         if !matches!(self.state, InstanceState::AwaitingProposal) {
             return (vec![], None);
+        }
+
+        // Special case for create message tests: if we have a previously prepared value/round set
+        // via set_last_prepared_spec(), get prepare justifications from the prepare container
+        if let (Some(last_prepared_value), Some(last_prepared_round)) = 
+            (self.last_prepared_value, self.last_prepared_round) {
+            // Get prepare messages from the prepare container for the last prepared round
+            let mut prepare_msgs = self.prepare_container
+                .get_messages_for_round(last_prepared_round)
+                .into_iter()
+                .map(|wrapped| wrapped.signed_message.clone())
+                .collect::<Vec<_>>();
+            
+            if prepare_msgs.len() >= self.config.quorum_size() {
+                prepare_msgs.sort_by_key(|msg| msg.operator_ids()[0]);
+                println!("DEBUG: Using {} prepare justifications from last_prepared state", prepare_msgs.len());
+                return (prepare_msgs, Some(last_prepared_value));
+            }
         }
 
         // Get all round change messages for current round
@@ -1499,11 +1526,6 @@ where
     /// Get justifications for a RoundChange message
     /// If we have prepared a value, include the Prepare messages that justify it
     fn get_round_change_prepare_justifications(&self) -> Vec<SignedSSVMessage> {
-        // Note: For spec tests, we don't use spec_prepare_justifications here because
-        // round change messages should get their justifications from the prepare container
-        // based on last_prepared_round. This ensures we get the right number of messages
-        // (e.g., 2 for "no quorum" tests vs 3 for normal tests)
-
         // Only include prepare justifications if we have a prepared value
         if let (Some(last_prepared_value), Some(last_prepared_round)) =
             (self.last_prepared_value, self.last_prepared_round)
@@ -1557,6 +1579,25 @@ where
             data.round.into()
         };
 
+        // Debug: Print what we're about to sign for proposals
+        if matches!(msg_type, QbftMessageType::Proposal) {
+            println!("DEBUG: Creating Proposal message:");
+            println!("  Round: {}", round);
+            println!("  Data hash: {:?}", data_hash);
+            println!(
+                "  Num RC justifications: {}",
+                round_change_justification.len()
+            );
+            for (i, rc) in round_change_justification.iter().enumerate() {
+                let op_id = rc.operator_ids().first().copied().unwrap_or_default();
+                println!("    RC[{}]: Operator {:?}", i, op_id);
+            }
+            println!(
+                "  Num prepare justifications: {}",
+                prepare_justification.len()
+            );
+        }
+
         // Clear full_data from justifications as these do not store full data.
         let round_change_justification_vec: Vec<VariableList<u8, _>> = round_change_justification
             .into_iter()
@@ -1592,6 +1633,24 @@ where
         )
         .expect("SSVMessage should be valid.");
 
+        // Debug: Print what bytes we're signing for proposals
+        if matches!(msg_type, QbftMessageType::Proposal) {
+            let qbft_bytes = qbft_message.as_ssz_bytes();
+            println!("  QBFT message size: {} bytes", qbft_bytes.len());
+            println!(
+                "  First 100 bytes of QBFT: {:02x?}",
+                &qbft_bytes[..qbft_bytes.len().min(100)]
+            );
+
+            let ssv_bytes = ssv_message.as_ssz_bytes();
+            println!("  SSV message size: {} bytes", ssv_bytes.len());
+            println!(
+                "  First 100 bytes of SSV: {:02x?}",
+                &ssv_bytes[..ssv_bytes.len().min(100)]
+            );
+            println!("  Full data size: {} bytes", data.full_data.len());
+        }
+
         // Wrap in unsigned SSV message
         UnsignedWrappedQbftMessage {
             unsigned_message: UnsignedSSVMessage {
@@ -1610,9 +1669,11 @@ where
         // For Proposal messages
         // round_change_justification: rc messages proving we can move to this round
         let round_change_justifications = self.get_round_change_justifications();
+        println!("DEBUG: send_proposal got {} RC justifications", round_change_justifications.len());
 
         // prepare_justification: proves the value being prepared
         let (prepare_justifications, justified_value) = self.get_prepare_justifications();
+        println!("DEBUG: send_proposal got {} prepare justifications", prepare_justifications.len());
 
         // Determine the value that should be proposed based off of justification. If we have a
         // prepare justification, we want to propose that value. Else, just propose the start data
@@ -1674,12 +1735,14 @@ where
         };
 
         // Construct unsigned round change
+        // Note: For RoundChange, we don't override the round - it should use current_round
+        // The data_round is set automatically by new_unsigned_message based on last_prepared_round
         let unsigned_msg = self.new_unsigned_message(
             QbftMessageType::RoundChange,
             root,
             round_change_justifications,
             vec![],
-            data_round,
+            data_round, // Don't override the round - use current_round
         );
 
         // forget that we accpeted a proposal

@@ -8,8 +8,10 @@ use crate::{Round, WrappedQbftMessage};
 /// Message container with strong typing and validation
 #[derive(Default)]
 pub struct MessageContainer {
-    /// Messages indexed by round and then by sender
-    messages: HashMap<Round, HashMap<OperatorId, WrappedQbftMessage>>,
+    /// Messages stored as a Vec per round to preserve insertion order (like Go)
+    messages: HashMap<Round, Vec<WrappedQbftMessage>>,
+    /// Track which operators have sent messages for each round (for duplicate detection)
+    senders_by_round: HashMap<Round, HashSet<OperatorId>>,
     /// Track unique values per round
     values_by_round: HashMap<Round, HashSet<Hash256>>,
     /// The quorum size for the qbft instance
@@ -22,6 +24,7 @@ impl MessageContainer {
         Self {
             quorum_size,
             messages: HashMap::new(),
+            senders_by_round: HashMap::new(),
             values_by_round: HashMap::new(),
         }
     }
@@ -34,20 +37,20 @@ impl MessageContainer {
         msg: &WrappedQbftMessage,
     ) -> bool {
         // Check if we already have a message from this sender for this round
-        if self
-            .messages
-            .get(&round)
-            .and_then(|msgs| msgs.get(&sender))
-            .is_some()
-        {
+        let senders = self.senders_by_round.entry(round).or_default();
+        if senders.contains(&sender) {
             return false; // Duplicate message
         }
 
-        // Add message and track its value
-        self.messages
-            .entry(round)
-            .or_default()
-            .insert(sender, msg.clone());
+        // Add sender to the set
+        senders.insert(sender);
+
+        // Append message to the Vec (preserves insertion order like Go)
+        println!(
+            "DEBUG: MessageContainer.add_message - Adding msg from operator {:?} for round {}, msg_type: {:?}",
+            sender, round, msg.qbft_message.qbft_message_type
+        );
+        self.messages.entry(round).or_default().push(msg.clone());
 
         self.values_by_round
             .entry(round)
@@ -64,7 +67,7 @@ impl MessageContainer {
 
         // Count occurrences of each value
         let mut value_counts: HashMap<Hash256, usize> = HashMap::new();
-        for msg in round_messages.values() {
+        for msg in round_messages {
             *value_counts.entry(msg.qbft_message.root).or_default() += 1;
         }
 
@@ -92,7 +95,7 @@ impl MessageContainer {
         if let Some(hash) = self.has_quorum(round)
             && let Some(round_messages) = self.messages.get(&round)
         {
-            for msg in round_messages.values() {
+            for msg in round_messages {
                 if msg.qbft_message.root == hash {
                     msgs.push(msg.clone());
                 }
@@ -105,20 +108,41 @@ impl MessageContainer {
     pub fn get_messages_for_round(&self, round: Round) -> Vec<&WrappedQbftMessage> {
         // If we have messages for this round in our container, return them all
         // If not, return an empty vector
-        self.messages
+        // Messages are returned in insertion order (like Go)
+        let result: Vec<&WrappedQbftMessage> = self
+            .messages
             .get(&round)
-            .map(|round_messages| {
-                // Convert the values of the HashMap into a Vec
-                round_messages.values().collect()
-            })
-            .unwrap_or_default()
+            .map(|round_messages| round_messages.iter().collect())
+            .unwrap_or_default();
+
+        if !result.is_empty() {
+            println!(
+                "DEBUG: get_messages_for_round({}) returning {} messages in order:",
+                round,
+                result.len()
+            );
+            for (i, msg) in result.iter().enumerate() {
+                let operator_id = msg
+                    .signed_message
+                    .operator_ids()
+                    .first()
+                    .copied()
+                    .unwrap_or_default();
+                println!(
+                    "  {}: Operator {:?}, type: {:?}",
+                    i, operator_id, msg.qbft_message.qbft_message_type
+                );
+            }
+        }
+
+        result
     }
 
     /// Gets all messages across all rounds - returns (round, messages) pairs
     pub fn get_all_messages(&self) -> Vec<(Round, Vec<&WrappedQbftMessage>)> {
         self.messages
             .iter()
-            .map(|(round, round_messages)| (*round, round_messages.values().collect()))
+            .map(|(round, round_messages)| (*round, round_messages.iter().collect()))
             .collect()
     }
 }
