@@ -1501,7 +1501,7 @@ where
 
             // Verify we have quorum of prepares
             if prepare_msgs.len() >= self.config.quorum_size() {
-                prepare_msgs.sort_by_key(|msg| msg.operator_ids()[0]);
+                //prepare_msgs.sort_by_key(|msg| msg.operator_ids()[0]);
                 return (prepare_msgs, Some(prepared_value));
             }
         }
@@ -1686,7 +1686,7 @@ where
             root,
             round_change_justifications,
             vec![],
-            data_round, // Don't override the round - use current_round
+            None, // Don't override the round - use current_round from MessageData
         );
 
         // forget that we accpeted a proposal
