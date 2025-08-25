@@ -46,10 +46,6 @@ impl MessageContainer {
         senders.insert(sender);
 
         // Append message to the Vec (preserves insertion order like Go)
-        println!(
-            "DEBUG: MessageContainer.add_message - Adding msg from operator {:?} for round {}, msg_type: {:?}",
-            sender, round, msg.qbft_message.qbft_message_type
-        );
         self.messages.entry(round).or_default().push(msg.clone());
 
         self.values_by_round
@@ -114,26 +110,6 @@ impl MessageContainer {
             .get(&round)
             .map(|round_messages| round_messages.iter().collect())
             .unwrap_or_default();
-
-        if !result.is_empty() {
-            println!(
-                "DEBUG: get_messages_for_round({}) returning {} messages in order:",
-                round,
-                result.len()
-            );
-            for (i, msg) in result.iter().enumerate() {
-                let operator_id = msg
-                    .signed_message
-                    .operator_ids()
-                    .first()
-                    .copied()
-                    .unwrap_or_default();
-                println!(
-                    "  {}: Operator {:?}, type: {:?}",
-                    i, operator_id, msg.qbft_message.qbft_message_type
-                );
-            }
-        }
 
         result
     }

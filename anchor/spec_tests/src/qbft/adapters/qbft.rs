@@ -163,11 +163,6 @@ impl QbftAdapter {
             committee_info,
         };
 
-        // Start round is called right away, just clear these messages since we
-        // want to test specific message combinations
-        adapter.captured_messages.borrow_mut().clear();
-        adapter.timeout_count = 0;
-
         // Set the round
         adapter.setup_round(state.round);
 
@@ -184,6 +179,11 @@ impl QbftAdapter {
 
         // Populate all message containers
         adapter.populate_containers(&state);
+
+        // Start round is called right away, just clear these messages since we
+        // want to test specific message combinations
+        adapter.captured_messages.borrow_mut().clear();
+        adapter.timeout_count = 0;
 
         adapter
     }
@@ -254,7 +254,7 @@ impl QbftAdapter {
             return Err("invalid signed message: proposal not justified: proposal fullData invalid: invalid value".to_string());
         }
 
-        // Breif message validation.
+        // Brief message validation.
         if let Err(_) = validate_consensus_message_semantics(
             &wrapped.signed_message,
             &wrapped.qbft_message,
@@ -277,15 +277,6 @@ impl QbftAdapter {
 
     /// Populate containers with messages from QbftStartingState
     fn populate_containers(&mut self, state: &QbftStartingState) {
-        // If force_stop is true, don't populate containers as instance should not process anything
-        if self.force_stop {
-            return;
-        }
-        
-        // Process messages in their original order from the test data
-        // IMPORTANT: Go preserves insertion order, so we must too
-        // The test data uses numbered keys like "1", "2", "3" to indicate order
-
         // Process propose messages in numerical order (preserving test data order)
         let mut propose_keys: Vec<_> = state.propose_container.msgs.keys().collect();
         propose_keys.sort_by_key(|k| k.parse::<u32>().unwrap_or(0));

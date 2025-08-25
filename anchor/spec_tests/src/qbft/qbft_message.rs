@@ -1,8 +1,5 @@
 use serde::Deserialize;
-use ssv_types::{
-    consensus::{QbftMessage, QbftValidationError},
-    message::SignedSSVMessage,
-};
+use ssv_types::{consensus::QbftMessage, message::SignedSSVMessage};
 use ssz::{Decode, Encode};
 use tree_hash::TreeHash;
 use types::Hash256;

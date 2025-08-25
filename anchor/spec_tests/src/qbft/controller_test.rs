@@ -95,18 +95,9 @@ impl SpecTest for ControllerTest {
 
     fn run(&self) -> bool {
         // Create a new runtime for each test with a unique thread name
-        let test_id = format!(
-            "{}_{}",
-            self.name.replace(" ", "_"),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
         let rt = Builder::new_multi_thread()
             .enable_all()
             .worker_threads(1)
-            .thread_name(test_id)
             .build()
             .unwrap();
 
@@ -135,7 +126,7 @@ impl SpecTest for ControllerTest {
 
                 // Go through all of the run data messages
                 let messages = run_data.input_messages.as_ref().unwrap_or(&empty_messages);
-                for (_idx, msg) in messages.iter().enumerate() {
+                for (_, msg) in messages.iter().enumerate() {
                     match controller.process_msg(msg).await {
                         Ok(Some(decided_data)) => {
                             decided_count += 1;

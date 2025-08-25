@@ -114,9 +114,6 @@ fn run_tests(test_type: SpecTestType) -> bool {
     let dir_name = test_type.to_string();
     let test_dir = Path::new(&dir_name);
 
-    // Check for TEST_FILTER environment variable for filtering specific tests by name
-    let test_filter = std::env::var("TEST_FILTER").ok();
-
     let mut file_count = 0;
     let mut tests: Vec<Box<dyn SpecTest>> = WalkDir::new(test_dir)
         .into_iter()
@@ -166,16 +163,6 @@ fn run_tests(test_type: SpecTestType) -> bool {
                     .unwrap_or(false);
 
                 if matches {
-                    // Apply TEST_FILTER if set to filter by filename
-                    /*
-                                        if let Some(ref filter) = test_filter {
-                                            let path_str = path.to_string_lossy();
-                                            if !path_str.contains(filter) {
-                                                return None; // Skip this test if it doesn't match the filter
-                                            }
-                                        }
-                    */
-
                     let loader = TEST_LOADERS
                         .get(&test_type)
                         .unwrap_or_else(|| panic!("No loader registered for: {test_type}"));
@@ -186,26 +173,11 @@ fn run_tests(test_type: SpecTestType) -> bool {
         })
         .collect();
 
-    let total_tests = tests.len();
-    let mut passed = 0;
-    let mut failed_tests = Vec::new();
     let mut result = true;
-    for (idx, test) in tests.iter_mut().enumerate() {
+    for test in tests.iter_mut() {
         test.setup();
         let test_result = test.run();
-        if test_result {
-            passed += 1;
-        } else {
-            println!("Test {}: {} - FAILED", idx + 1, test.name());
-            failed_tests.push(idx + 1);
-            println!("");
-        }
         result &= test_result;
-    }
-
-    println!("Controller tests: {}/{} passed", passed, total_tests);
-    if !failed_tests.is_empty() {
-        println!("Failed tests: {:?}", failed_tests);
     }
 
     result
