@@ -91,10 +91,16 @@ impl QbftAdapter {
     /// Build a QBFT instance with starting state
     pub fn new_with_state(state: QbftStartingState) -> Self {
         // Use committee from state or default 4-node committee
-        let committee: IndexSet<OperatorId> = state
-            .committee
-            .clone()
-            .unwrap_or_else(|| vec![1, 2, 3, 4].into_iter().map(OperatorId::from).collect());
+        let committee: IndexSet<OperatorId> = state.committee.clone().unwrap();
+
+        // Get test keys and RSA key for this operator
+        let test_keys = match &committee.len() {
+            4 => TestKeySet::four_share_set(),
+            7 => TestKeySet::seven_share_set(),
+            10 => TestKeySet::ten_share_set(),
+            13 => TestKeySet::thirteen_share_set(),
+            _ => todo!(),
+        };
 
         let committee_info = CommitteeInfo {
             committee_members: committee.clone(),
@@ -113,8 +119,6 @@ impl QbftAdapter {
             .build()
             .expect("Failed to build config");
 
-        // Get test keys and RSA key for this operator
-        let test_keys = TestKeySet::four_share_set();
         let rsa_key = test_keys
             .operator_keys
             .get(&state.operator_id)
@@ -270,26 +274,37 @@ impl QbftAdapter {
 
     /// Populate containers with messages from QbftStartingState
     fn populate_containers(&mut self, state: &QbftStartingState) {
-        // Process each container type
-        for test_msg in state.propose_container.msgs.values() {
+        // Process propose messages in sorted order
+        let mut propose_msgs: Vec<_> = state.propose_container.msgs.iter().collect();
+        propose_msgs.sort_by_key(|(k, _)| k.as_str());
+        for (_, test_msg) in propose_msgs {
             if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
                 self.instance.add_message_to_container_spec(&wrapped);
             }
         }
 
-        for test_msg in state.prepare_container.msgs.values() {
+        // Process prepare messages in sorted order
+        let mut prepare_msgs: Vec<_> = state.prepare_container.msgs.iter().collect();
+        prepare_msgs.sort_by_key(|(k, _)| k.as_str());
+        for (_, test_msg) in prepare_msgs {
             if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
                 self.instance.add_message_to_container_spec(&wrapped);
             }
         }
 
-        for test_msg in state.commit_container.msgs.values() {
+        // Process commit messages in sorted order
+        let mut commit_msgs: Vec<_> = state.commit_container.msgs.iter().collect();
+        commit_msgs.sort_by_key(|(k, _)| k.as_str());
+        for (_, test_msg) in commit_msgs {
             if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
                 self.instance.add_message_to_container_spec(&wrapped);
             }
         }
 
-        for test_msg in state.round_change_container.msgs.values() {
+        // Process round change messages in sorted order
+        let mut rc_msgs: Vec<_> = state.round_change_container.msgs.iter().collect();
+        rc_msgs.sort_by_key(|(k, _)| k.as_str());
+        for (_, test_msg) in rc_msgs {
             if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
                 self.instance.add_message_to_container_spec(&wrapped);
             }
@@ -302,51 +317,35 @@ impl QbftAdapter {
         rc_jus: Option<&Vec<TestSignedSSVMessage>>,
         pre_jus: Option<&Vec<TestSignedSSVMessage>>,
     ) {
-        // Convert round change justifications
-        let rc_justifications = if let Some(rc_jus) = rc_jus {
-            let mut justifications = Vec::new();
-            for test_msg in rc_jus {
-                // Convert TestSignedSSVMessage to SignedSSVMessage via WrappedQbftMessage
-                if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
-                    justifications.push(wrapped.signed_message.clone());
-                    // Also add to container for other uses
-                    self.instance.add_message_to_container_spec(&wrapped);
-                }
-            }
-            Some(justifications)
-        } else {
-            None
-        };
-
-        // Convert prepare justifications
-        let prepare_justifications = if let Some(pre_jus) = pre_jus {
-            // When we have prepare justifications, set last_prepared state
+        if let Some(pre_jus) = pre_jus {
+            // Add prepare messages to the container and determine the prepared round/value
             if let Some(first_msg) = pre_jus.first() {
                 if let Ok(wrapped) = first_msg.to_wrapped_qbft_message() {
                     let round = Round::from(wrapped.qbft_message.round);
                     let root = wrapped.qbft_message.root;
+
+                    // Set the last prepared state
                     self.instance
                         .set_last_prepared_spec(Some(root), Some(round));
+
+                    // Add all prepare messages to the prepare container
+                    for test_msg in pre_jus {
+                        if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
+                            self.instance.add_message_to_container_spec(&wrapped);
+                        }
+                    }
                 }
             }
+        }
 
-            let mut justifications = Vec::new();
-            for test_msg in pre_jus {
-                // Convert TestSignedSSVMessage to SignedSSVMessage via WrappedQbftMessage
+        if let Some(rc_jus) = rc_jus {
+            for test_msg in rc_jus {
                 if let Ok(wrapped) = test_msg.to_wrapped_qbft_message() {
-                    justifications.push(wrapped.signed_message.clone());
-                    // Also add to container for other uses
+                    // Add to the round change container
                     self.instance.add_message_to_container_spec(&wrapped);
                 }
             }
-            Some(justifications)
-        } else {
-            None
-        };
-
-        // Set the justifications for spec test use
-        self.instance
-            .set_spec_justifications(rc_justifications, prepare_justifications);
+        }
     }
 
     /// Setup proposal accepted state

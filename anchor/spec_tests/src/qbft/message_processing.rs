@@ -1,6 +1,8 @@
 use qbft::InstanceHeight;
 use serde::Deserialize;
+use ssv_types::message::SignedSSVMessage;
 use ssv_types::{IndexSet, OperatorId, Round, msgid::MessageId};
+use tree_hash::TreeHash;
 
 use super::adapters::{
     qbft::{QbftAdapter, QbftStartingState},
@@ -146,7 +148,6 @@ impl SpecTest for MessageProcessingTest {
     }
 
     fn run(&self) -> bool {
-        // Use the state constructed in setup()
         let state = self
             .qbft_state
             .as_ref()
@@ -185,7 +186,21 @@ impl SpecTest for MessageProcessingTest {
             let captured = adapter.get_captured_messages();
             // todo!() signatures are different, compare more closely
             if captured.len() != expected_msgs.len() {
+                println!("failed here {}", self.name);
                 return false;
+            }
+
+            for (idx, (captured_msg, expected_msg)) in captured.iter().zip(expected_msgs).enumerate() {
+                let expected_signed: SignedSSVMessage = expected_msg.clone().try_into().unwrap();
+
+                if captured_msg.tree_hash_root() != expected_signed.tree_hash_root() {
+                    println!("Test '{}' failed at message {}", self.name, idx);
+                    println!("Expected message:");
+                    println!("{:#?}", expected_msg);
+                    println!("Captured message:");
+                    println!("{:#?}", captured_msg);
+                    return false;
+                }
             }
         }
 

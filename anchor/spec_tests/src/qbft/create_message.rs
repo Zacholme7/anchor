@@ -132,16 +132,15 @@ impl SpecTest for CreateMessageTest {
         }
 
         // deser the qbft message and also call validate on that
-        let Ok(_qbft_message) =
-            QbftMessage::from_ssz_bytes(signed_ssv_message.ssv_message().data())
+        let Ok(qbft_message) = QbftMessage::from_ssz_bytes(signed_ssv_message.ssv_message().data())
         else {
             return false;
         };
 
-        // TODO: QbftMessage validation is not implemented in our types yet
-        // if qbft_message.validate().is_err() {
-        //    return false;
-        //}
+        // Validate the qbft message
+        if qbft_message.validate().is_err() {
+            return false;
+        }
 
         // todo!() State comparison
         true

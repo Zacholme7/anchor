@@ -127,11 +127,6 @@ where
     /// Aggregated commit message
     aggregated_commit: Option<SignedSSVMessage>,
 
-    /// Spec test justifications - used only for spec tests
-    /// These are provided externally and should be used when creating proposals
-    spec_round_change_justifications: Option<Vec<SignedSSVMessage>>,
-    spec_prepare_justifications: Option<Vec<SignedSSVMessage>>,
-
     /// Message sender callback to instruct managing code to send a message
     message_sender: S,
 }
@@ -184,8 +179,6 @@ where
             past_consensus: HashMap::new(),
 
             aggregated_commit: None,
-            spec_round_change_justifications: None,
-            spec_prepare_justifications: None,
 
             message_sender,
         };
@@ -379,7 +372,7 @@ where
         // Perform base qbft releveant verification on the message
         let (valid_data, signer) = match self.validate_message(&wrapped_msg) {
             Ok((Some(data), signer)) => (data, signer),
-            Ok((None, _)) => return Ok(()), // or appropriate variant
+            Ok((None, _)) => return Ok(()),
             Err(e) => return Err(e),
         };
 
@@ -739,7 +732,7 @@ where
         {
             // RoundChange messages can include prepare justifications
             // These prove what value was previously prepared
-            self.validate_round_change_justifications_spec(&wrapped_msg)?;
+            self.validate_round_change_justifications(&wrapped_msg)?;
         }
 
         if let Some(new_round) = self.has_received_partial_quorum()? {
@@ -756,7 +749,13 @@ where
         if self.round_change_container.has_quorum(round).is_some() {
             // If we're the leader for the target round, we can proceed directly to the new round
             // even if we haven't sent a round change ourselves
-            let is_leader = self.check_leader(&self.config.operator_id());
+            // Check if we're the leader for the NEW round, not the current round
+            let is_leader = self.config.leader_fn().leader_function(
+                &self.config.operator_id(),
+                round,  // Check leadership for the target round
+                self.instance_height,
+                self.config.committee_members(),
+            );
 
             if matches!(self.state, InstanceState::SentRoundChange) || is_leader {
                 // Don't process if we're already at the target round and have moved past initial
@@ -795,7 +794,14 @@ where
             {
                 // If we're the leader for the target round, don't send a round change
                 // We'll wait for quorum and send the proposal directly
-                if self.check_leader(&self.config.operator_id()) {
+                // Check if we're the leader for the NEW round, not the current round
+                let is_leader_for_target = self.config.leader_fn().leader_function(
+                    &self.config.operator_id(),
+                    round,  // Check leadership for the target round
+                    self.instance_height,
+                    self.config.committee_members(),
+                );
+                if is_leader_for_target {
                     // Mark state to show we're waiting for RC quorum
                     // We don't change round yet - wait for quorum
                     return Ok(());
@@ -900,9 +906,7 @@ where
     // A QBFT Message contains fields to a list of round change justifications and prepare
     // justifications. We must go through each of these individually and verify the validity of each
     // one
-    /// Spec test version of validate_justifications that returns specific errors
-    /// Validate justifications in a RoundChange message
-    fn validate_round_change_justifications_spec(
+    fn validate_round_change_justifications(
         &self,
         msg: &WrappedQbftMessage,
     ) -> Result<(), QbftError> {
@@ -912,8 +916,8 @@ where
         // If the round change has data_round > 0, it means it has prepared
         // In this case, we need to validate the prepare justifications have quorum
         if msg.qbft_message.data_round > 0 {
-            let mut unique_signers = std::collections::HashSet::new();
-            let mut seen_messages = std::collections::HashSet::new();
+            let mut unique_signers = HashSet::new();
+            let mut seen_messages = HashSet::new();
 
             for prepare_bytes in &msg.qbft_message.round_change_justification {
                 // Check for duplicate messages
@@ -1278,7 +1282,6 @@ where
         // This will be the commit message that we aggregate on top of
         if let Some(first_commit) = commit_quorum.first() {
             let mut aggregated_commit = first_commit.signed_message.clone();
-            let _aggregated_ssv = aggregated_commit.ssv_message();
 
             // Sanity check that all commits are for the same consensus instance
             // We check that the important consensus fields match (height, round, root, type)
@@ -1403,11 +1406,6 @@ where
 
     // Get all of the round change jusitifcation messages
     fn get_round_change_justifications(&self) -> Vec<SignedSSVMessage> {
-        // For spec tests, if we have pre-provided justifications, use those
-        if let Some(ref spec_justifications) = self.spec_round_change_justifications {
-            return spec_justifications.clone();
-        }
-
         // Short circuit if we are in first round
         if self.current_round <= Round::default() {
             return vec![];
@@ -1423,7 +1421,12 @@ where
 
             // We need at least a quorum of round changes to justify the proposal
             if round_changes.len() >= self.config.quorum_size() {
-                return round_changes
+                // Include ALL round change messages for the round, sorted by operator ID to ensure deterministic ordering
+                // This matches the Go spec code which passes all messages: roundChangeMsgContainer.MessagesForRound(i.State.Round)
+                let mut round_change_vec: Vec<_> = round_changes.into_iter().cloned().collect();
+                round_change_vec.sort_by_key(|msg| msg.signed_message.operator_ids()[0]);
+                
+                return round_change_vec
                     .iter()
                     .map(|msg| msg.signed_message.clone())
                     .collect();
@@ -1434,23 +1437,6 @@ where
 
     // Get all of the prepare justifications for proposals
     fn get_prepare_justifications(&self) -> (Vec<SignedSSVMessage>, Option<Hash256>) {
-        // For spec tests, if we have pre-provided justifications, use those
-        if let Some(ref spec_justifications) = self.spec_prepare_justifications {
-            // Extract the justified value from the first prepare message
-            let justified_value = if !spec_justifications.is_empty() {
-                if let Ok(msg) =
-                    QbftMessage::from_ssz_bytes(spec_justifications[0].ssv_message().data())
-                {
-                    Some(msg.root)
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-            return (spec_justifications.clone(), justified_value);
-        }
-
         // No justifications needed for round 0
         if self.current_round == Round::default() {
             return (vec![], None);
@@ -1488,7 +1474,7 @@ where
         }
 
         // If we found a highest prepared value, extract its prepare justifications
-        if let Some((round, prepared_value, highest_rc)) = highest_prepared {
+        if let Some((_, prepared_value, highest_rc)) = highest_prepared {
             // Extract the prepare messages from the round change message's justifications
             // These are stored in the round_change_justification field of the RoundChange
             let mut prepare_msgs = Vec::new();
@@ -1501,6 +1487,7 @@ where
 
             // Verify we have quorum of prepares
             if prepare_msgs.len() >= self.config.quorum_size() {
+                prepare_msgs.sort_by_key(|msg| msg.operator_ids()[0]);
                 return (prepare_msgs, Some(prepared_value));
             }
         }
@@ -1799,15 +1786,5 @@ where
     /// Helper function to get the commit container
     pub fn get_commit_container(&self) -> &MessageContainer {
         &self.commit_container
-    }
-
-    /// Set spec test justifications for proposals
-    pub fn set_spec_justifications(
-        &mut self,
-        round_change: Option<Vec<SignedSSVMessage>>,
-        prepare: Option<Vec<SignedSSVMessage>>,
-    ) {
-        self.spec_round_change_justifications = round_change;
-        self.spec_prepare_justifications = prepare;
     }
 }
