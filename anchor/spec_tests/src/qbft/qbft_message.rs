@@ -1,5 +1,8 @@
 use serde::Deserialize;
-use ssv_types::{consensus::QbftMessage, message::SignedSSVMessage};
+use ssv_types::{
+    consensus::{QbftMessage, QbftValidationError},
+    message::SignedSSVMessage,
+};
 use ssz::{Decode, Encode};
 use tree_hash::TreeHash;
 use types::Hash256;
@@ -61,8 +64,8 @@ impl SpecTest for QbftMessageTest {
                 continue;
             }
 
-            // Decode from SSVMessage.Data (not FullData) as per Go implementation
-            let _qbft_message = match QbftMessage::from_ssz_bytes(message.ssv_message().data()) {
+            // make sure we can decode the message
+            let qbft_message = match QbftMessage::from_ssz_bytes(message.ssv_message().data()) {
                 Ok(msg) => msg,
                 Err(e) => {
                     test_error = Some(QbftMessageError::SSZDecodeError(e));
@@ -70,13 +73,10 @@ impl SpecTest for QbftMessageTest {
                 }
             };
 
-            // Validate the QBFT message (assuming validate() returns Result<(), String> or similar)
-            // For now, validate() returns bool, but we'll use it as if it could fail
-            // if !qbft_message.validate() {
-            // When validate() is properly implemented, it should return an error we can capture
-            // For now, this won't actually trigger since validate() always returns true
-            // continue;
-            //}
+            if let Err(e) = qbft_message.validate() {
+                test_error = Some(QbftMessageError::Validation(e));
+                continue;
+            }
 
             if let Some(ref encoded_messages) = self.encoded_messages {
                 if !encoded_messages.is_empty() {
@@ -98,24 +98,8 @@ impl SpecTest for QbftMessageTest {
         }
 
         if !self.expected_error.is_empty() {
-            // Test expects an error
-            let actual_error = test_error.or_else(|| {
-                // Handle special cases based on test name
-                if self.name.contains("identifier")
-                    && self.expected_error == "message identifier is invalid"
-                {
-                    Some(QbftMessageError::IdentifierInvalid)
-                } else if self.name.contains("incorrect size")
-                    || self.name.contains("unmarshalling")
-                {
-                    Some(QbftMessageError::IncorrectSize)
-                } else {
-                    None
-                }
-            });
-
-            match actual_error {
-                Some(ref error) => map_qbft_message_error(error, &self.name) == self.expected_error,
+            match test_error {
+                Some(ref error) => map_qbft_message_error(error) == self.expected_error,
                 None => false,
             }
         } else {

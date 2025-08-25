@@ -167,12 +167,14 @@ fn run_tests(test_type: SpecTestType) -> bool {
 
                 if matches {
                     // Apply TEST_FILTER if set to filter by filename
-                    if let Some(ref filter) = test_filter {
-                        let path_str = path.to_string_lossy();
-                        if !path_str.contains(filter) {
-                            return None; // Skip this test if it doesn't match the filter
-                        }
-                    }
+                    /*
+                                        if let Some(ref filter) = test_filter {
+                                            let path_str = path.to_string_lossy();
+                                            if !path_str.contains(filter) {
+                                                return None; // Skip this test if it doesn't match the filter
+                                            }
+                                        }
+                    */
 
                     let loader = TEST_LOADERS
                         .get(&test_type)
@@ -224,6 +226,11 @@ mod spec_tests {
         }
 
         #[test]
+        fn test_qbft_timeout() {
+            assert!(run_tests(SpecTestType::Qbft(QbftSpecTestType::Timeout)))
+        }
+
+        #[test]
         fn test_qbft_controller() {
             assert!(run_tests(SpecTestType::Qbft(QbftSpecTestType::Controller)))
         }
@@ -243,11 +250,6 @@ mod spec_tests {
         #[test]
         fn test_qbft_round_robin() {
             assert!(run_tests(SpecTestType::Qbft(QbftSpecTestType::RoundRobin)))
-        }
-
-        #[test]
-        fn test_qbft_timeout() {
-            assert!(run_tests(SpecTestType::Qbft(QbftSpecTestType::Timeout)))
         }
     }
 }

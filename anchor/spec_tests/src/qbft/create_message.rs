@@ -5,7 +5,7 @@ use ssv_types::{
     consensus::{QbftMessage, QbftMessageType},
     msgid::MessageId,
 };
-use ssz::{Decode, Encode};
+use ssz::Decode;
 use tree_hash::TreeHash;
 use types::Hash256;
 

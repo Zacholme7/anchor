@@ -1,5 +1,8 @@
+use crate::qbft::adapters::spec_types::TestMessageConversionError;
 use qbft::QbftError;
+use ssv_types::consensus::QbftValidationError;
 use ssv_types::message::SignedSSVMessageError;
+use ssz::DecodeError;
 
 /// Maps QbftError to spec test error strings
 pub fn map_qbft_error(error: &QbftError) -> String {
@@ -105,68 +108,17 @@ pub fn map_signed_message_error(error: &SignedSSVMessageError) -> String {
     }
 }
 
-/// Maps our internal SignedSSVMessageError to short spec error strings (for some tests)
-pub fn map_signed_message_error_short(error: &SignedSSVMessageError) -> Option<&'static str> {
-    match error {
-        SignedSSVMessageError::NoSigners => Some("no signers"),
-        SignedSSVMessageError::DuplicatedSigner => Some("non unique signer"),
-        SignedSSVMessageError::ZeroSigner => Some("signer ID 0 not allowed"),
-        _ => None,
-    }
-}
-
-/// Maps conversion errors (String) to spec error strings
-pub fn map_conversion_error(error: &str) -> Option<&'static str> {
-    if error.contains("NoSigners") {
-        Some("no signers")
-    } else if error.contains("DuplicatedSigner") {
-        Some("non unique signer")
-    } else if error.contains("ZeroSigner") {
-        Some("signer ID 0 not allowed")
-    } else if error.contains("SignersNotSorted") {
-        None // This should only happen for actual sorting issues
-    } else {
-        None
-    }
-}
-
-/// Maps SSZ decode errors to spec error strings based on test context
-pub fn map_ssz_decode_error(test_name: &str, error: &str) -> Option<&'static str> {
-    // Map based on the error type and test context
-    if error.contains("NoMatchingVariant") {
-        // This happens when the message type is invalid
-        Some("message type is invalid")
-    } else if error.contains("InvalidByteLength { len: 0, expected: 8 }") {
-        if test_name.contains("identifier") {
-            Some("message identifier is invalid")
-        } else if test_name.contains("type") {
-            Some("message type is invalid")
-        } else {
-            None
-        }
-    } else if error.contains("InvalidLengthPrefix") {
-        Some("message data is invalid")
-    } else if error.contains("InvalidByteLength") {
-        Some("message data is invalid")
-    } else {
-        None
-    }
-}
-
 /// Error types specific to qbft_message tests
 #[derive(Debug, Clone)]
 pub enum QbftMessageError {
     SignedMessageError(SignedSSVMessageError),
     ConversionError(crate::qbft::adapters::spec_types::TestMessageConversionError),
     SSZDecodeError(ssz::DecodeError),
-    IdentifierInvalid,
-    IncorrectSize,
+    Validation(QbftValidationError),
 }
 
 /// Map QbftMessageError to the expected error string for test comparison
-pub fn map_qbft_message_error(error: &QbftMessageError, test_name: &str) -> String {
-    use crate::qbft::adapters::spec_types::TestMessageConversionError;
-
+pub fn map_qbft_message_error(error: &QbftMessageError) -> String {
     match error {
         QbftMessageError::SignedMessageError(e) => {
             // Map actual SignedSSVMessageError variants to expected strings
@@ -235,29 +187,14 @@ pub fn map_qbft_message_error(error: &QbftMessageError, test_name: &str) -> Stri
                 }
             }
         }
-        QbftMessageError::SSZDecodeError(e) => {
-            // Unfortunately SSZ DecodeError doesn't expose its variants publicly,
-            // so we have to parse the debug string
-            let error_str = format!("{:?}", e);
-            if error_str.contains("NoMatchingVariant") {
-                "message type is invalid".to_string()
-            } else if error_str.contains("InvalidByteLength { len: 0, expected: 8 }") {
-                if test_name.contains("identifier") {
-                    "message identifier is invalid".to_string()
-                } else if test_name.contains("type") {
-                    "message type is invalid".to_string()
-                } else {
-                    "unknown error".to_string()
-                }
-            } else if error_str.contains("InvalidLengthPrefix") {
-                "message data is invalid".to_string()
-            } else if error_str.contains("InvalidByteLength") {
-                "message data is invalid".to_string()
-            } else {
-                "unknown error".to_string()
-            }
-        }
-        QbftMessageError::IdentifierInvalid => "message identifier is invalid".to_string(),
-        QbftMessageError::IncorrectSize => "incorrect size".to_string(),
+        QbftMessageError::SSZDecodeError(e) => match e {
+            DecodeError::NoMatchingVariant => "message type is invalid".to_string(),
+            _ => "not tested".to_string(),
+        },
+        QbftMessageError::Validation(e) => match e {
+            QbftValidationError::InvalidIdentifier => "message identifier is invalid".to_string(),
+            QbftValidationError::InvalidJustifications => "incorrect size".to_string(),
+            _ => "not tested".to_string(),
+        },
     }
 }

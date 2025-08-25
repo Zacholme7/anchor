@@ -172,9 +172,6 @@ impl SpecTest for MessageProcessingTest {
                     }
                 }
                 None => {
-                    if self.name == "no previous accepted proposal" {
-                        eprintln!("Test 43: Expected error but got none");
-                    }
                     return false;
                 }
             }
@@ -182,8 +179,6 @@ impl SpecTest for MessageProcessingTest {
             // Got an error when one was not expected
             return false;
         }
-
-        // todo!() timer state
 
         // Check output messages
         if let Some(expected_msgs) = &self.output_messages {
@@ -194,7 +189,6 @@ impl SpecTest for MessageProcessingTest {
             }
         }
 
-        // TODO: Check timer state if provided
         // TODO: Check post-state root (same JSON issues as timeout tests)
 
         true
