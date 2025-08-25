@@ -190,7 +190,6 @@ impl SpecTest for MessageProcessingTest {
 
             for (captured_msg, expected_msg) in captured.iter().zip(expected_msgs) {
                 let expected_signed: SignedSSVMessage = expected_msg.clone().try_into().unwrap();
-
                 if captured_msg.tree_hash_root() != expected_signed.tree_hash_root() {
                     return false;
                 }

@@ -148,7 +148,6 @@ impl QbftAdapter {
         // Decode the start_value to BeaconVote
         let start_data = BeaconVote::from_ssz_bytes(&state.start_value)
             .expect("Failed to decode BeaconVote from start_value");
-        // we should return ProposalInvalidValue here
 
         let instance = Qbft::new(config, start_data, state.identifier.clone(), mock_handler);
 

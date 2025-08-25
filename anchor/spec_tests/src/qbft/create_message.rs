@@ -101,12 +101,10 @@ impl SpecTest for CreateMessageTest {
             force_stop: false,
         };
 
-        // Store the state for use in run()
         self.qbft_state = Some(starting_state.clone());
     }
 
     fn run(&self) -> bool {
-        // Use the state constructed in setup()
         let state = self
             .qbft_state
             .as_ref()
@@ -129,7 +127,6 @@ impl SpecTest for CreateMessageTest {
             return false;
         }
 
-        // deser the qbft message and also call validate on that
         let Ok(qbft_message) = QbftMessage::from_ssz_bytes(signed_ssv_message.ssv_message().data())
         else {
             return false;

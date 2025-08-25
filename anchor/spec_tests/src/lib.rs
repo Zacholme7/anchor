@@ -173,25 +173,11 @@ fn run_tests(test_type: SpecTestType) -> bool {
         })
         .collect();
 
-    let total_tests = tests.len();
-    let mut passed = 0;
-    let mut failed_tests = Vec::new();
     let mut result = true;
-    for (idx, test) in tests.iter_mut().enumerate() {
+    for test in tests.iter_mut() {
         test.setup();
         let test_result = test.run();
-        if test_result {
-            passed += 1;
-        } else {
-            println!("Test {}: {} - FAILED", idx + 1, test.name());
-            failed_tests.push(idx + 1);
-            println!("");
-        }
         result &= test_result;
-    }
-
-    if !failed_tests.is_empty() {
-        println!("Failed tests: {:?}", failed_tests);
     }
 
     result
