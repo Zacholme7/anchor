@@ -21,6 +21,7 @@ pub enum QbftError {
     InvalidMessageType,
     InvalidFullData,
     DataValidationFailed,
+    MissingOperators,
     NoData,
 
     // Proposal errors

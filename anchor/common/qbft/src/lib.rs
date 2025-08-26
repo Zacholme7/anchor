@@ -193,12 +193,12 @@ where
         &self.start_data_hash
     }
 
-    // Return a reference to the qbft configuration
+    /// Return a reference to the qbft configuration
     pub fn config(&self) -> &Config<F> {
         &self.config
     }
 
-    // Get the current round
+    /// Get the current round
     pub fn get_round(&self) -> Round {
         self.current_round
     }
@@ -224,7 +224,7 @@ where
         )
     }
 
-    // Checks to make sure any given operator is in this instance's comittee.
+    /// Checks to make sure any given operator is in this instance's comittee.
     fn check_committee(&self, operator_id: &OperatorId) -> bool {
         self.config.committee_members().contains(operator_id)
     }
@@ -275,7 +275,6 @@ where
                     if wrapped_msg.signed_message.operator_ids().len() == 1 {
                         return Err(QbftError::WrongRound);
                     }
-                    // Multi-signature commits are allowed - they represent decided values
                 }
                 _ => {
                     // Prepare messages for future rounds are not allowed
@@ -327,7 +326,7 @@ where
             .signed_message
             .operator_ids()
             .first()
-            .expect("Exists");
+            .ok_or(QbftError::MissingOperators)?;
 
         // Fulldata may be empty. This is still considered valid though
         if wrapped_msg.signed_message.full_data().is_empty() {
@@ -471,8 +470,7 @@ where
         if round > self.current_round {
             debug!(old_round = ?self.current_round, new_round = ?round, "Updating to future round from proposal");
             self.current_round = round;
-            // Reset the timer for the new round
-            // todo!() restart the timer???, go does that but we do nto
+            // todo we need to send round change here
         }
 
         // Accept this proposal
