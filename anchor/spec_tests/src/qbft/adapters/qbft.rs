@@ -16,7 +16,7 @@ use types::Hash256;
 
 use super::spec_types::{AcceptedProposal, MessageContainer, TestSignedSSVMessage};
 use crate::utils::{
-    error_mapping::map_qbft_error, misc::calculate_quorum,
+    error_mapping::map_qbft_error, misc::calculate_quorum, misc::hash_data,
     rsa_signing::sign_message_with_full_data, rsa_validation::validate_rsa_signatures,
     test_keys::TestKeySet,
 };
@@ -261,6 +261,16 @@ impl QbftAdapter {
         ) {
             return Err("invalid signed message: msg allows 1 signer".to_string());
         }
+
+        // In production, message_validator will check this hash
+        // this breaks it right now... bad data....
+        /*
+        let computed_hash = hash_data(wrapped.signed_message.full_data());
+        if computed_hash != wrapped.qbft_message.root {
+            println!("wrong hash");
+            return Err("invalid signed message: H(data) != root".to_string());
+        }
+        */
 
         // Process message through core receive function
         match self.instance.receive(wrapped.clone()) {

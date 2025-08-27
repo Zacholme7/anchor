@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use ssv_types::OperatorId;
 use types::Hash256;
@@ -8,10 +8,10 @@ use crate::{Round, WrappedQbftMessage};
 /// Message container with strong typing and validation
 #[derive(Default)]
 pub struct MessageContainer {
-    /// Messages stored as a Vec per round to preserve insertion order (like Go)
+    /// Messages stored as a Vec per round to preserve insertion order
     messages: HashMap<Round, Vec<WrappedQbftMessage>>,
-    /// Track which operators have sent messages for each round (for duplicate detection)
-    senders_by_round: HashMap<Round, HashSet<OperatorId>>,
+    /// Track which operators have sent messages for each round
+    senders_by_round: BTreeMap<Round, HashSet<OperatorId>>,
     /// Track unique values per round
     values_by_round: HashMap<Round, HashSet<Hash256>>,
     /// The quorum size for the qbft instance
@@ -24,7 +24,7 @@ impl MessageContainer {
         Self {
             quorum_size,
             messages: HashMap::new(),
-            senders_by_round: HashMap::new(),
+            senders_by_round: BTreeMap::new(),
             values_by_round: HashMap::new(),
         }
     }
@@ -38,14 +38,10 @@ impl MessageContainer {
     ) -> bool {
         // Check if we already have a message from this sender for this round
         let senders = self.senders_by_round.entry(round).or_default();
-        if senders.contains(&sender) {
-            return false; // Duplicate message
+        if !senders.insert(sender) {
+            return false;
         }
 
-        // Add sender to the set
-        senders.insert(sender);
-
-        // Append message to the Vec (preserves insertion order like Go)
         self.messages.entry(round).or_default().push(msg.clone());
 
         self.values_by_round
@@ -66,8 +62,6 @@ impl MessageContainer {
         for msg in round_messages {
             *value_counts.entry(msg.qbft_message.root).or_default() += 1;
         }
-
-        // Debug output removed for cleaner test output
 
         // Find any value that has reached quorum
         value_counts
@@ -102,16 +96,10 @@ impl MessageContainer {
 
     /// Gets all messages for a specific round
     pub fn get_messages_for_round(&self, round: Round) -> Vec<&WrappedQbftMessage> {
-        // If we have messages for this round in our container, return them all
-        // If not, return an empty vector
-        // Messages are returned in insertion order (like Go)
-        let result: Vec<&WrappedQbftMessage> = self
-            .messages
+        self.messages
             .get(&round)
             .map(|round_messages| round_messages.iter().collect())
-            .unwrap_or_default();
-
-        result
+            .unwrap_or_default()
     }
 
     /// Gets all messages across all rounds - returns (round, messages) pairs
@@ -120,5 +108,34 @@ impl MessageContainer {
             .iter()
             .map(|(round, round_messages)| (*round, round_messages.iter().collect()))
             .collect()
+    }
+
+    pub fn highest_partial_quorum_above_round(
+        &self,
+        round: Round,
+        partial: usize,
+    ) -> Option<Round> {
+        // Collect all operators from rounds > round
+        let mut all_operators = HashSet::new();
+        let mut min_future_round = None;
+
+        for (&r, operators) in self.senders_by_round.range((round + 1)..) {
+            // Track minimum round
+            if min_future_round.is_none() {
+                min_future_round = Some(r);
+            }
+
+            // Add all operators from this round
+            for &operator in operators {
+                all_operators.insert(operator);
+            }
+        }
+
+        // If we have partial quorum, return the minimum round
+        if all_operators.len() >= partial {
+            min_future_round
+        } else {
+            None
+        }
     }
 }

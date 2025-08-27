@@ -177,6 +177,9 @@ fn run_tests(test_type: SpecTestType) -> bool {
     for test in tests.iter_mut() {
         test.setup();
         let test_result = test.run();
+        if !test_result {
+            println!("{:?}", test.name())
+        }
         result &= test_result;
     }
 

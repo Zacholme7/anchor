@@ -110,6 +110,10 @@ pub struct MessageProcessingState {
 }
 
 impl SpecTest for MessageProcessingTest {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
     fn setup(&mut self) {
         // Build the starting state
         let committee: IndexSet<OperatorId> = self
