@@ -1,4 +1,5 @@
 use crate::qbft::adapters::spec_types::TestMessageConversionError;
+use message_validator::ValidationFailure;
 use qbft::QbftError;
 use ssv_types::consensus::QbftValidationError;
 use ssv_types::message::SignedSSVMessageError;
@@ -196,5 +197,17 @@ pub fn map_qbft_message_error(error: &QbftMessageError) -> String {
             QbftValidationError::InvalidJustifications => "incorrect size".to_string(),
             _ => "not tested".to_string(),
         },
+    }
+}
+
+pub fn map_validation_error(error: ValidationFailure) -> String {
+    match error {
+        ValidationFailure::SignerNotInCommittee => {
+            "invalid decided msg: invalid decided msg: signer not in committee".to_string()
+        }
+        ValidationFailure::NonDecidedWithMultipleSigners { .. } => {
+            "could not process msg: invalid signed message: msg allows 1 signer".to_string()
+        }
+        _ => "not mapped".to_string(),
     }
 }

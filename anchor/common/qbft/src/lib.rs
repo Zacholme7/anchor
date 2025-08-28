@@ -182,7 +182,9 @@ where
         };
         qbft.data
             .insert(qbft.start_data_hash, qbft.start_data.clone());
-        qbft.start_round();
+
+        #[cfg(not(test))]
+        //qbft.start_round();
         qbft
     }
 
@@ -244,6 +246,7 @@ where
                 current_round = *self.current_round,
                 "Message received for a previous round"
             );
+            println!("for a past round");
             return Err(QbftError::PastRound);
         }
 

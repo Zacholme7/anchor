@@ -86,6 +86,13 @@ pub fn validate_consensus_message_semantics(
                 want: quorum_size,
             });
         }
+
+        // Rule: All signers must be part of the committee
+        for signer in signed_ssv_message.operator_ids() {
+            if !committee_info.committee_members.contains(signer) {
+                return Err(ValidationFailure::SignerNotInCommittee);
+            }
+        }
     }
 
     if !signed_ssv_message.full_data().is_empty() {
