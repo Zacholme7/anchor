@@ -232,8 +232,7 @@ impl QbftManagerController {
         };
 
         // In production, message_validator would do RSA validation and consensus validation
-        validate_rsa_signatures(&wrapped, &self.test_keys).map_err(|_|
-            "invalid decided msg: invalid decided msg: msg signature invalid: crypto/rsa: verification error".to_string())?;
+        validate_rsa_signatures(&wrapped, &self.test_keys)?;
         if let Err(e) = validate_consensus_message_semantics(
             &wrapped.signed_message,
             &wrapped.qbft_message,

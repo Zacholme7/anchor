@@ -5,13 +5,43 @@ use ssz::{Decode, Encode};
 
 use crate::utils::test_keys::TestKeySet;
 
-/// Validate RSA signatures for justifications in QBFT messages
+/// Validate RSA signatures for QBFT messages
 /// In production, message_validator does this. In tests, we need to do it here.
 pub fn validate_rsa_signatures(
     wrapped: &WrappedQbftMessage,
     test_keys: &TestKeySet,
 ) -> Result<(), String> {
     let msg_type = wrapped.qbft_message.qbft_message_type;
+
+    // Validate main message signatures for Commit messages (especially decided messages)
+    if msg_type == QbftMessageType::Commit {
+        // For commit messages, validate the main message signatures
+        for (&op_id, sig) in wrapped.signed_message.operator_ids().iter()
+            .zip(wrapped.signed_message.signatures().iter()) 
+        {
+            // Convert signature from VariableList to [u8; 256]
+            if sig.len() != 256 {
+                return Err("invalid decided msg: invalid signature length".to_string());
+            }
+            let mut sig_array = [0u8; 256];
+            sig_array.copy_from_slice(&sig[..]);
+
+            if !verify_rsa_signature(
+                wrapped.signed_message.ssv_message().as_ssz_bytes(),
+                op_id,
+                &sig_array,
+                test_keys,
+            ) {
+                // Check if this is a multi-signer commit (decided message)
+                if wrapped.signed_message.operator_ids().len() > 1 {
+                    return Err("invalid decided msg: invalid decided msg: msg signature invalid: crypto/rsa: verification error".to_string());
+                } else {
+                    return Err("invalid commit msg: msg signature invalid: crypto/rsa: verification error".to_string());
+                }
+            }
+        }
+        return Ok(());
+    }
 
     // Only validate justifications for proposals and round changes
     if msg_type != QbftMessageType::Proposal && msg_type != QbftMessageType::RoundChange {
